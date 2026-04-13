@@ -18,7 +18,9 @@ type Variables = {
   authUser: string;
 };
 
-type MailFetchMode = 'graph' | 'imap';
+type MailFetchMode = 'auto' | 'graph' | 'imap';
+type ResolvedMailFetchMode = 'graph' | 'imap';
+type TokenStatus = 'unknown' | 'valid' | 'invalid';
 
 interface AccountRow {
   id: number;
@@ -33,6 +35,9 @@ interface AccountRow {
   refreshedAt: string | null;
   fetchedAt: string | null;
   fetchedCount: number;
+  tokenStatus: TokenStatus;
+  tokenMessage: string | null;
+  tokenCheckedAt: string | null;
 }
 
 interface AccountPayload {
@@ -90,6 +95,8 @@ interface AccountMailItem {
   preview: string;
   contentType: string;
   content: string;
+  folderKind: 'inbox' | 'junk';
+  folderLabel: string;
 }
 
 interface FetchActionResult {
@@ -97,6 +104,7 @@ interface FetchActionResult {
   message: string;
   fetchedCount: number;
   messages: AccountMailItem[];
+  resolvedMode: ResolvedMailFetchMode;
 }
 
 interface TokenExchangeResult {
@@ -111,12 +119,13 @@ const MAIL_API_TOKEN_HEADER = 'x-mail-api-token';
 const INGEST_PATH = '/api/upload/ingest';
 const OPEN_MESSAGES_PATH = '/api/open/messages';
 const MICROSOFT_TOKEN_URL = 'https://login.microsoftonline.com/consumers/oauth2/v2.0/token';
-const GRAPH_MESSAGES_URL = 'https://graph.microsoft.com/v1.0/me/messages';
-const OUTLOOK_MESSAGES_URL = 'https://outlook.office.com/api/v2.0/me/messages';
+const GRAPH_MAIL_FOLDERS_URL = 'https://graph.microsoft.com/v1.0/me/mailFolders';
+const OUTLOOK_MAIL_FOLDERS_URL = 'https://outlook.office.com/api/v2.0/me/mailFolders';
 const GRAPH_SCOPE = 'https://graph.microsoft.com/.default';
 const IMAP_SCOPE = 'https://outlook.office.com/IMAP.AccessAsUser.All offline_access';
 const DEFAULT_REFRESH_CONCURRENCY = 8;
 const MAIL_PAGE_SIZE = 100;
+const TOKEN_LIFETIME_DAYS = 90;
 
 const DEFAULT_INGEST_CONFIG: IngestConfig = {
   delimiter: '----',
@@ -140,7 +149,10 @@ const ACCOUNT_SELECT_SQL = `
     sync_message AS syncMessage,
     refreshed_at AS refreshedAt,
     fetched_at AS fetchedAt,
-    IFNULL(fetched_count, 0) AS fetchedCount
+    IFNULL(fetched_count, 0) AS fetchedCount,
+    IFNULL(token_status, 'unknown') AS tokenStatus,
+    token_message AS tokenMessage,
+    token_checked_at AS tokenCheckedAt
   FROM accounts
 `;
 
@@ -219,7 +231,7 @@ app.post('/api/auth/logout', (c) => {
 app.get('/api/accounts', async (c) => {
   const keyword = (c.req.query('keyword') ?? '').trim();
   const items = await queryAccounts(c.env.DB, keyword);
-  return c.json({ items });
+  return c.json({ items: items.map(serializeAccountRow) });
 });
 
 app.get('/api/open/accounts', async (c) => {
@@ -227,7 +239,7 @@ app.get('/api/open/accounts', async (c) => {
 
   const keyword = (c.req.query('keyword') ?? '').trim();
   const items = await queryAccounts(c.env.DB, keyword);
-  return c.json({ items });
+  return c.json({ items: items.map(serializeAccountRow) });
 });
 
 app.post('/api/accounts', async (c) => {
@@ -266,7 +278,7 @@ app.post('/api/accounts', async (c) => {
     throw new HTTPException(500, { message: '账号创建成功，但读取结果失败' });
   }
 
-  return c.json({ item }, 201);
+  return c.json({ item: serializeAccountRow(item) }, 201);
 });
 
 app.put('/api/accounts/:id', async (c) => {
@@ -311,7 +323,7 @@ app.put('/api/accounts/:id', async (c) => {
     throw new HTTPException(404, { message: '账号不存在' });
   }
 
-  return c.json({ item });
+  return c.json({ item: serializeAccountRow(item) });
 });
 
 app.delete('/api/accounts/:id', async (c) => {
@@ -357,7 +369,7 @@ app.patch('/api/accounts/:id/remark', async (c) => {
     throw new HTTPException(404, { message: '账号不存在' });
   }
 
-  return c.json({ item });
+  return c.json({ item: serializeAccountRow(item) });
 });
 
 app.post('/api/accounts/import', async (c) => {
@@ -431,7 +443,7 @@ app.post('/api/accounts/refresh', async (c) => {
       : await fetchAllAccounts(c.env.DB);
 
   if (accounts.length === 0) {
-    throw new HTTPException(400, { message: '没有可刷新的账号' });
+    throw new HTTPException(400, { message: '没有可检测的邮箱' });
   }
 
   const details = await mapWithConcurrency(accounts, DEFAULT_REFRESH_CONCURRENCY, (account) =>
@@ -448,7 +460,7 @@ app.post('/api/accounts/refresh', async (c) => {
 
 app.get('/api/accounts/:id/messages', async (c) => {
   const id = parseNumericId(c.req.param('id'));
-  const mode = parseMailFetchMode(c.req.query('mode'), 'graph');
+  const mode = parseMailFetchMode(c.req.query('mode'), 'auto');
   const account = await fetchAccountById(c.env.DB, id);
 
   if (!account) {
@@ -464,6 +476,7 @@ app.get('/api/accounts/:id/messages', async (c) => {
     accountId: account.id,
     account: account.account,
     mode,
+    resolvedMode: result.resolvedMode,
     messages: result.messages
   });
 });
@@ -472,7 +485,7 @@ app.get('/api/open/accounts/:id/messages', async (c) => {
   validateOpenApiToken(c, getMailApiToken(c.env));
 
   const id = parseNumericId(c.req.param('id'));
-  const mode = parseMailFetchMode(c.req.query('mode'), 'graph');
+  const mode = parseMailFetchMode(c.req.query('mode'), 'auto');
   const account = await fetchAccountById(c.env.DB, id);
 
   if (!account) {
@@ -488,6 +501,7 @@ app.get('/api/open/accounts/:id/messages', async (c) => {
     accountId: account.id,
     account: account.account,
     mode,
+    resolvedMode: result.resolvedMode,
     messages: result.messages
   });
 });
@@ -496,7 +510,7 @@ app.post('/api/open/messages', async (c) => {
   validateOpenApiToken(c, getMailApiToken(c.env));
 
   const body = await readJson<{ id?: unknown; account?: unknown; mode?: unknown }>(c);
-  const mode = parseMailFetchMode(body.mode, 'graph');
+  const mode = parseMailFetchMode(body.mode, 'auto');
 
   const rawId = Number.parseInt(asText(body.id), 10);
   const accountById = Number.isInteger(rawId) && rawId > 0 ? await fetchAccountById(c.env.DB, rawId) : null;
@@ -518,6 +532,7 @@ app.post('/api/open/messages', async (c) => {
     accountId: account.id,
     account: account.account,
     mode,
+    resolvedMode: result.resolvedMode,
     messages: result.messages
   });
 });
@@ -839,7 +854,7 @@ function parseAccountIds(input: unknown): number[] {
 
 function parseMailFetchMode(value: unknown, fallback: MailFetchMode): MailFetchMode {
   const mode = asText(value).trim().toLowerCase();
-  if (mode === 'imap' || mode === 'graph') {
+  if (mode === 'auto' || mode === 'imap' || mode === 'graph') {
     return mode;
   }
   return fallback;
@@ -852,6 +867,32 @@ function getScopeByMode(mode: MailFetchMode): string {
   return GRAPH_SCOPE;
 }
 
+function serializeAccountRow(row: AccountRow): AccountRow & {
+  tokenBaseAt: string | null;
+  tokenCountdownDays: number | null;
+} {
+  const tokenBaseAt = row.refreshedAt || row.createdAt || null;
+  return {
+    ...row,
+    tokenBaseAt,
+    tokenCountdownDays: calculateTokenCountdownDays(tokenBaseAt)
+  };
+}
+
+function calculateTokenCountdownDays(tokenBaseAt: string | null): number | null {
+  if (!tokenBaseAt) {
+    return null;
+  }
+
+  const baseAt = new Date(tokenBaseAt);
+  if (Number.isNaN(baseAt.getTime())) {
+    return null;
+  }
+
+  const elapsedDays = Math.max(0, Math.floor((Date.now() - baseAt.getTime()) / (24 * 60 * 60 * 1000)));
+  return Math.max(0, TOKEN_LIFETIME_DAYS - elapsedDays);
+}
+
 async function queryAccounts(db: D1Database, keyword: string): Promise<AccountRow[]> {
   let statement: D1PreparedStatement;
 
@@ -860,10 +901,10 @@ async function queryAccounts(db: D1Database, keyword: string): Promise<AccountRo
     statement = db
       .prepare(
         `${ACCOUNT_SELECT_SQL}
-         WHERE account LIKE ? OR IFNULL(remark, '') LIKE ?
+         WHERE account LIKE ?
          ORDER BY id DESC`
       )
-      .bind(like, like);
+      .bind(like);
   } else {
     statement = db.prepare(`${ACCOUNT_SELECT_SQL} ORDER BY id DESC`);
   }
@@ -911,13 +952,67 @@ async function fetchAccountsByIds(db: D1Database, ids: number[]): Promise<Accoun
   return results ?? [];
 }
 
+async function updateTokenState(
+  db: D1Database,
+  accountId: number,
+  params: {
+    status: TokenStatus;
+    message: string;
+    touchRefresh: boolean;
+    refreshToken?: string | null;
+  }
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE accounts
+       SET
+         refresh_token = COALESCE(?, refresh_token),
+         token_status = ?,
+         token_message = ?,
+         token_checked_at = CURRENT_TIMESTAMP,
+         refreshed_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE refreshed_at END
+       WHERE id = ?`
+    )
+    .bind(
+      params.refreshToken ?? null,
+      params.status,
+      truncate(params.message, 600),
+      params.touchRefresh ? 1 : 0,
+      accountId
+    )
+    .run();
+}
+
+function sortMailMessages(messages: AccountMailItem[]): AccountMailItem[] {
+  return [...messages].sort((left, right) => {
+    const leftTime = Date.parse(left.receivedAt);
+    const rightTime = Date.parse(right.receivedAt);
+
+    if (Number.isNaN(leftTime) && Number.isNaN(rightTime)) {
+      return right.id.localeCompare(left.id);
+    }
+    if (Number.isNaN(leftTime)) {
+      return 1;
+    }
+    if (Number.isNaN(rightTime)) {
+      return -1;
+    }
+    return rightTime - leftTime;
+  });
+}
+
 async function refreshAccountToken(db: D1Database, account: AccountRow): Promise<BatchActionDetail> {
   if (!account.clientId || !account.refreshToken) {
     const message = '缺少 client_id 或 refresh_token';
+    await updateTokenState(db, account.id, {
+      status: 'invalid',
+      message,
+      touchRefresh: false
+    });
     await updateSyncStatus(db, account.id, {
       status: 'refresh_failed',
       message,
-      touchRefresh: true,
+      touchRefresh: false,
       touchFetch: false,
       fetchedCount: account.fetchedCount
     });
@@ -932,10 +1027,15 @@ async function refreshAccountToken(db: D1Database, account: AccountRow): Promise
   const exchanged = await exchangeMicrosoftToken(account.refreshToken, account.clientId);
   if (!exchanged.ok) {
     const message = exchanged.error || '刷新失败';
+    await updateTokenState(db, account.id, {
+      status: 'invalid',
+      message,
+      touchRefresh: false
+    });
     await updateSyncStatus(db, account.id, {
       status: 'refresh_failed',
       message,
-      touchRefresh: true,
+      touchRefresh: false,
       touchFetch: false,
       fetchedCount: account.fetchedCount
     });
@@ -948,18 +1048,18 @@ async function refreshAccountToken(db: D1Database, account: AccountRow): Promise
   }
 
   const tokenResult = exchanged.result;
-
   const newRefreshToken = tokenResult.refreshToken || account.refreshToken;
-  await db
-    .prepare('UPDATE accounts SET refresh_token = ? WHERE id = ?')
-    .bind(newRefreshToken, account.id)
-    .run();
-
-  const message = '刷新成功';
+  const message = 'Token 有效，已完成刷新';
+  await updateTokenState(db, account.id, {
+    status: 'valid',
+    message,
+    touchRefresh: true,
+    refreshToken: newRefreshToken
+  });
   await updateSyncStatus(db, account.id, {
     status: 'refresh_success',
     message,
-    touchRefresh: true,
+    touchRefresh: false,
     touchFetch: false,
     fetchedCount: account.fetchedCount
   });
@@ -980,6 +1080,11 @@ async function fetchAccountMessages(
 ): Promise<FetchActionResult> {
   if (!account.clientId || !account.refreshToken) {
     const message = '缺少 client_id 或 refresh_token';
+    await updateTokenState(db, account.id, {
+      status: 'invalid',
+      message,
+      touchRefresh: false
+    });
     await updateSyncStatus(db, account.id, {
       status: 'fetch_failed',
       message,
@@ -991,75 +1096,133 @@ async function fetchAccountMessages(
       ok: false,
       message,
       fetchedCount: 0,
-      messages: []
+      messages: [],
+      resolvedMode: 'graph'
     };
   }
 
-  const exchanged = await exchangeMicrosoftToken(
-    account.refreshToken,
-    account.clientId,
-    getScopeByMode(mode)
-  );
-  if (!exchanged.ok) {
-    const message = exchanged.error || `${mode.toUpperCase()}取件前刷新令牌失败`;
-    await updateSyncStatus(db, account.id, {
-      status: 'fetch_failed',
-      message,
-      touchRefresh: true,
-      touchFetch: true,
-      fetchedCount: 0
-    });
-    return {
-      ok: false,
-      message,
-      fetchedCount: 0,
-      messages: []
-    };
+  const attemptModes: ResolvedMailFetchMode[] = mode === 'auto' ? ['graph', 'imap'] : [mode];
+  const failures: string[] = [];
+  let latestRefreshToken = account.refreshToken;
+  let tokenExchangeSucceeded = false;
+  let lastResolvedMode: ResolvedMailFetchMode = attemptModes[0];
+
+  for (const resolvedMode of attemptModes) {
+    lastResolvedMode = resolvedMode;
+    const attempt = await attemptMailFetch(
+      account.clientId,
+      latestRefreshToken,
+      resolvedMode,
+      includeBody
+    );
+
+    latestRefreshToken = attempt.refreshToken;
+    tokenExchangeSucceeded = tokenExchangeSucceeded || attempt.tokenExchangeSucceeded;
+
+    if (attempt.ok) {
+      const message = `取件成功(${resolvedMode.toUpperCase()})，共 ${attempt.fetchedCount} 封`;
+      await updateTokenState(db, account.id, {
+        status: 'valid',
+        message: `Token 有效，已通过 ${resolvedMode.toUpperCase()} 校验`,
+        touchRefresh: true,
+        refreshToken: latestRefreshToken
+      });
+      await updateSyncStatus(db, account.id, {
+        status: 'fetch_success',
+        message,
+        touchRefresh: false,
+        touchFetch: true,
+        fetchedCount: attempt.fetchedCount
+      });
+      return {
+        ok: true,
+        message,
+        fetchedCount: attempt.fetchedCount,
+        messages: attempt.messages,
+        resolvedMode
+      };
+    }
+
+    failures.push(`${resolvedMode.toUpperCase()}：${attempt.message}`);
   }
 
-  const tokenResult = exchanged.result;
-  const newRefreshToken = tokenResult.refreshToken || account.refreshToken;
-  await db
-    .prepare('UPDATE accounts SET refresh_token = ? WHERE id = ?')
-    .bind(newRefreshToken, account.id)
-    .run();
+  const message =
+    mode === 'auto' ? `自动取件失败：${failures.join('；')}` : failures[0] || '取件失败';
 
-  const fetched =
-    mode === 'imap'
-      ? await readImapMessagesViaOutlookApi(tokenResult.accessToken, includeBody)
-      : await readGraphMessages(tokenResult.accessToken, includeBody);
-  if (!fetched.ok) {
-    const message = fetched.error || `${mode.toUpperCase()}取件失败`;
-    await updateSyncStatus(db, account.id, {
-      status: 'fetch_failed',
-      message,
-      touchRefresh: true,
-      touchFetch: true,
-      fetchedCount: 0
-    });
-    return {
-      ok: false,
-      message,
-      fetchedCount: 0,
-      messages: []
-    };
-  }
-
-  const fetchedCount = fetched.messages.length;
-  const message = `取件成功(${mode.toUpperCase()})，共 ${fetchedCount} 封`;
+  await updateTokenState(db, account.id, {
+    status: tokenExchangeSucceeded ? 'valid' : 'invalid',
+    message: tokenExchangeSucceeded ? 'Token 有效，但本次邮件拉取失败' : message,
+    touchRefresh: tokenExchangeSucceeded,
+    refreshToken: latestRefreshToken
+  });
   await updateSyncStatus(db, account.id, {
-    status: 'fetch_success',
+    status: 'fetch_failed',
     message,
-    touchRefresh: true,
+    touchRefresh: false,
     touchFetch: true,
-    fetchedCount
+    fetchedCount: 0
   });
 
   return {
-    ok: true,
+    ok: false,
     message,
-    fetchedCount,
-    messages: fetched.messages
+    fetchedCount: 0,
+    messages: [],
+    resolvedMode: lastResolvedMode
+  };
+}
+
+async function attemptMailFetch(
+  clientId: string,
+  refreshToken: string,
+  mode: ResolvedMailFetchMode,
+  includeBody: boolean
+): Promise<
+  | {
+      ok: true;
+      tokenExchangeSucceeded: true;
+      refreshToken: string;
+      fetchedCount: number;
+      messages: AccountMailItem[];
+    }
+  | {
+      ok: false;
+      tokenExchangeSucceeded: boolean;
+      refreshToken: string;
+      message: string;
+    }
+> {
+  const exchanged = await exchangeMicrosoftToken(refreshToken, clientId, getScopeByMode(mode));
+  if (!exchanged.ok) {
+    return {
+      ok: false,
+      tokenExchangeSucceeded: false,
+      refreshToken,
+      message: exchanged.error || `${mode.toUpperCase()}取件前刷新令牌失败`
+    };
+  }
+
+  const nextRefreshToken = exchanged.result.refreshToken || refreshToken;
+  const fetched =
+    mode === 'imap'
+      ? await readImapMessagesViaOutlookApi(exchanged.result.accessToken, includeBody)
+      : await readGraphMessages(exchanged.result.accessToken, includeBody);
+
+  if (!fetched.ok) {
+    return {
+      ok: false,
+      tokenExchangeSucceeded: true,
+      refreshToken: nextRefreshToken,
+      message: fetched.error || `${mode.toUpperCase()}取件失败`
+    };
+  }
+
+  return {
+    ok: true,
+    tokenExchangeSucceeded: true,
+    refreshToken: nextRefreshToken,
+    fetchedCount: fetched.messages.length,
+    messages: sortMailMessages(fetched.messages)
   };
 }
 
@@ -1121,11 +1284,57 @@ async function readGraphMessages(
   accessToken: string,
   includeBody = false
 ): Promise<{ ok: true; messages: AccountMailItem[] } | { ok: false; error: string }> {
+  const [inbox, junk] = await Promise.all([
+    readGraphFolderMessages(accessToken, 'inbox', 'inbox', includeBody),
+    readGraphFolderMessages(accessToken, 'junkemail', 'junk', includeBody)
+  ]);
+
+  if (!inbox.ok) {
+    return inbox;
+  }
+  if (!junk.ok) {
+    return junk;
+  }
+
+  return {
+    ok: true,
+    messages: sortMailMessages([...inbox.messages, ...junk.messages])
+  };
+}
+
+async function readImapMessagesViaOutlookApi(
+  accessToken: string,
+  includeBody = false
+): Promise<{ ok: true; messages: AccountMailItem[] } | { ok: false; error: string }> {
+  const [inbox, junk] = await Promise.all([
+    readOutlookFolderMessages(accessToken, 'inbox', 'inbox', includeBody),
+    readOutlookFolderMessages(accessToken, 'junkemail', 'junk', includeBody)
+  ]);
+
+  if (!inbox.ok) {
+    return inbox;
+  }
+  if (!junk.ok) {
+    return junk;
+  }
+
+  return {
+    ok: true,
+    messages: sortMailMessages([...inbox.messages, ...junk.messages])
+  };
+}
+
+async function readGraphFolderMessages(
+  accessToken: string,
+  folderId: string,
+  folderKind: 'inbox' | 'junk',
+  includeBody = false
+): Promise<{ ok: true; messages: AccountMailItem[] } | { ok: false; error: string }> {
   const select = includeBody
     ? 'id,subject,from,receivedDateTime,bodyPreview,body'
     : 'id,subject,from,receivedDateTime,bodyPreview';
 
-  const firstUrl = new URL(GRAPH_MESSAGES_URL);
+  const firstUrl = new URL(`${GRAPH_MAIL_FOLDERS_URL}/${folderId}/messages`);
   firstUrl.searchParams.set('$top', String(MAIL_PAGE_SIZE));
   firstUrl.searchParams.set('$orderby', 'receivedDateTime desc');
   firstUrl.searchParams.set('$select', select);
@@ -1167,7 +1376,9 @@ async function readGraphMessages(
     allMessages.push(
       ...value
         .filter((item) => !!item && typeof item === 'object')
-        .map((item) => normalizeGraphMailItem(item as Record<string, unknown>, includeBody))
+        .map((item) =>
+          normalizeGraphMailItem(item as Record<string, unknown>, includeBody, folderKind)
+        )
     );
 
     const nextLink = asText((payload as Record<string, unknown>)['@odata.nextLink']).trim();
@@ -1180,15 +1391,17 @@ async function readGraphMessages(
   };
 }
 
-async function readImapMessagesViaOutlookApi(
+async function readOutlookFolderMessages(
   accessToken: string,
+  folderId: string,
+  folderKind: 'inbox' | 'junk',
   includeBody = false
 ): Promise<{ ok: true; messages: AccountMailItem[] } | { ok: false; error: string }> {
   const select = includeBody
     ? 'Id,Subject,From,DateTimeReceived,BodyPreview,Body'
     : 'Id,Subject,From,DateTimeReceived,BodyPreview';
 
-  const firstUrl = new URL(OUTLOOK_MESSAGES_URL);
+  const firstUrl = new URL(`${OUTLOOK_MAIL_FOLDERS_URL}/${folderId}/messages`);
   firstUrl.searchParams.set('$top', String(MAIL_PAGE_SIZE));
   firstUrl.searchParams.set('$orderby', 'DateTimeReceived desc');
   firstUrl.searchParams.set('$select', select);
@@ -1230,7 +1443,9 @@ async function readImapMessagesViaOutlookApi(
     allMessages.push(
       ...value
         .filter((item) => !!item && typeof item === 'object')
-        .map((item) => normalizeOutlookMailItem(item as Record<string, unknown>, includeBody))
+        .map((item) =>
+          normalizeOutlookMailItem(item as Record<string, unknown>, includeBody, folderKind)
+        )
     );
 
     const nextLink = asText((payload as Record<string, unknown>)['@odata.nextLink']).trim();
@@ -1244,7 +1459,11 @@ async function readImapMessagesViaOutlookApi(
   };
 }
 
-function normalizeGraphMailItem(item: Record<string, unknown>, includeBody: boolean): AccountMailItem {
+function normalizeGraphMailItem(
+  item: Record<string, unknown>,
+  includeBody: boolean,
+  folderKind: 'inbox' | 'junk'
+): AccountMailItem {
   const fromNode = item.from;
   let from = '';
   if (fromNode && typeof fromNode === 'object') {
@@ -1272,11 +1491,17 @@ function normalizeGraphMailItem(item: Record<string, unknown>, includeBody: bool
     receivedAt: asText(item.receivedDateTime).trim(),
     preview: asText(item.bodyPreview).trim(),
     contentType,
-    content
+    content,
+    folderKind,
+    folderLabel: getFolderLabel(folderKind)
   };
 }
 
-function normalizeOutlookMailItem(item: Record<string, unknown>, includeBody: boolean): AccountMailItem {
+function normalizeOutlookMailItem(
+  item: Record<string, unknown>,
+  includeBody: boolean,
+  folderKind: 'inbox' | 'junk'
+): AccountMailItem {
   const fromNode = item.From;
   let from = '';
   if (fromNode && typeof fromNode === 'object') {
@@ -1304,8 +1529,14 @@ function normalizeOutlookMailItem(item: Record<string, unknown>, includeBody: bo
     receivedAt: asText(item.DateTimeReceived).trim(),
     preview: asText(item.BodyPreview).trim(),
     contentType,
-    content
+    content,
+    folderKind,
+    folderLabel: getFolderLabel(folderKind)
   };
+}
+
+function getFolderLabel(folderKind: 'inbox' | 'junk'): string {
+  return folderKind === 'junk' ? '垃圾邮件' : '收件箱';
 }
 
 function extractMicrosoftError(payload: unknown, status: number): string {

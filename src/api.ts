@@ -1,5 +1,5 @@
 import type {
-  AccountMailItem,
+  AccountMessagesResponse,
   AccountItem,
   AccountPayload,
   AuthUser,
@@ -140,14 +140,9 @@ export const api = {
     });
   },
 
-  getAccountMessages(
-    id: number,
-    mode: MailFetchMode
-  ): Promise<{ accountId: number; account: string; mode: MailFetchMode; messages: AccountMailItem[] }> {
+  getAccountMessages(id: number, mode: MailFetchMode): Promise<AccountMessagesResponse> {
     const params = new URLSearchParams({ mode });
-    return request<{ accountId: number; account: string; mode: MailFetchMode; messages: AccountMailItem[] }>(
-      `/api/accounts/${id}/messages?${params.toString()}`
-    );
+    return request<AccountMessagesResponse>(`/api/accounts/${id}/messages?${params.toString()}`);
   },
 
   openUpdateAccountRemark(id: number, remark: string): Promise<{

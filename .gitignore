@@ -6,3 +6,8 @@ dist/
 __pycache__/
 *.pyc
 .dev.vars
+.codex-logs/
+vite.dev.log
+vite.dev.err.log
+worker.dev.log
+worker.dev.err.log

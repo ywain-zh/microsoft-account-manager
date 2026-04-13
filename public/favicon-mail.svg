@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="mail-gradient" x1="10" y1="8" x2="54" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0f766e" />
+      <stop offset="0.55" stop-color="#0f9ab4" />
+      <stop offset="1" stop-color="#4ade80" />
+    </linearGradient>
+    <linearGradient id="mail-highlight" x1="18" y1="14" x2="44" y2="40" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.85" />
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.12" />
+    </linearGradient>
+  </defs>
+  <rect x="6" y="6" width="52" height="52" rx="16" fill="url(#mail-gradient)" />
+  <path
+    d="M18 22.5A4.5 4.5 0 0 1 22.5 18h19A4.5 4.5 0 0 1 46 22.5v19a4.5 4.5 0 0 1-4.5 4.5h-19A4.5 4.5 0 0 1 18 41.5z"
+    fill="url(#mail-highlight)"
+  />
+  <path
+    d="M19 24.25A3.25 3.25 0 0 1 22.25 21h19.5A3.25 3.25 0 0 1 45 24.25v15.5A3.25 3.25 0 0 1 41.75 43h-19.5A3.25 3.25 0 0 1 19 39.75z"
+    fill="#ffffff"
+    fill-opacity="0.94"
+  />
+  <path
+    d="m20.75 24 9.34 7.25a3 3 0 0 0 3.82 0L43.25 24"
+    fill="none"
+    stroke="#0f766e"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="2.25"
+  />
+  <path
+    d="M45 24.25v15.5A3.25 3.25 0 0 1 41.75 43h-19.5A3.25 3.25 0 0 1 19 39.75v-15.5"
+    fill="none"
+    stroke="#0f8ca0"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="2"
+  />
+  <path
+    d="M41 15.5a7.5 7.5 0 0 1 7.5 7.5"
+    fill="none"
+    stroke="#ffffff"
+    stroke-linecap="round"
+    stroke-width="2"
+  />
+  <circle cx="48.5" cy="23" r="2.5" fill="#ffffff" />
+</svg>

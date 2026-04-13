@@ -11,6 +11,11 @@ export interface AccountItem {
   refreshedAt: string | null;
   fetchedAt: string | null;
   fetchedCount: number;
+  tokenStatus: TokenStatus;
+  tokenMessage: string | null;
+  tokenCheckedAt: string | null;
+  tokenCountdownDays: number | null;
+  tokenBaseAt: string | null;
 }
 
 export interface AccountPayload {
@@ -36,7 +41,10 @@ export interface IngestConfig {
   tokenField: string;
 }
 
-export type MailFetchMode = 'graph' | 'imap';
+export type TokenStatus = 'unknown' | 'valid' | 'invalid';
+
+export type MailFetchMode = 'auto' | 'graph' | 'imap';
+export type ResolvedMailFetchMode = 'graph' | 'imap';
 
 export interface BatchActionDetail {
   id: number;
@@ -61,6 +69,16 @@ export interface AccountMailItem {
   preview: string;
   contentType: string;
   content: string;
+  folderKind: 'inbox' | 'junk';
+  folderLabel: string;
+}
+
+export interface AccountMessagesResponse {
+  accountId: number;
+  account: string;
+  mode: MailFetchMode;
+  resolvedMode: ResolvedMailFetchMode;
+  messages: AccountMailItem[];
 }
 
 export interface AuthUser {
