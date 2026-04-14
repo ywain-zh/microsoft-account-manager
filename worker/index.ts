@@ -57,6 +57,36 @@ interface IngestConfig {
   tokenField: string;
 }
 
+interface CloudMailConfig {
+  apiBaseUrl: string;
+  adminEmail: string;
+  adminPassword: string;
+  availableDomains: string[];
+}
+
+interface CloudMailAccountItem {
+  userId: number;
+  email: string;
+  status: number;
+  receiveEmailCount: number;
+  sendEmailCount: number;
+  activeTime: string | null;
+  createTime: string | null;
+}
+
+interface CloudMailListResponse {
+  items: CloudMailAccountItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+interface CloudMailRemoteEnvelope<T> {
+  code?: number | string;
+  message?: string;
+  data?: T;
+}
+
 interface SessionPayload {
   username: string;
   exp: number;
@@ -134,6 +164,15 @@ const DEFAULT_INGEST_CONFIG: IngestConfig = {
   passwordField: 'p',
   clientIdField: 'c',
   tokenField: 't'
+};
+
+const CLOUD_MAIL_CONFIG_KEY = 'cloud_mail_config';
+
+const DEFAULT_CLOUD_MAIL_CONFIG: CloudMailConfig = {
+  apiBaseUrl: '',
+  adminEmail: '',
+  adminPassword: '',
+  availableDomains: []
 };
 
 const ACCOUNT_SELECT_SQL = `
@@ -584,17 +623,97 @@ app.put('/api/ingest-config', async (c) => {
   const item = normalizeIngestConfig(body);
   validateIngestConfig(item);
 
-  await c.env.DB
-    .prepare(
-      `INSERT INTO app_settings (key, value, updated_at)
-       VALUES ('ingest_config', ?, CURRENT_TIMESTAMP)
-       ON CONFLICT(key)
-       DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`
-    )
-    .bind(JSON.stringify(item))
-    .run();
+  await setAppSetting(c.env.DB, 'ingest_config', JSON.stringify(item));
 
   return c.json({ item });
+});
+
+app.get('/api/cloud-mail/config', async (c) => {
+  const item = await getCloudMailConfig(c.env.DB);
+  return c.json({ item });
+});
+
+app.put('/api/cloud-mail/config', async (c) => {
+  const body = await readJson<Partial<CloudMailConfig>>(c);
+  const item = normalizeCloudMailConfig(body);
+  validateCloudMailConfig(item);
+  await validateCloudMailConnection(item);
+  await setAppSetting(c.env.DB, CLOUD_MAIL_CONFIG_KEY, JSON.stringify(item));
+  return c.json({ item });
+});
+
+app.get('/api/cloud-mail/accounts', async (c) => {
+  const config = await getCloudMailConfig(c.env.DB);
+  ensureCloudMailConfigured(config);
+
+  const page = parsePageNumber(c.req.query('page'), 1);
+  const pageSize = parsePageNumber(c.req.query('pageSize'), 20, 1, 100);
+  const keyword = asText(c.req.query('keyword')).trim();
+
+  const result = await listCloudMailAccounts(config, {
+    page,
+    pageSize,
+    keyword
+  });
+
+  return c.json(result);
+});
+
+app.get('/api/cloud-mail/messages', async (c) => {
+  const config = await getCloudMailConfig(c.env.DB);
+  ensureCloudMailConfigured(config);
+
+  const email = asText(c.req.query('email')).trim().toLowerCase();
+  if (!email) {
+    throw new HTTPException(400, { message: '请传入需要查询的邮箱' });
+  }
+
+  const messages = await listCloudMailMessages(config, email);
+
+  return c.json({
+    account: email,
+    messages
+  });
+});
+
+app.post('/api/cloud-mail/accounts', async (c) => {
+  const config = await getCloudMailConfig(c.env.DB);
+  ensureCloudMailConfigured(config);
+
+  const body = await readJson<{
+    localPart?: string;
+    domain?: string;
+  }>(c);
+  const payload = normalizeCloudMailCreatePayload(body, config.availableDomains);
+  const email = `${payload.localPart}@${payload.domain}`;
+
+  await createCloudMailAccount(config, { email });
+
+  return c.json({
+    ok: true as const,
+    email
+  });
+});
+
+app.post('/api/cloud-mail/accounts/batch-delete', async (c) => {
+  const config = await getCloudMailConfig(c.env.DB);
+  ensureCloudMailConfigured(config);
+
+  const body = await readJson<{ userIds?: unknown }>(c);
+  const userIds = parseAccountIds(body.userIds);
+
+  if (userIds.length === 0) {
+    throw new HTTPException(400, { message: '请至少选择一个 Cloud Mail 邮箱' });
+  }
+
+  await deleteCloudMailAccounts(config, userIds);
+
+  return c.json({
+    ok: true as const,
+    total: userIds.length,
+    deleted: userIds.length,
+    skipped: 0
+  });
 });
 
 app.post('/api/upload/ingest', async (c) => {
@@ -784,21 +903,54 @@ function parseCaptchaLine(line: string, delimiter: string): AccountPayload {
   };
 }
 
-async function getIngestConfig(db: D1Database): Promise<IngestConfig> {
+async function getAppSetting(db: D1Database, key: string): Promise<string | null> {
   const row = await db
     .prepare('SELECT value FROM app_settings WHERE key = ? LIMIT 1')
-    .bind('ingest_config')
+    .bind(key)
     .first<{ value: string }>();
 
-  if (!row?.value) {
+  return row?.value ?? null;
+}
+
+async function setAppSetting(db: D1Database, key: string, value: string): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO app_settings (key, value, updated_at)
+       VALUES (?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(key)
+       DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`
+    )
+    .bind(key, value)
+    .run();
+}
+
+async function getIngestConfig(db: D1Database): Promise<IngestConfig> {
+  const value = await getAppSetting(db, 'ingest_config');
+
+  if (!value) {
     return DEFAULT_INGEST_CONFIG;
   }
 
   try {
-    const parsed = JSON.parse(row.value) as Partial<IngestConfig>;
+    const parsed = JSON.parse(value) as Partial<IngestConfig>;
     return normalizeIngestConfig(parsed);
   } catch {
     return DEFAULT_INGEST_CONFIG;
+  }
+}
+
+async function getCloudMailConfig(db: D1Database): Promise<CloudMailConfig> {
+  const value = await getAppSetting(db, CLOUD_MAIL_CONFIG_KEY);
+
+  if (!value) {
+    return DEFAULT_CLOUD_MAIL_CONFIG;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as Partial<CloudMailConfig>;
+    return normalizeCloudMailConfig(parsed);
+  } catch {
+    return DEFAULT_CLOUD_MAIL_CONFIG;
   }
 }
 
@@ -839,6 +991,560 @@ function validateIngestConfig(config: IngestConfig): void {
       throw new HTTPException(400, { message: `字段名不合法: ${field}` });
     }
   }
+}
+
+function normalizeCloudMailConfig(input: Partial<CloudMailConfig>): CloudMailConfig {
+  return {
+    apiBaseUrl: normalizeCloudMailBaseUrl(input.apiBaseUrl),
+    adminEmail: asText(input.adminEmail).trim().toLowerCase(),
+    adminPassword: asText(input.adminPassword).trim(),
+    availableDomains: normalizeCloudMailDomains(input.availableDomains)
+  };
+}
+
+function normalizeCloudMailBaseUrl(value: unknown): string {
+  const raw = asText(value).trim();
+  if (!raw) {
+    return '';
+  }
+
+  const withProtocol = /^[a-z]+:\/\//i.test(raw) ? raw : `https://${raw}`;
+
+  try {
+    const url = new URL(withProtocol);
+    url.search = '';
+    url.hash = '';
+    const pathname = url.pathname.replace(/\/+$/, '');
+    return `${url.origin}${pathname}`;
+  } catch {
+    return raw;
+  }
+}
+
+function normalizeCloudMailDomains(value: unknown): string[] {
+  const segments = Array.isArray(value)
+    ? value.map((item) => asText(item))
+    : asText(value)
+        .split(/[\n,]/)
+        .map((item) => item);
+
+  return Array.from(
+    new Set(
+      segments
+        .map((item) => asText(item).trim().toLowerCase().replace(/^@+/, ''))
+        .filter(Boolean)
+    )
+  );
+}
+
+function validateCloudMailConfig(config: CloudMailConfig): void {
+  if (!config.apiBaseUrl || !config.adminEmail || !config.adminPassword) {
+    throw new HTTPException(400, { message: '请完整填写 API URI、管理员邮箱和管理员密码' });
+  }
+
+  if (config.apiBaseUrl.length > 500) {
+    throw new HTTPException(400, { message: 'API URI 长度不能超过 500 个字符' });
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(config.apiBaseUrl);
+  } catch {
+    throw new HTTPException(400, { message: 'API URI 格式不合法' });
+  }
+
+  if (!/^https?:$/.test(parsedUrl.protocol)) {
+    throw new HTTPException(400, { message: 'API URI 必须以 http:// 或 https:// 开头' });
+  }
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(config.adminEmail)) {
+    throw new HTTPException(400, { message: '管理员邮箱格式不合法' });
+  }
+
+  if (config.adminPassword.length > 255) {
+    throw new HTTPException(400, { message: '管理员密码长度不能超过 255 个字符' });
+  }
+
+  for (const domain of config.availableDomains) {
+    if (domain.length > 255) {
+      throw new HTTPException(400, { message: `域名长度不能超过 255 个字符: ${domain}` });
+    }
+
+    if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain)) {
+      throw new HTTPException(400, { message: `可用域名格式不合法: ${domain}` });
+    }
+  }
+}
+
+function ensureCloudMailConfigured(config: CloudMailConfig): void {
+  if (!config.apiBaseUrl || !config.adminEmail || !config.adminPassword) {
+    throw new HTTPException(400, { message: '请先完成 Cloud Mail 配置' });
+  }
+}
+
+function parsePageNumber(
+  value: string | undefined,
+  fallback: number,
+  min = 1,
+  max = Number.POSITIVE_INFINITY
+): number {
+  const parsed = Number.parseInt(asText(value), 10);
+  if (!Number.isInteger(parsed)) {
+    return fallback;
+  }
+  return Math.min(Math.max(parsed, min), max);
+}
+
+function normalizeCloudMailCreatePayload(
+  input: { localPart?: string; domain?: string },
+  availableDomains: string[]
+): { localPart: string; domain: string } {
+  const localPart = asText(input.localPart).trim().toLowerCase();
+  const domain = asText(input.domain).trim().toLowerCase().replace(/^@+/, '');
+
+  if (!localPart || !domain) {
+    throw new HTTPException(400, { message: '请完整填写邮箱前缀并选择域名' });
+  }
+
+  if (!/^[a-z0-9._%+-]+$/i.test(localPart)) {
+    throw new HTTPException(400, { message: '邮箱前缀只能包含字母、数字和常见邮箱字符' });
+  }
+
+  if (!availableDomains.includes(domain)) {
+    throw new HTTPException(400, { message: '所选域名不在可用域名列表中' });
+  }
+
+  return {
+    localPart,
+    domain
+  };
+}
+
+async function validateCloudMailConnection(config: CloudMailConfig): Promise<void> {
+  await getCloudMailAdminToken(config);
+  await getCloudMailPublicToken(config);
+}
+
+function buildCloudMailUrl(
+  baseUrl: string,
+  path: string,
+  query?: Record<string, string | number | null | undefined>
+): string {
+  const normalizedBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+  const url = new URL(path.replace(/^\/+/, ''), normalizedBase);
+
+  if (query) {
+    for (const [key, value] of Object.entries(query)) {
+      if (value === null || value === undefined || value === '') {
+        continue;
+      }
+      url.searchParams.set(key, String(value));
+    }
+  }
+
+  return url.toString();
+}
+
+function isCloudMailSuccessCode(code: unknown): boolean {
+  const normalized = asText(code).trim();
+  return !normalized || normalized === '200' || normalized === '0';
+}
+
+function resolveCloudMailErrorMessage(payload: CloudMailRemoteEnvelope<unknown>, status: number): string {
+  const remoteMessage = asText(payload.message).trim();
+  if (remoteMessage) {
+    return remoteMessage;
+  }
+
+  if (status >= 500) {
+    return 'Cloud Mail 服务暂时不可用，请稍后重试';
+  }
+
+  return `Cloud Mail 请求失败 (${status})`;
+}
+
+async function requestCloudMail<T>(
+  config: CloudMailConfig,
+  path: string,
+  init: RequestInit = {}
+): Promise<T> {
+  const headers = new Headers(init.headers);
+  if (init.body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(buildCloudMailUrl(config.apiBaseUrl, path), {
+      ...init,
+      headers
+    });
+  } catch {
+    throw new HTTPException(502, { message: 'Cloud Mail 服务连接失败，请检查 API URI' });
+  }
+
+  const rawText = await response.text();
+  let payload: CloudMailRemoteEnvelope<T> = {};
+
+  if (rawText) {
+    try {
+      payload = JSON.parse(rawText) as CloudMailRemoteEnvelope<T>;
+    } catch {
+      payload = {
+        code: response.ok ? 200 : response.status,
+        message: response.ok ? '' : rawText,
+        data: rawText as T
+      };
+    }
+  }
+
+  if (!response.ok) {
+    throw new HTTPException(response.status >= 500 ? 502 : 400, {
+      message: resolveCloudMailErrorMessage(payload, response.status)
+    });
+  }
+
+  if (!isCloudMailSuccessCode(payload.code)) {
+    throw new HTTPException(400, {
+      message: resolveCloudMailErrorMessage(payload, response.status)
+    });
+  }
+
+  return payload.data as T;
+}
+
+function resolveCloudMailToken(data: unknown): string {
+  if (typeof data === 'string') {
+    return data.trim();
+  }
+
+  if (!data || typeof data !== 'object') {
+    return '';
+  }
+
+  const record = data as Record<string, unknown>;
+  return asText(record.token ?? record.jwt ?? record.accessToken ?? record.authorization).trim();
+}
+
+function wrapCloudMailTokenError(error: unknown, context: 'admin' | 'public'): never {
+  const originalMessage =
+    error instanceof HTTPException
+      ? error.message
+      : error instanceof Error
+        ? error.message
+        : '';
+
+  const message = originalMessage.trim();
+  const prefix = context === 'admin' ? 'Cloud Mail 管理员认证失败' : 'Cloud Mail 公开接口认证失败';
+
+  if (!message) {
+    throw new HTTPException(502, { message: `${prefix}，请检查配置信息` });
+  }
+
+  if (message.includes('输入的邮箱不存在')) {
+    throw new HTTPException(400, { message: 'Cloud Mail 管理员邮箱不存在，请检查配置信息' });
+  }
+
+  if (message.includes('密码')) {
+    throw new HTTPException(400, { message: 'Cloud Mail 管理员密码错误，请检查配置信息' });
+  }
+
+  if (message.includes('API URI') || message.includes('连接失败')) {
+    throw new HTTPException(502, { message: 'Cloud Mail 服务连接失败，请检查 API URI' });
+  }
+
+  if (message.startsWith('Cloud Mail ')) {
+    throw new HTTPException(error instanceof HTTPException ? error.status : 400, { message });
+  }
+
+  throw new HTTPException(error instanceof HTTPException ? error.status : 400, {
+    message: `${prefix}：${message}`
+  });
+}
+
+async function getCloudMailAdminToken(config: CloudMailConfig): Promise<string> {
+  let data: unknown;
+  try {
+    data = await requestCloudMail<unknown>(config, '/api/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: config.adminEmail,
+        password: config.adminPassword
+      })
+    });
+  } catch (error) {
+    wrapCloudMailTokenError(error, 'admin');
+  }
+
+  const token = resolveCloudMailToken(data);
+  if (!token) {
+    throw new HTTPException(502, { message: 'Cloud Mail 管理员认证成功但未返回有效令牌' });
+  }
+
+  return token;
+}
+
+async function getCloudMailPublicToken(config: CloudMailConfig): Promise<string> {
+  let data: unknown;
+  try {
+    data = await requestCloudMail<unknown>(config, '/api/public/genToken', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: config.adminEmail,
+        password: config.adminPassword
+      })
+    });
+  } catch (error) {
+    wrapCloudMailTokenError(error, 'public');
+  }
+
+  const token = resolveCloudMailToken(data);
+  if (!token) {
+    throw new HTTPException(502, { message: 'Cloud Mail 公开接口认证成功但未返回有效令牌' });
+  }
+
+  return token;
+}
+
+function toCloudMailNumber(value: unknown, fallback = 0): number {
+  const parsed = Number.parseInt(asText(value), 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseCloudMailStatus(value: unknown): number {
+  const text = asText(value).trim().toLowerCase();
+  if (!text) {
+    return 1;
+  }
+
+  if (text === '1' || text === 'true' || text === 'enabled' || text === 'active' || text === 'normal') {
+    return 1;
+  }
+
+  if (text === '0' || text === 'false' || text === 'disabled' || text === 'inactive' || text === 'ban') {
+    return 0;
+  }
+
+  const numeric = Number.parseInt(text, 10);
+  return Number.isFinite(numeric) ? numeric : 1;
+}
+
+function toCloudMailAccountItem(input: unknown): CloudMailAccountItem | null {
+  if (!input || typeof input !== 'object') {
+    return null;
+  }
+
+  const row = input as Record<string, unknown>;
+  const userId = toCloudMailNumber(row.userId ?? row.id, 0);
+  const email = asText(row.email ?? row.username ?? row.account).trim();
+
+  if (!userId || !email) {
+    return null;
+  }
+
+  return {
+    userId,
+    email,
+    status: parseCloudMailStatus(row.status ?? row.userStatus ?? row.isEnable),
+    receiveEmailCount: toCloudMailNumber(
+      row.receiveEmailCount ?? row.receiveCount ?? row.receiveEmailNum ?? row.recvCount,
+      0
+    ),
+    sendEmailCount: toCloudMailNumber(row.sendEmailCount ?? row.sendCount ?? row.sendEmailNum ?? row.sentCount, 0),
+    activeTime: toNullableText(
+      row.activeTime ?? row.updateTime ?? row.lastActiveTime ?? row.lastLoginTime ?? row.updatedAt
+    ),
+    createTime: toNullableText(row.createTime ?? row.createdAt ?? row.createAt ?? row.insertTime)
+  };
+}
+
+function normalizeCloudMailListPayload(
+  payload: unknown,
+  page: number,
+  pageSize: number
+): CloudMailListResponse {
+  let rawItems: unknown[] = [];
+  let total = 0;
+
+  if (Array.isArray(payload)) {
+    rawItems = payload;
+    total = payload.length;
+  } else if (payload && typeof payload === 'object') {
+    const record = payload as Record<string, unknown>;
+    const candidates = [record.list, record.rows, record.records, record.items, record.data];
+    const listCandidate = candidates.find((item) => Array.isArray(item));
+    rawItems = Array.isArray(listCandidate) ? listCandidate : [];
+    total = toCloudMailNumber(
+      record.total ?? record.count ?? record.totalCount ?? record.itemTotal ?? record.pageTotal,
+      rawItems.length
+    );
+  }
+
+  const items = rawItems.map((item) => toCloudMailAccountItem(item)).filter(Boolean) as CloudMailAccountItem[];
+
+  return {
+    items,
+    total: total || items.length,
+    page,
+    pageSize
+  };
+}
+
+async function listCloudMailAccounts(
+  config: CloudMailConfig,
+  options: { page: number; pageSize: number; keyword: string }
+): Promise<CloudMailListResponse> {
+  const token = await getCloudMailAdminToken(config);
+  const params = new URLSearchParams({
+    num: String(options.page),
+    size: String(options.pageSize),
+    status: '-1',
+    isDel: '0'
+  });
+  if (options.keyword) {
+    params.set('email', options.keyword);
+  }
+
+  const data = await requestCloudMail<unknown>(config, `/api/user/list?${params.toString()}`, {
+    method: 'GET',
+    headers: {
+      Authorization: token
+    }
+  });
+
+  return normalizeCloudMailListPayload(data, options.page, options.pageSize);
+}
+
+async function createCloudMailAccount(
+  config: CloudMailConfig,
+  payload: { email: string }
+): Promise<void> {
+  const token = await getCloudMailPublicToken(config);
+  await requestCloudMail(config, '/api/public/addUser', {
+    method: 'POST',
+    headers: {
+      Authorization: token
+    },
+    body: JSON.stringify({
+      list: [
+        {
+          email: payload.email
+        }
+      ]
+    })
+  });
+}
+
+function normalizeCloudMailTimestamp(value: unknown): string {
+  const text = asText(value).trim();
+  if (!text) {
+    return '';
+  }
+
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(text)) {
+    return `${text.replace(' ', 'T')}Z`;
+  }
+
+  return text;
+}
+
+function detectCloudMailContentType(html: string, text: string): string {
+  if (html && /<\/?[a-z][\s\S]*>/i.test(html)) {
+    return 'html';
+  }
+
+  if (text) {
+    return 'text';
+  }
+
+  return html ? 'html' : '';
+}
+
+function toCloudMailMailItem(input: unknown): AccountMailItem | null {
+  if (!input || typeof input !== 'object') {
+    return null;
+  }
+
+  const row = input as Record<string, unknown>;
+  const subject = asText(row.subject ?? row.title).trim();
+  const senderEmail = asText(row.sendEmail ?? row.fromEmail ?? row.from).trim();
+  const senderName = asText(row.sendName ?? row.fromName).trim();
+  const rawHtml = asText(row.content ?? row.htmlContent ?? row.body).trim();
+  const rawText = asText(row.text ?? row.preview ?? row.contentText).trim();
+  const receivedAt = normalizeCloudMailTimestamp(
+    row.createTime ?? row.receivedAt ?? row.sendTime ?? row.createdAt
+  );
+  const id =
+    asText(row.emailId ?? row.id).trim() ||
+    `${senderEmail || senderName}-${receivedAt}-${subject || rawText.slice(0, 24)}`;
+
+  const from =
+    senderName && senderEmail && senderName !== senderEmail
+      ? `${senderName} <${senderEmail}>`
+      : senderEmail || senderName;
+
+  return {
+    id,
+    subject,
+    from,
+    receivedAt,
+    preview: rawText || rawHtml,
+    contentType: detectCloudMailContentType(rawHtml, rawText),
+    content: rawHtml || rawText,
+    folderKind: 'inbox',
+    folderLabel: getFolderLabel('inbox')
+  };
+}
+
+function normalizeCloudMailMessagesPayload(payload: unknown): AccountMailItem[] {
+  let rawItems: unknown[] = [];
+
+  if (Array.isArray(payload)) {
+    rawItems = payload;
+  } else if (payload && typeof payload === 'object') {
+    const record = payload as Record<string, unknown>;
+    const candidates = [record.list, record.rows, record.records, record.items, record.data];
+    const listCandidate = candidates.find((item) => Array.isArray(item));
+    rawItems = Array.isArray(listCandidate) ? listCandidate : [];
+  }
+
+  return sortMailMessages(
+    rawItems.map((item) => toCloudMailMailItem(item)).filter(Boolean) as AccountMailItem[]
+  );
+}
+
+async function listCloudMailMessages(config: CloudMailConfig, email: string): Promise<AccountMailItem[]> {
+  const token = await getCloudMailPublicToken(config);
+  const data = await requestCloudMail<unknown>(config, '/api/public/emailList', {
+    method: 'POST',
+    headers: {
+      Authorization: token
+    },
+    body: JSON.stringify({
+      toEmail: email,
+      type: 0,
+      isDel: 0,
+      timeSort: 'desc',
+      num: 1,
+      size: MAIL_PAGE_SIZE
+    })
+  });
+
+  return normalizeCloudMailMessagesPayload(data);
+}
+
+async function deleteCloudMailAccounts(config: CloudMailConfig, userIds: number[]): Promise<void> {
+  const token = await getCloudMailAdminToken(config);
+  await requestCloudMail(
+    config,
+    `/api/user/delete?${new URLSearchParams({ userIds: userIds.join(',') }).toString()}`,
+    {
+      method: 'DELETE',
+      headers: {
+        Authorization: token
+      }
+    }
+  );
 }
 
 function parseAccountIds(input: unknown): number[] {

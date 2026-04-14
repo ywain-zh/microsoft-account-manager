@@ -894,6 +894,296 @@ pre,
   background: rgba(15, 23, 42, 0.06);
 }
 
+.toolbar-input-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: #94a3b8;
+}
+
+.toolbar-input-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.form-autofill-guard {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.input-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  color: #0f8ca8;
+  background: rgba(15, 140, 168, 0.12);
+  cursor: pointer;
+  transition:
+    background-color 0.18s ease,
+    color 0.18s ease,
+    transform 0.18s ease;
+}
+
+.input-icon-button:hover {
+  color: #0f766e;
+  background: rgba(15, 140, 168, 0.18);
+  transform: translateY(-1px);
+}
+
+.input-icon-button:focus-visible {
+  outline: 2px solid rgba(15, 140, 168, 0.24);
+  outline-offset: 2px;
+}
+
+.input-icon-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.cloud-mail-card .n-card__content {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+.cloud-mail-card {
+  border-color: rgba(15, 140, 168, 0.14) !important;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(245, 251, 252, 0.96)),
+    var(--surface-strong) !important;
+  box-shadow:
+    0 20px 38px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+.cloud-mail-card .list-toolbar {
+  margin-bottom: 14px;
+  padding: 8px 10px;
+  border: 1px solid rgba(15, 140, 168, 0.12);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(246, 252, 253, 0.98), rgba(255, 255, 255, 0.92));
+}
+
+.cloud-mail-card .toolbar-search {
+  width: 272px;
+}
+
+.cloud-mail-card .account-table-modern {
+  border: 1px solid rgba(15, 140, 168, 0.14);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.cloud-mail-card .account-table-modern .n-data-table-base-table-header {
+  background: linear-gradient(180deg, rgba(244, 250, 252, 0.98), rgba(236, 246, 248, 0.96));
+}
+
+.cloud-mail-card .account-table-modern .n-data-table-th,
+.cloud-mail-card .account-table-modern .n-data-table-td {
+  padding-left: 6px !important;
+  padding-right: 6px !important;
+}
+
+.cloud-mail-card .account-table-modern .n-data-table-td {
+  padding-top: 10px !important;
+  padding-bottom: 10px !important;
+}
+
+.cloud-mail-card .account-table-modern tbody tr:hover > td {
+  background: rgba(15, 140, 168, 0.045);
+}
+
+.cloud-mail-account-cell {
+  justify-content: flex-start;
+  gap: 6px;
+}
+
+.cloud-mail-account-link {
+  flex: 0 1 auto;
+  max-width: min(32ch, calc(100% - 34px));
+}
+
+.cloud-mail-account-cell .table-icon-button {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 9px;
+}
+
+.cloud-mail-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.cloud-mail-summary-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 16px 18px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(255, 255, 255, 0.98)),
+    var(--surface);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.04);
+}
+
+.cloud-mail-summary-label {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.cloud-mail-summary-value {
+  color: var(--title);
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+.cloud-mail-service-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border: 1px solid rgba(220, 38, 38, 0.16);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 247, 247, 0.96), rgba(255, 255, 255, 0.98));
+}
+
+.cloud-mail-service-alert-copy {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cloud-mail-service-alert-title {
+  color: #991b1b;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.cloud-mail-service-alert-text {
+  margin: 0;
+  color: #b45309;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.cloud-mail-empty-shell {
+  display: grid;
+  justify-items: center;
+  gap: 16px;
+  min-height: 420px;
+  padding: 36px 24px;
+  border: 1px dashed rgba(15, 140, 168, 0.24);
+  border-radius: 24px;
+  text-align: center;
+  background:
+    radial-gradient(circle at top center, rgba(15, 140, 168, 0.08), transparent 32%),
+    linear-gradient(180deg, rgba(248, 252, 253, 0.98), rgba(255, 255, 255, 0.94));
+}
+
+.cloud-mail-empty-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 68px;
+  height: 68px;
+  border-radius: 22px;
+  color: #ffffff;
+  background: linear-gradient(135deg, #0f8ca8 0%, #0f766e 100%);
+  box-shadow:
+    0 18px 32px rgba(15, 140, 168, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.26);
+}
+
+.cloud-mail-empty-badge svg {
+  width: 28px;
+  height: 28px;
+}
+
+.cloud-mail-empty-note {
+  max-width: 38ch;
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.75;
+}
+
+.cloud-mail-count-chip {
+  min-width: 52px;
+  justify-content: center;
+}
+
+.cloud-mail-create-modal .n-card__content {
+  min-width: 0;
+}
+
+.cloud-mail-address-builder {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(220px, 0.72fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.cloud-mail-address-local-part,
+.cloud-mail-address-domain {
+  min-width: 0;
+}
+
+.cloud-mail-address-separator {
+  color: var(--title);
+  font-size: 1.05rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.cloud-mail-preview {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 14px 16px;
+  border: 1px solid rgba(15, 140, 168, 0.14);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(240, 250, 252, 0.98), rgba(255, 255, 255, 0.94));
+}
+
+.cloud-mail-preview-label {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.cloud-mail-preview-value {
+  color: var(--title);
+  font-family: 'Fira Code', 'SFMono-Regular', Consolas, monospace;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  word-break: break-all;
+}
+
 .auth-page {
   position: relative;
   display: flex;
@@ -1250,6 +1540,23 @@ pre,
     align-items: stretch;
   }
 
+  .cloud-mail-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .cloud-mail-address-builder {
+    grid-template-columns: 1fr;
+  }
+
+  .cloud-mail-address-separator {
+    display: none;
+  }
+
+  .cloud-mail-service-alert {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
   .list-footer-meta {
     order: 2;
   }
@@ -1324,6 +1631,11 @@ pre,
   .list-toolbar-left,
   .list-toolbar-right {
     width: 100%;
+  }
+
+  .cloud-mail-empty-shell {
+    min-height: 360px;
+    padding: 28px 18px;
   }
 
   .account-cell {

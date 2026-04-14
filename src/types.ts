@@ -41,6 +41,35 @@ export interface IngestConfig {
   tokenField: string;
 }
 
+export interface CloudMailConfig {
+  apiBaseUrl: string;
+  adminEmail: string;
+  adminPassword: string;
+  availableDomains: string[];
+}
+
+export interface CloudMailAccountItem {
+  userId: number;
+  email: string;
+  status: number;
+  receiveEmailCount: number;
+  sendEmailCount: number;
+  activeTime: string | null;
+  createTime: string | null;
+}
+
+export interface CloudMailAccountListResponse {
+  items: CloudMailAccountItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface CloudMailCreatePayload {
+  localPart: string;
+  domain: string;
+}
+
 export type TokenStatus = 'unknown' | 'valid' | 'invalid';
 
 export type MailFetchMode = 'auto' | 'graph' | 'imap';
@@ -78,6 +107,11 @@ export interface AccountMessagesResponse {
   account: string;
   mode: MailFetchMode;
   resolvedMode: ResolvedMailFetchMode;
+  messages: AccountMailItem[];
+}
+
+export interface CloudMailMessagesResponse {
+  account: string;
   messages: AccountMailItem[];
 }
 

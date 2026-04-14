@@ -4,6 +4,10 @@ import type {
   AccountPayload,
   AuthUser,
   BatchActionResult,
+  CloudMailAccountListResponse,
+  CloudMailConfig,
+  CloudMailCreatePayload,
+  CloudMailMessagesResponse,
   IngestConfig,
   ImportResult,
   MailFetchMode
@@ -44,13 +48,23 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return payload;
 }
 
-function buildQuery(keyword?: string): string {
-  if (!keyword) {
+function buildQuery(params: Record<string, string | number | undefined | null>): string {
+  const search = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value === null || value === undefined || value === '') {
+      continue;
+    }
+
+    search.set(key, String(value));
+  }
+
+  const query = search.toString();
+  if (!query) {
     return '';
   }
 
-  const params = new URLSearchParams({ keyword });
-  return `?${params.toString()}`;
+  return `?${query}`;
 }
 
 export const api = {
@@ -72,7 +86,7 @@ export const api = {
   },
 
   listAccounts(keyword?: string): Promise<{ items: AccountItem[] }> {
-    return request<{ items: AccountItem[] }>(`/api/accounts${buildQuery(keyword)}`);
+    return request<{ items: AccountItem[] }>(`/api/accounts${buildQuery({ keyword })}`);
   },
 
   createAccount(payload: AccountPayload): Promise<{ item: AccountItem }> {
@@ -145,6 +159,57 @@ export const api = {
     return request<AccountMessagesResponse>(`/api/accounts/${id}/messages?${params.toString()}`);
   },
 
+  getCloudMailConfig(): Promise<{ item: CloudMailConfig }> {
+    return request<{ item: CloudMailConfig }>('/api/cloud-mail/config');
+  },
+
+  updateCloudMailConfig(payload: CloudMailConfig): Promise<{ item: CloudMailConfig }> {
+    return request<{ item: CloudMailConfig }>('/api/cloud-mail/config', {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  listCloudMailAccounts(payload: {
+    page: number;
+    pageSize: number;
+    keyword?: string;
+  }): Promise<CloudMailAccountListResponse> {
+    return request<CloudMailAccountListResponse>(
+      `/api/cloud-mail/accounts${buildQuery({
+        page: payload.page,
+        pageSize: payload.pageSize,
+        keyword: payload.keyword
+      })}`
+    );
+  },
+
+  getCloudMailMessages(email: string): Promise<CloudMailMessagesResponse> {
+    return request<CloudMailMessagesResponse>(`/api/cloud-mail/messages${buildQuery({ email })}`);
+  },
+
+  createCloudMailAccount(payload: CloudMailCreatePayload): Promise<{ ok: true; email: string }> {
+    return request<{ ok: true; email: string }>('/api/cloud-mail/accounts', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  deleteCloudMailAccounts(payload: { userIds: number[] }): Promise<{
+    ok: true;
+    total: number;
+    deleted: number;
+    skipped: number;
+  }> {
+    return request<{ ok: true; total: number; deleted: number; skipped: number }>(
+      '/api/cloud-mail/accounts/batch-delete',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      }
+    );
+  },
+
   openUpdateAccountRemark(id: number, remark: string): Promise<{
     ok: true;
     id: number;
@@ -161,7 +226,7 @@ export const api = {
   },
 
   openListAccounts(keyword?: string): Promise<{ items: AccountItem[] }> {
-    const query = keyword ? `?${new URLSearchParams({ keyword }).toString()}` : '';
+    const query = buildQuery({ keyword });
     return request<{ items: AccountItem[] }>(`/api/open/accounts${query}`);
   }
 };

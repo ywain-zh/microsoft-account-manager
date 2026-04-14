@@ -27,6 +27,17 @@ const router = createRouter({
       },
       children: [
         {
+          path: 'services/cloud-mail/accounts',
+          name: 'cloud-mail-accounts',
+          component: () => import('./views/CloudMailAccountsView.vue'),
+          meta: {
+            requiresAuth: true,
+            title: '邮箱列表',
+            description: '查看、创建和删除 Cloud Mail 邮箱账号，并维护远端服务配置。',
+            groupKey: 'cloud-mail'
+          }
+        },
+        {
           path: 'services/microsoft-mail/accounts',
           name: 'microsoft-mail-accounts',
           component: () => import('./views/AccountsView.vue'),

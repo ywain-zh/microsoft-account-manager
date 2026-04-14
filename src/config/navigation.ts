@@ -13,6 +13,16 @@ export const defaultConsoleRoute = '/services/microsoft-mail/accounts';
 
 export const consoleNavigation: ConsoleNavGroup[] = [
   {
+    key: 'cloud-mail',
+    label: 'Cloud Mail',
+    children: [
+      {
+        label: '邮箱列表',
+        path: '/services/cloud-mail/accounts'
+      }
+    ]
+  },
+  {
     key: 'microsoft-mail',
     label: '微软邮箱',
     children: [

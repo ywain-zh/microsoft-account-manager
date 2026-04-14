@@ -88,6 +88,52 @@ Vite 已代理 `/api` 到 `http://127.0.0.1:8787`。
 
 ---
 
+## Docker Compose 部署（服务器）
+
+> 说明：该方案运行 `wrangler dev --local`，并将本地 D1 数据持久化到宿主机目录，适合你在自有服务器用 Docker 直接托管。
+
+### 1) 准备环境变量
+
+```bash
+cp .env.docker.example .env.docker
+```
+
+编辑 `.env.docker`，至少修改：
+
+- `ADMIN_PASSWORD`
+- `SESSION_SECRET`
+- `INGEST_TOKEN`
+- `MAIL_API_TOKEN`
+
+### 2) 启动
+
+```bash
+docker compose up -d --build
+```
+
+访问：
+
+- `http://服务器IP:8787`
+
+### 3) 常用命令
+
+```bash
+# 查看日志
+docker compose logs -f microsoft-account-manager
+
+# 重启
+docker compose restart microsoft-account-manager
+
+# 停止
+docker compose down
+```
+
+### 4) 数据持久化目录
+
+- `./data/wrangler`：保存 Wrangler 本地状态（包含 D1 本地数据）
+
+---
+
 ## 部署到 Cloudflare
 
 ### 1) 创建 D1
