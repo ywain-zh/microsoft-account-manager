@@ -1,12 +1,12 @@
 # Microsoft Account Manager
 
-一个适合自托管小服务器的微软邮箱与自建邮箱管理服务。
+一个面向小型自托管服务器的微软邮箱与自建邮箱管理服务。
 
-当前主运行方案已经切换为：
+当前主运行方案：
 - 前端：Vue 3 + Naive UI
 - 后端：Hono + Node.js
 - 数据库：外置 SQLite
-- 部署：预构建镜像 + `docker compose pull && docker compose up -d`
+- 部署：预构建镜像 + 固定 tag + 服务器仅 `pull` / `up -d`
 
 ## 核心能力
 - 微软账号增删改查
@@ -17,23 +17,36 @@
 - 管理台登录、备注维护、批量刷新
 
 ## 为什么改成这个方案
-- 项目本身业务很轻，不值得把旧本地模拟链路和前端构建链带到线上服务器。
-- 2C2G 服务器更适合“只运行、不构建”的方案。
-- 现在服务器只负责拉镜像、挂载数据目录、启动容器和健康检查，不再默认承担 `docker build`、`npm ci`、`vite build`。
+- 项目业务本身较轻，更适合单服务、单容器、自托管方案。
+- 目标服务器只有 `2C2G`，必须优先保证部署安全，不让升级过程把机器拖死。
+- 服务器不再承担构建职责，只负责拉镜像、挂载数据目录、启动容器和健康检查。
+
+## 部署硬约束
+- `DEPLOY_LITE.md` 是后续唯一标准部署文档。
+- 改造完成后必须先输出审核说明，再等待用户确认。
+- 没有用户明确审核通过，不允许部署。
+- 没有用户明确批准，不允许执行 `docker compose pull`、`docker compose up -d`、`docker run`、替换线上服务、删除旧服务、切换正式端口。
+- 每次部署前必须先编写对应的 `releases/RELEASE-*.md`；没有 release 文档，不允许部署。
+- 生产环境禁止使用 `latest`，必须使用已审核通过的固定镜像 tag。
+- 不要仅根据本文件执行部署命令；部署时必须严格按 [DEPLOY_LITE.md](./DEPLOY_LITE.md) 执行。
 
 ## 项目结构
 
 ```text
 .
-├─ src/                    # Vue 管理台
-├─ server/                 # Node 入口、Hono 应用、SQLite 适配、迁移与导入工具
-├─ migrations/             # SQLite 迁移脚本
-├─ dist/                   # 前端构建产物
-├─ build/                  # 后端构建产物
-├─ Dockerfile              # 仅供本地或 CI 构建镜像
-├─ docker-compose.yml      # 纯 image 模式部署
-├─ .env.example            # 运行环境变量示例
-└─ DEPLOY_LITE.md          # 轻量部署说明
+├─ src/                         # Vue 管理台
+├─ server/                      # Node 入口、Hono 应用、SQLite 适配、迁移与导入工具
+├─ migrations/                  # SQLite 迁移脚本
+├─ releases/                    # release 模板与每次发布记录
+├─ dist/                        # 前端构建产物
+├─ build/                       # 后端构建产物
+├─ Dockerfile                   # 仅供本地或 CI 构建镜像
+├─ docker-compose.yml           # 纯 image 模式部署
+├─ package.runtime.json         # 运行镜像最小依赖清单
+├─ package.runtime-lock.json    # 运行镜像锁文件
+├─ .env.example                 # 运行环境变量示例
+├─ DEPLOY_LITE.md               # 唯一标准部署文档
+└─ REFactor_PLAN.md             # 轻量化改造说明与执行计划
 ```
 
 ## 本地开发
@@ -70,15 +83,13 @@ npm run build
 ### 本地数据库工具
 
 ```bash
-# 手动执行迁移
 npm run db:migrate
-
-# 从旧本地 SQLite 库导入
 npm run db:import-legacy
 ```
 
 ## 运行配置
 运行所需的主要环境变量：
+- `APP_IMAGE`
 - `ADMIN_USERNAME`
 - `ADMIN_PASSWORD`
 - `SESSION_SECRET`
@@ -88,20 +99,9 @@ npm run db:import-legacy
 
 更多细节见 [DEPLOY_LITE.md](./DEPLOY_LITE.md) 和 [.env.example](./.env.example)。
 
-## 轻量部署原则
-- 服务器禁止执行 `docker compose up -d --build`
-- 服务器禁止执行 `docker build`
-- 服务器禁止执行 `npm ci`、`npm install`、`npm run build`、`vite build`
-- 升级默认只走：
-
-```bash
-docker compose pull
-docker compose up -d
-```
-
 ## 数据迁移
 - 新数据库默认使用 `/app/data/account-manager.db`
-- 首次启动若检测到旧本地 SQLite 数据库文件，且目标数据库不存在，会自动导入旧库
+- 首次启动若检测到旧本地 SQLite 数据库文件，且目标数据库不存在，可按配置自动导入旧库
 - 每次启动都会执行幂等迁移，保证结构补齐
 
 ## API 能力
@@ -110,12 +110,15 @@ docker compose up -d
 - 外部账号导入接口
 - Cloud Mail 配置与收件箱读取
 
-现有接口路径保持不变，前端和外部调用方无需按这次运行时改造去改 URL。
+现有接口路径保持不变，前端和外部调用方无需因为本次运行时改造调整 URL。
 
-## 部署文档
-- 轻量部署：见 [DEPLOY_LITE.md](./DEPLOY_LITE.md)
+## 文档入口
+- 改造说明与清单：见 [REFactor_PLAN.md](./REFactor_PLAN.md)
+- 唯一标准部署文档：见 [DEPLOY_LITE.md](./DEPLOY_LITE.md)
+- release 模板与发布记录：见 [releases/](./releases)
 - 环境变量示例：见 [.env.example](./.env.example)
 
 ## 注意事项
-- 本仓库主支持路线是自托管 Node + SQLite 方案，旧运行链路不再作为默认部署路径。
-- 如需升级，请先在本地或 CI 构建镜像并推送，再让服务器执行 `pull + up -d`。
+- 本仓库主支持路线是自托管 Node + SQLite 方案，旧本地模拟链路不再作为默认部署路径。
+- 镜像构建只能在本地开发机或外部 CI 执行，不能挪到服务器现场执行。
+- 如需部署或升级，请先准备并审核 release 文档，再严格按 [DEPLOY_LITE.md](./DEPLOY_LITE.md) 操作。
