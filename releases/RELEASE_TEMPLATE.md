@@ -4,7 +4,7 @@
 - YYYY-MM-DD
 
 ## 本次发布版本/tag
-- `ghcr.io/your-org/microsoft-account-manager:YYYY.MM.DD-N`
+- `ghcr.io/ywain-zh/microsoft-account-manager:YYYY.MM.DD-N`
 
 ## 本次发布目的
 - 说明本次发布要解决什么问题。

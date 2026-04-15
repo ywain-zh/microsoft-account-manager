@@ -17,11 +17,13 @@
 ```bash
 export DEPLOY_DIR=/opt/microsoft-account-manager
 export CONTAINER_NAME=microsoft-account-manager
-export IMAGE_REPO=ghcr.io/your-org/microsoft-account-manager
-export IMAGE_TAG=2026.04.15-1
+export IMAGE_REPO=ghcr.io/ywain-zh/microsoft-account-manager
+export IMAGE_TAG=2026.04.15-2
 export APP_IMAGE=${IMAGE_REPO}:${IMAGE_TAG}
-export RELEASE_DOC=releases/RELEASE-2026-04-15-01.md
+export RELEASE_DOC=releases/RELEASE-2026-04-15-02.md
 ```
+
+- 每次新部署前，都必须把 `IMAGE_TAG` 和 `RELEASE_DOC` 改成“本次已审核通过”的版本值。
 
 ## 审核确认要求
 - 改造完成后必须先输出审核说明，再等待用户审核。
@@ -69,9 +71,38 @@ docker images | grep microsoft-account-manager
 
 ## 镜像 tag 选择规则
 - 生产环境禁止直接依赖 `latest`。
-- 生产环境必须使用固定 tag，例如 `ghcr.io/your-org/microsoft-account-manager:2026.04.15-1`。
+- 生产环境必须使用固定 tag，例如 `ghcr.io/ywain-zh/microsoft-account-manager:2026.04.15-2`。
 - 固定 tag 必须与本次 release 文档中的版本/tag 一致。
 - 回滚时必须切回上一个已验证的固定 tag。
+
+## 代码修改后的标准发布流程
+以后只要代码有变更，标准流程固定为“本地验证 -> 编写 release 文档 -> 推送代码 -> push tag 发镜像 -> 等待审核批准 -> 服务器 pull/up”。不要跳过中间步骤，也不要把构建挪到服务器上执行。
+
+本地发布准备命令：
+
+```bash
+cd /path/to/microsoft-account-manager
+npm run typecheck
+npm run build
+cp releases/RELEASE_TEMPLATE.md releases/RELEASE-2026-04-16-01.md
+git status
+git add .
+git commit -m "feat: describe this release"
+git push origin dev
+git tag 2026.04.16-1
+git push origin 2026.04.16-1
+```
+
+镜像发布检查命令：
+
+```bash
+docker manifest inspect ghcr.io/ywain-zh/microsoft-account-manager:2026.04.16-1
+```
+
+发布阶段硬约束：
+- 只有在 tag push 成功、GHCR 已存在本次固定 tag 镜像后，才允许进入服务器部署阶段。
+- 如果 release 文档未写完，或 tag 镜像尚未发布成功，立即停止，不允许部署。
+- 服务器侧仍然只允许执行 `docker compose pull` 和 `docker compose up -d` 一类运行命令。
 
 ## 环境变量准备步骤
 1. 在服务器部署目录中复制 `.env.example` 为 `.env`。
@@ -108,10 +139,10 @@ du -sh data
 ```bash
 export DEPLOY_DIR=/opt/microsoft-account-manager
 export CONTAINER_NAME=microsoft-account-manager
-export IMAGE_REPO=ghcr.io/your-org/microsoft-account-manager
-export IMAGE_TAG=2026.04.15-1
+export IMAGE_REPO=ghcr.io/ywain-zh/microsoft-account-manager
+export IMAGE_TAG=2026.04.15-2
 export APP_IMAGE=${IMAGE_REPO}:${IMAGE_TAG}
-export RELEASE_DOC=releases/RELEASE-2026-04-15-01.md
+export RELEASE_DOC=releases/RELEASE-2026-04-15-02.md
 
 cd "$DEPLOY_DIR"
 pwd
@@ -143,10 +174,10 @@ docker compose exec -T microsoft-account-manager wget -qO- http://127.0.0.1:8787
 ```bash
 export DEPLOY_DIR=/opt/microsoft-account-manager
 export CONTAINER_NAME=microsoft-account-manager
-export IMAGE_REPO=ghcr.io/your-org/microsoft-account-manager
-export IMAGE_TAG=2026.04.15-1
+export IMAGE_REPO=ghcr.io/ywain-zh/microsoft-account-manager
+export IMAGE_TAG=2026.04.15-2
 export APP_IMAGE=${IMAGE_REPO}:${IMAGE_TAG}
-export RELEASE_DOC=releases/RELEASE-2026-04-15-01.md
+export RELEASE_DOC=releases/RELEASE-2026-04-15-02.md
 
 cd "$DEPLOY_DIR"
 pwd
@@ -175,7 +206,7 @@ docker compose exec -T microsoft-account-manager wget -qO- http://127.0.0.1:8787
 
 ```bash
 export DEPLOY_DIR=/opt/microsoft-account-manager
-export IMAGE_REPO=ghcr.io/your-org/microsoft-account-manager
+export IMAGE_REPO=ghcr.io/ywain-zh/microsoft-account-manager
 export PREV_IMAGE_TAG=2026.04.14-2
 
 cd "$DEPLOY_DIR"

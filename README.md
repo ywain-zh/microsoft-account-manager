@@ -30,6 +30,17 @@
 - 生产环境禁止使用 `latest`，必须使用已审核通过的固定镜像 tag。
 - 不要仅根据本文件执行部署命令；部署时必须严格按 [DEPLOY_LITE.md](./DEPLOY_LITE.md) 执行。
 
+## 代码修改后的发布顺序
+以后改代码后的标准路径固定如下：
+1. 本地执行 `npm run typecheck` 和 `npm run build`。
+2. 基于 `releases/RELEASE_TEMPLATE.md` 新建本次 `releases/RELEASE-*.md`。
+3. 提交代码并 `git push origin dev`。
+4. 创建固定 tag 并 push，例如 `git tag 2026.04.16-1 && git push origin 2026.04.16-1`。
+5. 等待 GitHub Actions 将镜像发布到 `ghcr.io/ywain-zh/microsoft-account-manager:<tag>`。
+6. 用户审核通过并明确批准后，才允许按 [DEPLOY_LITE.md](./DEPLOY_LITE.md) 去服务器执行 `docker compose pull` 和 `docker compose up -d`。
+
+这条顺序是后续唯一推荐路径。服务器不负责构建，只负责拉固定 tag 镜像并运行。
+
 ## 项目结构
 
 ```text
