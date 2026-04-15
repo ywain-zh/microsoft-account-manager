@@ -1,6 +1,7 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { createDiscreteApi } from 'naive-ui';
 import { api, UnauthorizedError } from '../api';
+import { copyToClipboard } from '../utils/clipboard';
 import type {
   AccountMailItem,
   CloudMailAccountItem,
@@ -131,32 +132,11 @@ const availableDomains = computed(() => storedConfig.availableDomains);
 const selectedMail = computed(() => {
   return mailItems.value.find((item) => item.id === selectedMailId.value) ?? null;
 });
-const selectedMailText = computed(() => {
-  if (!selectedMail.value) {
-    return '';
-  }
-
-  const content = selectedMail.value.content || selectedMail.value.preview || '';
-  return selectedMail.value.contentType === 'html' ? htmlToText(content) : content;
-});
 
 let initialLoadPromise: Promise<void> | null = null;
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : '发生未知错误';
-}
-
-function htmlToText(html: string): string {
-  if (!html) {
-    return '';
-  }
-
-  try {
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    return (doc.body.textContent || '').trim();
-  } catch {
-    return html;
-  }
 }
 
 function handleApiError(error: unknown): void {
@@ -485,13 +465,13 @@ async function copyText(value: string, successMessage: string): Promise<void> {
     return;
   }
 
-  if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
-    message.warning('当前环境不支持复制到剪贴板');
-    return;
-  }
-
   try {
-    await navigator.clipboard.writeText(text);
+    const copied = await copyToClipboard(text);
+    if (!copied) {
+      message.error('复制失败，请检查浏览器权限');
+      return;
+    }
+
     message.success(successMessage);
   } catch {
     message.error('复制失败，请检查浏览器权限');
@@ -608,7 +588,6 @@ export function useCloudMailConsole() {
     mailItems,
     selectedMailId,
     selectedMail,
-    selectedMailText,
     storedConfig,
     configForm,
     createForm,

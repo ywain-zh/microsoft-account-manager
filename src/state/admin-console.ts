@@ -1,6 +1,7 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { createDiscreteApi } from 'naive-ui';
 import { api, UnauthorizedError } from '../api';
+import { copyToClipboard } from '../utils/clipboard';
 import type {
   AccountItem,
   AccountMailItem,
@@ -87,15 +88,6 @@ const mailApiTokenHeader = ref('x-mail-api-token');
 
 const selectedMail = computed(() => {
   return mailItems.value.find((item) => item.id === selectedMailId.value) ?? null;
-});
-
-const selectedMailText = computed(() => {
-  if (!selectedMail.value) {
-    return '';
-  }
-
-  const content = selectedMail.value.content || selectedMail.value.preview || '';
-  return selectedMail.value.contentType === 'html' ? htmlToText(content) : content;
 });
 
 let authCheckPromise: Promise<boolean> | null = null;
@@ -193,19 +185,6 @@ function normalizePayload(payload: AccountFormState): AccountPayload {
     clientId: payload.clientId.trim(),
     refreshToken: payload.refreshToken.trim()
   };
-}
-
-function htmlToText(html: string): string {
-  if (!html) {
-    return '';
-  }
-
-  try {
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    return (doc.body.textContent || '').trim();
-  } catch {
-    return html;
-  }
 }
 
 function getTargetAccountIds(all: boolean): number[] {
@@ -551,13 +530,13 @@ async function copyText(value: string, successMessage: string): Promise<boolean>
     return false;
   }
 
-  if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
-    message.warning('当前环境不支持复制到剪贴板');
-    return false;
-  }
-
   try {
-    await navigator.clipboard.writeText(text);
+    const copied = await copyToClipboard(text);
+    if (!copied) {
+      message.error('复制失败，请检查浏览器权限');
+      return false;
+    }
+
     message.success(successMessage);
     return true;
   } catch {
@@ -714,7 +693,6 @@ export function useAdminConsole() {
     mailItems,
     selectedMailId,
     selectedMail,
-    selectedMailText,
     importText,
     createForm,
     editForm,

@@ -172,101 +172,21 @@
       </template>
     </n-modal>
 
-    <n-modal
-      v-model:show="mailVisible"
-      preset="card"
-      class="console-modal console-mail-modal"
-      closable
-    >
-      <template #header>
-        <div class="mail-modal-header">
-          <div class="mail-modal-title-row">
-            <div class="mail-modal-title-wrap">
-              <div class="mail-modal-title-line">
-                <div class="mail-modal-title">邮箱邮件 - {{ mailAccount }}</div>
-                <div class="mail-modal-inline-actions">
-                  <button
-                    class="icon-button"
-                    type="button"
-                    title="复制邮箱"
-                    aria-label="复制邮箱"
-                    :disabled="!mailAccount"
-                    @click="copyMailAccount"
-                  >
-                    <CopyGlyph />
-                  </button>
-                  <button
-                    class="icon-button"
-                    type="button"
-                    title="刷新邮件"
-                    aria-label="刷新邮件"
-                    :disabled="!mailAccount || mailLoading"
-                    @click="refreshMailInbox"
-                  >
-                    <RefreshGlyph />
-                  </button>
-                </div>
-              </div>
-              <p class="mail-modal-subtitle">合并展示收件箱与垃圾邮件</p>
-            </div>
-          </div>
-        </div>
-      </template>
-
-      <div class="mail-modal-wrapper">
-        <div class="mail-list-panel">
-          <n-spin :show="mailLoading">
-            <n-empty v-if="mailItems.length === 0" description="暂无邮件" />
-            <div v-else class="mail-list">
-              <button
-                v-for="item in mailItems"
-                :key="item.id"
-                class="mail-item"
-                :class="{ 'mail-item-active': selectedMail?.id === item.id }"
-                type="button"
-                @click="selectMail(item.id)"
-              >
-                <div class="mail-item-topline">
-                  <p class="mail-item-subject">{{ item.subject || '(无主题)' }}</p>
-                  <span
-                    class="mail-folder-badge"
-                    :class="`mail-folder-badge-${item.folderKind}`"
-                    :title="item.folderLabel"
-                  >
-                    <InboxGlyph v-if="item.folderKind === 'inbox'" />
-                    <JunkGlyph v-else />
-                    <span>{{ item.folderLabel }}</span>
-                  </span>
-                </div>
-                <p class="mail-item-meta">{{ item.from || '-' }}</p>
-                <p class="mail-item-meta">{{ formatMailDate(item.receivedAt) }}</p>
-              </button>
-            </div>
-          </n-spin>
-        </div>
-
-        <div class="mail-content-panel">
-          <n-empty v-if="!selectedMail" description="请从左侧选择邮件" />
-          <div v-else class="mail-content-block">
-            <div class="mail-content-heading">
-              <h3 class="mail-content-title">{{ selectedMail.subject || '(无主题)' }}</h3>
-              <span
-                class="mail-folder-badge"
-                :class="`mail-folder-badge-${selectedMail.folderKind}`"
-                :title="selectedMail.folderLabel"
-              >
-                <InboxGlyph v-if="selectedMail.folderKind === 'inbox'" />
-                <JunkGlyph v-else />
-                <span>{{ selectedMail.folderLabel }}</span>
-              </span>
-            </div>
-            <p class="mail-content-meta">发件人：{{ selectedMail.from || '-' }}</p>
-            <p class="mail-content-meta">时间：{{ formatMailDate(selectedMail.receivedAt) }}</p>
-            <div class="mail-content-text">{{ selectedMailText }}</div>
-          </div>
-        </div>
-      </div>
-    </n-modal>
+    <MailInboxViewer
+      :show="mailVisible"
+      title="邮箱邮件"
+      subtitle="合并展示收件箱与垃圾邮件"
+      :account="mailAccount"
+      :items="mailItems"
+      :loading="mailLoading"
+      :selected-mail-id="selectedMailId"
+      :format-date="formatMailDate"
+      :show-junk-badge="true"
+      @update:show="handleMailVisibleChange"
+      @select="selectMail"
+      @copy="copyMailAccount"
+      @refresh="refreshMailInbox"
+    />
   </div>
 </template>
 
@@ -276,7 +196,6 @@ import {
   NButton,
   NCard,
   NDataTable,
-  NEmpty,
   NForm,
   NFormItem,
   NGi,
@@ -285,10 +204,10 @@ import {
   NModal,
   NPagination,
   NSpace,
-  NSpin,
   NTag,
   type DataTableColumns
 } from 'naive-ui';
+import MailInboxViewer from '../components/MailInboxViewer.vue';
 import { useAdminConsole } from '../state/admin-console';
 import type { AccountItem } from '../types';
 
@@ -307,75 +226,6 @@ const CopyGlyph = () =>
         d: 'M4.75 13.25A1.75 1.75 0 0 1 3 11.5V5.25A1.75 1.75 0 0 1 4.75 3.5H11A1.75 1.75 0 0 1 12.75 5.25',
         stroke: 'currentColor',
         'stroke-width': '1.5',
-        'stroke-linecap': 'round'
-      })
-    ]
-  );
-
-const RefreshGlyph = () =>
-  h(
-    'svg',
-    { viewBox: '0 0 20 20', fill: 'none', 'aria-hidden': 'true' },
-    [
-      h('path', {
-        d: 'M15.25 10a5.25 5.25 0 1 1-1.538-3.712',
-        stroke: 'currentColor',
-        'stroke-width': '1.5',
-        'stroke-linecap': 'round',
-        'stroke-linejoin': 'round'
-      }),
-      h('path', {
-        d: 'M12.5 4.75h2.75V7.5',
-        stroke: 'currentColor',
-        'stroke-width': '1.5',
-        'stroke-linecap': 'round',
-        'stroke-linejoin': 'round'
-      })
-    ]
-  );
-
-const InboxGlyph = () =>
-  h(
-    'svg',
-    { viewBox: '0 0 20 20', fill: 'none', 'aria-hidden': 'true' },
-    [
-      h('path', {
-        d: 'M3.5 6.25A1.75 1.75 0 0 1 5.25 4.5h9.5A1.75 1.75 0 0 1 16.5 6.25v7.5A1.75 1.75 0 0 1 14.75 15.5h-9.5A1.75 1.75 0 0 1 3.5 13.75z',
-        stroke: 'currentColor',
-        'stroke-width': '1.5',
-        'stroke-linejoin': 'round'
-      }),
-      h('path', {
-        d: 'm4.25 6 5.088 4.07a1 1 0 0 0 1.248 0L15.75 6',
-        stroke: 'currentColor',
-        'stroke-width': '1.5',
-        'stroke-linecap': 'round',
-        'stroke-linejoin': 'round'
-      })
-    ]
-  );
-
-const JunkGlyph = () =>
-  h(
-    'svg',
-    { viewBox: '0 0 20 20', fill: 'none', 'aria-hidden': 'true' },
-    [
-      h('path', {
-        d: 'M10 4.25 16 15.5H4z',
-        stroke: 'currentColor',
-        'stroke-width': '1.5',
-        'stroke-linejoin': 'round'
-      }),
-      h('path', {
-        d: 'M10 8v3.5',
-        stroke: 'currentColor',
-        'stroke-width': '1.5',
-        'stroke-linecap': 'round'
-      }),
-      h('path', {
-        d: 'M10 14h.01',
-        stroke: 'currentColor',
-        'stroke-width': '1.8',
         'stroke-linecap': 'round'
       })
     ]
@@ -400,9 +250,7 @@ const {
   mailLoading,
   mailAccount,
   mailItems,
-  selectedMail,
   selectedMailId,
-  selectedMailText,
   createForm,
   editForm,
   importText,
@@ -656,6 +504,10 @@ async function handleImportText(): Promise<void> {
 
 function selectMail(id: string): void {
   selectedMailId.value = id;
+}
+
+function handleMailVisibleChange(value: boolean): void {
+  mailVisible.value = value;
 }
 
 onMounted(async () => {

@@ -241,91 +241,21 @@
       </template>
     </n-modal>
 
-    <n-modal
-      v-model:show="mailVisible"
-      preset="card"
-      class="console-modal console-mail-modal"
-      closable
-    >
-      <template #header>
-        <div class="mail-modal-header">
-          <div class="mail-modal-title-row">
-            <div class="mail-modal-title-wrap">
-              <div class="mail-modal-title-line">
-                <div class="mail-modal-title">收件箱 - {{ mailAccount }}</div>
-                <div class="mail-modal-inline-actions">
-                  <button
-                    class="icon-button"
-                    type="button"
-                    title="复制邮箱"
-                    aria-label="复制邮箱"
-                    :disabled="!mailAccount"
-                    @click="copyMailAccount"
-                  >
-                    <CopyGlyph />
-                  </button>
-                  <button
-                    class="icon-button"
-                    type="button"
-                    title="刷新邮件"
-                    aria-label="刷新邮件"
-                    :disabled="!mailAccount || mailLoading"
-                    @click="refreshMailInbox"
-                  >
-                    <RefreshGlyph />
-                  </button>
-                </div>
-              </div>
-              <p class="mail-modal-subtitle">展示该邮箱最近收取的 Cloud Mail 邮件</p>
-            </div>
-          </div>
-        </div>
-      </template>
-
-      <div class="mail-modal-wrapper">
-        <div class="mail-list-panel">
-          <n-spin :show="mailLoading">
-            <n-empty v-if="mailItems.length === 0" description="暂无邮件" />
-            <div v-else class="mail-list">
-              <button
-                v-for="item in mailItems"
-                :key="item.id"
-                class="mail-item"
-                :class="{ 'mail-item-active': selectedMail?.id === item.id }"
-                type="button"
-                @click="selectMail(item.id)"
-              >
-                <div class="mail-item-topline">
-                  <p class="mail-item-subject">{{ item.subject || '(无主题)' }}</p>
-                  <span class="mail-folder-badge mail-folder-badge-inbox" title="收件箱">
-                    <InboxGlyph />
-                    <span>收件箱</span>
-                  </span>
-                </div>
-                <p class="mail-item-meta">{{ item.from || '-' }}</p>
-                <p class="mail-item-meta">{{ formatDate(item.receivedAt) }}</p>
-              </button>
-            </div>
-          </n-spin>
-        </div>
-
-        <div class="mail-content-panel">
-          <n-empty v-if="!selectedMail" description="请从左侧选择邮件" />
-          <div v-else class="mail-content-block">
-            <div class="mail-content-heading">
-              <h3 class="mail-content-title">{{ selectedMail.subject || '(无主题)' }}</h3>
-              <span class="mail-folder-badge mail-folder-badge-inbox" title="收件箱">
-                <InboxGlyph />
-                <span>收件箱</span>
-              </span>
-            </div>
-            <p class="mail-content-meta">发件人：{{ selectedMail.from || '-' }}</p>
-            <p class="mail-content-meta">时间：{{ formatDate(selectedMail.receivedAt) }}</p>
-            <div class="mail-content-text">{{ selectedMailText }}</div>
-          </div>
-        </div>
-      </div>
-    </n-modal>
+    <MailInboxViewer
+      :show="mailVisible"
+      title="收件箱"
+      subtitle="展示该邮箱最近收取的 Cloud Mail 邮件"
+      :account="mailAccount"
+      :items="mailItems"
+      :loading="mailLoading"
+      :selected-mail-id="selectedMailId"
+      :format-date="formatDate"
+      :show-junk-badge="false"
+      @update:show="handleMailVisibleChange"
+      @select="selectMail"
+      @copy="copyMailAccount"
+      @refresh="refreshMailInbox"
+    />
   </div>
 </template>
 
@@ -335,7 +265,6 @@ import {
   NButton,
   NCard,
   NDataTable,
-  NEmpty,
   NForm,
   NFormItem,
   NGi,
@@ -345,10 +274,10 @@ import {
   NPagination,
   NSelect,
   NSpace,
-  NSpin,
   NTag,
   type DataTableColumns
 } from 'naive-ui';
+import MailInboxViewer from '../components/MailInboxViewer.vue';
 import { useCloudMailConsole } from '../state/cloud-mail-console';
 import type { CloudMailAccountItem } from '../types';
 
@@ -385,28 +314,6 @@ const GearGlyph = () =>
         d: 'M16.25 10a1.2 1.2 0 0 0-.79-1.13l-.91-.32a4.95 4.95 0 0 0-.37-.9l.4-.87a1.2 1.2 0 0 0-.25-1.36l-.42-.42a1.2 1.2 0 0 0-1.36-.25l-.87.4c-.29-.15-.59-.27-.9-.37l-.32-.91A1.2 1.2 0 0 0 10 3.75h-.6a1.2 1.2 0 0 0-1.13.79l-.32.91c-.31.1-.61.22-.9.37l-.87-.4a1.2 1.2 0 0 0-1.36.25l-.42.42a1.2 1.2 0 0 0-.25 1.36l.4.87c-.15.29-.27.59-.37.9l-.91.32A1.2 1.2 0 0 0 3.75 10v.6c0 .52.33.98.79 1.13l.91.32c.1.31.22.61.37.9l-.4.87a1.2 1.2 0 0 0 .25 1.36l.42.42c.36.36.9.46 1.36.25l.87-.4c.29.15.59.27.9.37l.32.91c.15.46.61.79 1.13.79h.6c.52 0 .98-.33 1.13-.79l.32-.91c.31-.1.61-.22.9-.37l.87.4c.46.21 1 .11 1.36-.25l.42-.42c.36-.36.46-.9.25-1.36l-.4-.87c.15-.29.27-.59.37-.9l.91-.32c.46-.15.79-.61.79-1.13V10Z',
         stroke: 'currentColor',
         'stroke-width': '1.15',
-        'stroke-linejoin': 'round'
-      })
-    ]
-  );
-
-const RefreshGlyph = () =>
-  h(
-    'svg',
-    { viewBox: '0 0 20 20', fill: 'none' },
-    [
-      h('path', {
-        d: 'M15.25 10a5.25 5.25 0 1 1-1.538-3.712',
-        stroke: 'currentColor',
-        'stroke-width': '1.5',
-        'stroke-linecap': 'round',
-        'stroke-linejoin': 'round'
-      }),
-      h('path', {
-        d: 'M12.5 4.75h2.75V7.5',
-        stroke: 'currentColor',
-        'stroke-width': '1.5',
-        'stroke-linecap': 'round',
         'stroke-linejoin': 'round'
       })
     ]
@@ -512,27 +419,6 @@ const CloudGlyph = () =>
     ]
   );
 
-const InboxGlyph = () =>
-  h(
-    'svg',
-    { viewBox: '0 0 20 20', fill: 'none' },
-    [
-      h('path', {
-        d: 'M3.5 6.25A1.75 1.75 0 0 1 5.25 4.5h9.5A1.75 1.75 0 0 1 16.5 6.25v7.5A1.75 1.75 0 0 1 14.75 15.5h-9.5A1.75 1.75 0 0 1 3.5 13.75z',
-        stroke: 'currentColor',
-        'stroke-width': '1.5',
-        'stroke-linejoin': 'round'
-      }),
-      h('path', {
-        d: 'm4.25 6 5.088 4.07a1 1 0 0 0 1.248 0L15.75 6',
-        stroke: 'currentColor',
-        'stroke-width': '1.5',
-        'stroke-linecap': 'round',
-        'stroke-linejoin': 'round'
-      })
-    ]
-  );
-
 const cloudMail = useCloudMailConsole();
 const {
   initialDataLoaded,
@@ -554,8 +440,6 @@ const {
   mailAccount,
   mailItems,
   selectedMailId,
-  selectedMail,
-  selectedMailText,
   storedConfig,
   configForm,
   createForm,
@@ -765,6 +649,10 @@ const columns: DataTableColumns<CloudMailAccountItem> = [
 
 function selectMail(id: string): void {
   selectedMailId.value = id;
+}
+
+function handleMailVisibleChange(value: boolean): void {
+  mailVisible.value = value;
 }
 
 onMounted(async () => {

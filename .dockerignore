@@ -1,8 +1,9 @@
 node_modules
+build
 dist
+data
 .git
 .gitignore
-.wrangler
 .DS_Store
 *.log
 npm-debug.log*
@@ -11,5 +12,4 @@ yarn-error.log*
 pnpm-debug.log*
 .env
 .env.*
-.dev.vars
-.wrangler.deploy.toml
+REFactor_PLAN.md

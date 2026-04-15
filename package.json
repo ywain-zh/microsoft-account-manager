@@ -5,28 +5,35 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:worker": "wrangler dev --local",
-    "build": "vite build",
-    "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.worker.json --noEmit",
-    "prepare:cf-config": "node scripts/prepare-wrangler-config.mjs",
-    "migrate:local": "wrangler d1 migrations apply account_manager_db --local",
-    "migrate:remote": "npm run prepare:cf-config && wrangler d1 migrations apply account_manager_db --remote --config .wrangler.deploy.toml",
-    "deploy:cf": "npm run migrate:remote && wrangler deploy --config .wrangler.deploy.toml",
-    "deploy": "npm run build && npm run deploy:cf"
+    "dev:web": "vite",
+    "dev:server": "node --watch --experimental-strip-types server/main.ts",
+    "build:web": "vite build",
+    "build:server": "esbuild server/main.ts server/cli/migrate.ts server/cli/import-legacy.ts --bundle --platform=node --format=esm --target=node22 --external:better-sqlite3 --outdir=build/server --outbase=server --entry-names=[dir]/[name]",
+    "build": "npm run build:web && npm run build:server",
+    "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "db:migrate": "node build/server/cli/migrate.js",
+    "db:import-legacy": "node build/server/cli/import-legacy.js",
+    "start": "node build/server/main.js"
+  },
+  "engines": {
+    "node": ">=22.22.0"
   },
   "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "dompurify": "^3.4.0",
     "hono": "^4.8.2",
-    "katex": "^0.16.45",
     "naive-ui": "^2.40.3",
     "vue": "^3.5.13",
     "vue-router": "^4.6.4"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20241011.0",
+    "@hono/node-server": "^1.14.4",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.15.14",
     "@vitejs/plugin-vue": "^5.2.4",
+    "esbuild": "^0.25.3",
     "typescript": "^5.8.3",
     "vite": "^5.4.10",
-    "vue-tsc": "^2.2.8",
-    "wrangler": "^4.9.0"
+    "vue-tsc": "^2.2.8"
   }
 }

@@ -2518,7 +2518,7 @@ function getConfiguredPassword(env: Bindings): string {
   const password = asText(env.ADMIN_PASSWORD);
   if (!password) {
     throw new HTTPException(500, {
-      message: '服务端未配置 ADMIN_PASSWORD，请执行 wrangler secret put ADMIN_PASSWORD'
+      message: '服务端未配置 ADMIN_PASSWORD 环境变量'
     });
   }
   return password;
@@ -2528,7 +2528,7 @@ function getSessionSecret(env: Bindings): string {
   const secret = asText(env.SESSION_SECRET);
   if (!secret) {
     throw new HTTPException(500, {
-      message: '服务端未配置 SESSION_SECRET，请执行 wrangler secret put SESSION_SECRET'
+      message: '服务端未配置 SESSION_SECRET 环境变量'
     });
   }
   return secret;
@@ -2538,7 +2538,7 @@ function getIngestToken(env: Bindings): string {
   const token = asText(env.INGEST_TOKEN);
   if (!token) {
     throw new HTTPException(500, {
-      message: '服务端未配置 INGEST_TOKEN，请执行 wrangler secret put INGEST_TOKEN'
+      message: '服务端未配置 INGEST_TOKEN 环境变量'
     });
   }
   return token;
@@ -2548,8 +2548,7 @@ function getMailApiToken(env: Bindings): string {
   const token = asText(env.MAIL_API_TOKEN || env.INGEST_TOKEN).trim();
   if (!token) {
     throw new HTTPException(500, {
-      message:
-        '服务端未配置 MAIL_API_TOKEN（或可复用 INGEST_TOKEN），请执行 wrangler secret put MAIL_API_TOKEN'
+      message: '服务端未配置 MAIL_API_TOKEN（或可复用 INGEST_TOKEN）环境变量'
     });
   }
   return token;
