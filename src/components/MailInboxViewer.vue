@@ -3,84 +3,89 @@
     :show="show"
     preset="card"
     :bordered="false"
-    class="console-modal console-mail-modal inbox-modal"
+    class="console-modal console-mail-modal inbox-modal inbox-modal-html-match"
     closable
     @update:show="handleShowUpdate"
   >
     <template #header>
-      <div class="modal-header mail-modal-header-spec">
-        <div class="mail-modal-header-copy">
-          <div class="header-left">
-            <h2>{{ title }}</h2>
+      <div class="modal-header inbox-modal-header">
+        <div class="modal-header-left">
+          <h2>{{ title }}</h2>
+          <div class="email-action-group">
             <p>{{ account || '-' }}</p>
+            <button
+              class="btn-small-action"
+              type="button"
+              title="复制邮箱"
+              aria-label="复制邮箱"
+              :disabled="!account"
+              @click="emit('copy')"
+            >
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <rect
+                  x="9"
+                  y="9"
+                  width="13"
+                  height="13"
+                  rx="2"
+                  ry="2"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+                <path
+                  d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <span>复制</span>
+            </button>
+            <button
+              class="btn-small-action"
+              type="button"
+              title="刷新邮件"
+              aria-label="刷新邮件"
+              :disabled="!account || loading"
+              @click="emit('refresh')"
+            >
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" :class="{ spin: loading }">
+                <polyline
+                  points="23 4 23 10 17 10"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+                <polyline
+                  points="1 20 1 14 7 14"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+                <path
+                  d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <span>刷新</span>
+            </button>
           </div>
-          <p class="mail-modal-subtitle">{{ subtitle }}</p>
-        </div>
-
-        <div class="mail-modal-inline-actions">
-          <button
-            class="icon-button icon-button-muted"
-            type="button"
-            title="复制邮箱"
-            aria-label="复制邮箱"
-            :disabled="!account"
-            @click="emit('copy')"
-          >
-            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path
-                d="M7 7.75A1.75 1.75 0 0 1 8.75 6h6.5A1.75 1.75 0 0 1 17 7.75v6.5A1.75 1.75 0 0 1 15.25 16h-6.5A1.75 1.75 0 0 1 7 14.25z"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linejoin="round"
-              />
-              <path
-                d="M4.75 13.25A1.75 1.75 0 0 1 3 11.5V5.25A1.75 1.75 0 0 1 4.75 3.5H11A1.75 1.75 0 0 1 12.75 5.25"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-              />
-            </svg>
-          </button>
-          <button
-            class="icon-button icon-button-muted"
-            type="button"
-            title="刷新邮件"
-            aria-label="刷新邮件"
-            :disabled="!account || loading"
-            @click="emit('refresh')"
-          >
-            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path
-                d="M15.25 10a5.25 5.25 0 1 1-1.538-3.712"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-              <path
-                d="M12.5 4.75h2.75V7.5"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
-          </button>
         </div>
       </div>
     </template>
 
     <div class="mail-viewer-shell inbox-split-view">
       <aside class="mail-viewer-sidebar inbox-sider">
-        <div class="mail-viewer-sidebar-head">
-          <div>
-            <p class="mail-viewer-kicker">最近邮件</p>
-            <h3 class="mail-viewer-sidebar-title">{{ items.length }} 封消息</h3>
-          </div>
-        </div>
-
         <n-spin :show="loading" class="mail-viewer-spin">
-          <div v-if="items.length === 0" class="mail-viewer-empty-panel empty-state">
+          <div v-if="items.length === 0" class="mail-viewer-empty-panel empty-state inbox-empty-state">
             <n-empty description="暂无邮件" />
           </div>
 
@@ -98,42 +103,6 @@
                 <p class="mail-viewer-item-time mail-date">{{ formatDate(item.receivedAt) }}</p>
               </div>
               <p class="mail-viewer-item-subject mail-subject">{{ item.subject || '(无主题)' }}</p>
-              <p class="mail-viewer-item-snippet mail-snippet">{{ resolveSnippet(item) || '暂无摘要，打开后可查看正文。' }}</p>
-              <div class="mail-viewer-item-footer mail-item-tags">
-                <span
-                  v-if="shouldShowFolderBadge(item)"
-                  class="mail-folder-badge"
-                  :class="`mail-folder-badge-${item.folderKind}`"
-                  :title="item.folderLabel"
-                >
-                  <svg v-if="item.folderKind === 'inbox'" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                    <path
-                      d="M3.5 6.25A1.75 1.75 0 0 1 5.25 4.5h9.5A1.75 1.75 0 0 1 16.5 6.25v7.5A1.75 1.75 0 0 1 14.75 15.5h-9.5A1.75 1.75 0 0 1 3.5 13.75z"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                      stroke-linejoin="round"
-                    />
-                    <path
-                      d="m4.25 6 5.088 4.07a1 1 0 0 0 1.248 0L15.75 6"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
-                  </svg>
-                  <svg v-else viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                    <path
-                      d="M10 4.25 16 15.5H4z"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                      stroke-linejoin="round"
-                    />
-                    <path d="M10 8v3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-                    <path d="M10 14h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-                  </svg>
-                  <span>{{ item.folderLabel }}</span>
-                </span>
-              </div>
             </button>
           </div>
         </n-spin>
@@ -141,7 +110,7 @@
 
       <section class="mail-viewer-reading-panel inbox-content">
         <div class="mail-viewer-reading-surface">
-          <div v-if="!selectedMail" class="mail-viewer-empty-panel empty-state">
+          <div v-if="!selectedMail" class="mail-viewer-empty-panel empty-state inbox-empty-state">
             请选择一封邮件进行阅读
           </div>
 
@@ -150,65 +119,21 @@
               <div class="mail-detail-subject">{{ selectedMail.subject || '(无主题)' }}</div>
               <div class="mail-meta-info">
                 <div><strong>发件人:</strong> {{ selectedMail.from || '-' }}</div>
+                <div><strong>收件人:</strong> {{ account || '-' }}</div>
                 <div><strong>时 间:</strong> {{ formatDate(selectedMail.receivedAt) }}</div>
-                <div><strong>邮 箱:</strong> {{ account || '-' }}</div>
-                <div><strong>类 型:</strong> {{ resolveModeLabel(renderedMail.mode) }}</div>
               </div>
             </div>
 
-            <div v-if="renderedMail.snippet" class="mail-detail-summary">
-              {{ renderedMail.snippet }}
-            </div>
-
-            <div class="mail-viewer-body-shell mail-html-shell">
-              <div class="mail-viewer-body-toolbar mail-html-toolbar">
-                <span class="mail-viewer-canvas-note mail-html-note">正文内容已按安全策略清洗。</span>
-                <span
-                  v-if="shouldShowFolderBadge(selectedMail)"
-                  class="mail-folder-badge"
-                  :class="`mail-folder-badge-${selectedMail.folderKind}`"
-                  :title="selectedMail.folderLabel"
-                >
-                  <svg v-if="selectedMail.folderKind === 'inbox'" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                    <path
-                      d="M3.5 6.25A1.75 1.75 0 0 1 5.25 4.5h9.5A1.75 1.75 0 0 1 16.5 6.25v7.5A1.75 1.75 0 0 1 14.75 15.5h-9.5A1.75 1.75 0 0 1 3.5 13.75z"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                      stroke-linejoin="round"
-                    />
-                    <path
-                      d="m4.25 6 5.088 4.07a1 1 0 0 0 1.248 0L15.75 6"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
-                  </svg>
-                  <svg v-else viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                    <path
-                      d="M10 4.25 16 15.5H4z"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                      stroke-linejoin="round"
-                    />
-                    <path d="M10 8v3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-                    <path d="M10 14h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-                  </svg>
-                  <span>{{ selectedMail.folderLabel }}</span>
-                </span>
-              </div>
-
-              <div class="mail-viewer-frame-shell mail-html-body" :class="`mail-viewer-frame-shell-${renderedMail.mode}`">
-                <iframe
-                  class="mail-viewer-frame"
-                  :title="selectedMail.subject || '邮件正文'"
-                  :srcdoc="renderedMail.srcdoc"
-                  :style="{ height: `${iframeHeight}px` }"
-                  sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin"
-                  referrerpolicy="no-referrer"
-                  @load="handleFrameLoad"
-                />
-              </div>
+            <div class="mail-viewer-frame-shell mail-html-body" :class="`mail-viewer-frame-shell-${renderedMail.mode}`">
+              <iframe
+                class="mail-viewer-frame"
+                :title="selectedMail.subject || '邮件正文'"
+                :srcdoc="renderedMail.srcdoc"
+                :style="{ height: `${iframeHeight}px` }"
+                sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin"
+                referrerpolicy="no-referrer"
+                @load="handleFrameLoad"
+              />
             </div>
           </div>
         </div>
