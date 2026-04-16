@@ -3,16 +3,17 @@
     :show="show"
     preset="card"
     :bordered="false"
-    class="console-modal console-mail-modal inbox-modal inbox-modal-html-match"
-    closable
+    class="inbox-modal"
+    style="width: 1000px; max-width: 95vw;"
+    content-style="padding: 0; display: flex; flex-direction: column; height: 100%; overflow: hidden;"
     @update:show="handleShowUpdate"
   >
     <template #header>
-      <div class="modal-header inbox-modal-header">
+      <div class="modal-header">
         <div class="modal-header-left">
           <h2>{{ title }}</h2>
           <div class="email-action-group">
-            <p>{{ account || '-' }}</p>
+            <p class="current-email">{{ account || '-' }}</p>
             <button
               class="btn-small-action"
               type="button"
@@ -79,62 +80,61 @@
             </button>
           </div>
         </div>
+        <button class="btn-close" type="button" aria-label="关闭收件箱" @click="handleShowUpdate(false)">
+          ×
+        </button>
       </div>
     </template>
 
-    <div class="mail-viewer-shell inbox-split-view">
-      <aside class="mail-viewer-sidebar inbox-sider">
-        <n-spin :show="loading" class="mail-viewer-spin">
-          <div v-if="items.length === 0" class="mail-viewer-empty-panel empty-state inbox-empty-state">
+    <div class="inbox-split-view">
+      <aside class="inbox-sider">
+        <n-spin :show="loading" class="inbox-spin">
+          <div v-if="items.length === 0" class="inbox-empty-state inbox-empty-state-sider">
             <n-empty description="暂无邮件" />
           </div>
 
-          <div v-else class="mail-viewer-list inbox-list">
+          <div v-else class="inbox-list">
             <button
               v-for="item in items"
               :key="item.id"
-              class="mail-viewer-item inbox-mail-item"
-              :class="{ active: selectedMail?.id === item.id }"
+              class="inbox-mail-item"
+              :class="{ active: selectedMailId === item.id }"
               type="button"
               @click="emit('select', item.id)"
             >
-              <div class="mail-viewer-item-header mail-item-topline">
-                <p class="mail-viewer-item-from mail-sender">{{ item.from || '未知发件人' }}</p>
-                <p class="mail-viewer-item-time mail-date">{{ formatDate(item.receivedAt) }}</p>
-              </div>
-              <p class="mail-viewer-item-subject mail-subject">{{ item.subject || '(无主题)' }}</p>
+              <div class="mail-sender">{{ item.from || '未知发件人' }}</div>
+              <div class="mail-subject">{{ item.subject || '(无主题)' }}</div>
+              <div class="mail-date">{{ formatDate(item.receivedAt) }}</div>
             </button>
           </div>
         </n-spin>
       </aside>
 
-      <section class="mail-viewer-reading-panel inbox-content">
-        <div class="mail-viewer-reading-surface">
-          <div v-if="!selectedMail" class="mail-viewer-empty-panel empty-state inbox-empty-state">
-            请选择一封邮件进行阅读
+      <section class="inbox-content">
+        <div v-if="!selectedMail" class="inbox-empty-state">
+          请选择一封邮件进行阅读
+        </div>
+
+        <div v-else class="mail-detail-container">
+          <div class="mail-detail-header">
+            <div class="mail-detail-subject">{{ selectedMail.subject || '(无主题)' }}</div>
+            <div class="mail-meta-info">
+              <div><strong>发件人:</strong> {{ selectedMail.from || '-' }}</div>
+              <div><strong>收件人:</strong> {{ account || '-' }}</div>
+              <div><strong>时 间:</strong> {{ formatDate(selectedMail.receivedAt) }}</div>
+            </div>
           </div>
 
-          <div v-else class="mail-viewer-reading-card mail-detail-container">
-            <div class="mail-detail-header">
-              <div class="mail-detail-subject">{{ selectedMail.subject || '(无主题)' }}</div>
-              <div class="mail-meta-info">
-                <div><strong>发件人:</strong> {{ selectedMail.from || '-' }}</div>
-                <div><strong>收件人:</strong> {{ account || '-' }}</div>
-                <div><strong>时 间:</strong> {{ formatDate(selectedMail.receivedAt) }}</div>
-              </div>
-            </div>
-
-            <div class="mail-viewer-frame-shell mail-html-body" :class="`mail-viewer-frame-shell-${renderedMail.mode}`">
-              <iframe
-                class="mail-viewer-frame"
-                :title="selectedMail.subject || '邮件正文'"
-                :srcdoc="renderedMail.srcdoc"
-                :style="{ height: `${iframeHeight}px` }"
-                sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin"
-                referrerpolicy="no-referrer"
-                @load="handleFrameLoad"
-              />
-            </div>
+          <div class="mail-html-body">
+            <iframe
+              class="mail-html-frame"
+              :title="selectedMail.subject || '邮件正文'"
+              :srcdoc="renderedMail.srcdoc"
+              :style="{ height: `${iframeHeight}px` }"
+              sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin"
+              referrerpolicy="no-referrer"
+              @load="handleFrameLoad"
+            />
           </div>
         </div>
       </section>
