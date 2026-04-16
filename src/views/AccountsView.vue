@@ -1,64 +1,52 @@
 <template>
-  <div class="page-stack">
-    <section class="page-intro-card page-intro-card-split">
-      <div class="page-intro-copy">
-        <p class="page-intro-eyebrow">Microsoft Accounts</p>
-        <h3>邮箱账户列表</h3>
-        <p>集中搜索、检测、导入和维护微软邮箱账号，点击邮箱地址即可直接打开收件箱。</p>
-      </div>
-
-      <div class="page-intro-stats">
-        <div class="page-stat-tile">
-          <span class="page-stat-label">账户总数</span>
-          <strong class="page-stat-value">{{ accounts.length }}</strong>
-        </div>
-        <div class="page-stat-tile">
-          <span class="page-stat-label">当前选中</span>
-          <strong class="page-stat-value">{{ checkedRowKeys.length }}</strong>
-        </div>
-      </div>
+  <div class="page-stack page-stack-compact page-container">
+    <section class="page-header">
+      <h1 class="main-title">邮箱列表</h1>
+      <p class="page-desc">查看、导入和维护微软邮箱账号。点击列表中的邮箱地址可直接读取收件箱。</p>
     </section>
 
-    <n-card :bordered="false" size="small" class="content-card account-list-card">
-      <div class="list-toolbar list-toolbar-compact">
+    <n-card :bordered="false" size="small" class="content-card account-list-card main-card">
+      <div class="list-toolbar list-toolbar-compact list-toolbar-spec toolbar">
         <div class="list-toolbar-left">
           <n-input
             v-model:value="searchKeyword"
             clearable
-            class="toolbar-search"
-            placeholder="按邮箱搜索"
+            class="toolbar-search search-input"
+            placeholder="按邮箱搜索..."
             @keyup.enter="handleSearch"
           />
+          <div class="toolbar-button-group">
+            <n-button
+              size="small"
+              secondary
+              class="toolbar-button toolbar-button-muted"
+              :loading="syncLoading"
+              @click="refreshAccounts(false)"
+            >
+              检测选中
+            </n-button>
+            <n-button
+              size="small"
+              secondary
+              class="toolbar-button toolbar-button-muted"
+              :loading="syncLoading"
+              @click="refreshAccounts(true)"
+            >
+              检测全部
+            </n-button>
+            <n-button size="small" secondary class="toolbar-button toolbar-button-muted" @click="selectAll">
+              全选
+            </n-button>
+            <n-button size="small" secondary class="toolbar-button toolbar-button-muted" @click="selectInverse">
+              反选
+            </n-button>
+          </div>
         </div>
 
         <div class="list-toolbar-right">
           <n-tag v-if="checkedRowKeys.length > 0" size="small" class="toolbar-selection-tag" type="warning">
             已选 {{ checkedRowKeys.length }} 条
           </n-tag>
-          <n-button
-            size="small"
-            secondary
-            class="toolbar-button toolbar-button-muted"
-            :loading="syncLoading"
-            @click="refreshAccounts(false)"
-          >
-            检测选中
-          </n-button>
-          <n-button
-            size="small"
-            secondary
-            class="toolbar-button toolbar-button-muted"
-            :loading="syncLoading"
-            @click="refreshAccounts(true)"
-          >
-            检测全部
-          </n-button>
-          <n-button size="small" secondary class="toolbar-button toolbar-button-muted" @click="selectAll">
-            全选
-          </n-button>
-          <n-button size="small" secondary class="toolbar-button toolbar-button-muted" @click="selectInverse">
-            反选
-          </n-button>
           <n-button
             size="small"
             ghost

@@ -3,107 +3,103 @@
     :show="show"
     preset="card"
     :bordered="false"
-    class="console-modal console-mail-modal"
+    class="console-modal console-mail-modal inbox-modal"
     closable
     @update:show="handleShowUpdate"
   >
     <template #header>
-      <div class="mail-modal-header">
-        <div class="mail-modal-title-row">
-          <div class="mail-modal-title-wrap">
-            <div class="mail-modal-title-line">
-              <div class="mail-modal-title">
-                <span class="mail-modal-title-text">{{ title }}</span>
-                <span class="mail-modal-account">{{ account || '-' }}</span>
-              </div>
-              <div class="mail-modal-inline-actions">
-                <button
-                  class="icon-button icon-button-muted"
-                  type="button"
-                  title="复制邮箱"
-                  aria-label="复制邮箱"
-                  :disabled="!account"
-                  @click="emit('copy')"
-                >
-                  <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                    <path
-                      d="M7 7.75A1.75 1.75 0 0 1 8.75 6h6.5A1.75 1.75 0 0 1 17 7.75v6.5A1.75 1.75 0 0 1 15.25 16h-6.5A1.75 1.75 0 0 1 7 14.25z"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                      stroke-linejoin="round"
-                    />
-                    <path
-                      d="M4.75 13.25A1.75 1.75 0 0 1 3 11.5V5.25A1.75 1.75 0 0 1 4.75 3.5H11A1.75 1.75 0 0 1 12.75 5.25"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                      stroke-linecap="round"
-                    />
-                  </svg>
-                </button>
-                <button
-                  class="icon-button icon-button-muted"
-                  type="button"
-                  title="刷新邮件"
-                  aria-label="刷新邮件"
-                  :disabled="!account || loading"
-                  @click="emit('refresh')"
-                >
-                  <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                    <path
-                      d="M15.25 10a5.25 5.25 0 1 1-1.538-3.712"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
-                    <path
-                      d="M12.5 4.75h2.75V7.5"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
-                  </svg>
-                </button>
-              </div>
-            </div>
-            <p class="mail-modal-subtitle">{{ subtitle }}</p>
+      <div class="modal-header mail-modal-header-spec">
+        <div class="mail-modal-header-copy">
+          <div class="header-left">
+            <h2>{{ title }}</h2>
+            <p>{{ account || '-' }}</p>
           </div>
+          <p class="mail-modal-subtitle">{{ subtitle }}</p>
+        </div>
+
+        <div class="mail-modal-inline-actions">
+          <button
+            class="icon-button icon-button-muted"
+            type="button"
+            title="复制邮箱"
+            aria-label="复制邮箱"
+            :disabled="!account"
+            @click="emit('copy')"
+          >
+            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path
+                d="M7 7.75A1.75 1.75 0 0 1 8.75 6h6.5A1.75 1.75 0 0 1 17 7.75v6.5A1.75 1.75 0 0 1 15.25 16h-6.5A1.75 1.75 0 0 1 7 14.25z"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M4.75 13.25A1.75 1.75 0 0 1 3 11.5V5.25A1.75 1.75 0 0 1 4.75 3.5H11A1.75 1.75 0 0 1 12.75 5.25"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+              />
+            </svg>
+          </button>
+          <button
+            class="icon-button icon-button-muted"
+            type="button"
+            title="刷新邮件"
+            aria-label="刷新邮件"
+            :disabled="!account || loading"
+            @click="emit('refresh')"
+          >
+            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path
+                d="M15.25 10a5.25 5.25 0 1 1-1.538-3.712"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M12.5 4.75h2.75V7.5"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
         </div>
       </div>
     </template>
 
-    <div class="mail-viewer-shell">
-      <aside class="mail-viewer-sidebar">
-        <div class="mail-viewer-sidebar-header">
+    <div class="mail-viewer-shell inbox-split-view">
+      <aside class="mail-viewer-sidebar inbox-sider">
+        <div class="mail-viewer-sidebar-head">
           <div>
             <p class="mail-viewer-kicker">最近邮件</p>
             <h3 class="mail-viewer-sidebar-title">{{ items.length }} 封消息</h3>
           </div>
-          <span class="mail-viewer-account-chip">{{ account || '未选择邮箱' }}</span>
         </div>
 
         <n-spin :show="loading" class="mail-viewer-spin">
-          <div v-if="items.length === 0" class="mail-viewer-empty-panel">
+          <div v-if="items.length === 0" class="mail-viewer-empty-panel empty-state">
             <n-empty description="暂无邮件" />
           </div>
 
-          <div v-else class="mail-viewer-list">
+          <div v-else class="mail-viewer-list inbox-list">
             <button
               v-for="item in items"
               :key="item.id"
-              class="mail-viewer-item"
-              :class="{ 'mail-viewer-item-active': selectedMail?.id === item.id }"
+              class="mail-viewer-item inbox-mail-item"
+              :class="{ active: selectedMail?.id === item.id }"
               type="button"
               @click="emit('select', item.id)"
             >
-              <div class="mail-viewer-item-header">
-                <p class="mail-viewer-item-from">{{ item.from || '未知发件人' }}</p>
-                <p class="mail-viewer-item-time">{{ formatDate(item.receivedAt) }}</p>
+              <div class="mail-viewer-item-header mail-item-topline">
+                <p class="mail-viewer-item-from mail-sender">{{ item.from || '未知发件人' }}</p>
+                <p class="mail-viewer-item-time mail-date">{{ formatDate(item.receivedAt) }}</p>
               </div>
-              <p class="mail-viewer-item-subject">{{ item.subject || '(无主题)' }}</p>
-              <p class="mail-viewer-item-snippet">{{ resolveSnippet(item) || '暂无摘要，打开后可查看正文。' }}</p>
-              <div class="mail-viewer-item-footer">
+              <p class="mail-viewer-item-subject mail-subject">{{ item.subject || '(无主题)' }}</p>
+              <p class="mail-viewer-item-snippet mail-snippet">{{ resolveSnippet(item) || '暂无摘要，打开后可查看正文。' }}</p>
+              <div class="mail-viewer-item-footer mail-item-tags">
                 <span
                   v-if="shouldShowFolderBadge(item)"
                   class="mail-folder-badge"
@@ -143,17 +139,30 @@
         </n-spin>
       </aside>
 
-      <section class="mail-viewer-reading-panel">
+      <section class="mail-viewer-reading-panel inbox-content">
         <div class="mail-viewer-reading-surface">
-          <n-empty v-if="!selectedMail" description="请从左侧选择邮件" class="mail-viewer-empty-panel" />
+          <div v-if="!selectedMail" class="mail-viewer-empty-panel empty-state">
+            请选择一封邮件进行阅读
+          </div>
 
-          <div v-else class="mail-viewer-reading-stack">
-            <section class="mail-viewer-message-card">
-              <div class="mail-viewer-message-topline">
-                <div class="mail-viewer-message-copy">
-                  <p class="mail-viewer-kicker">邮件头信息</p>
-                  <h3 class="mail-viewer-message-title">{{ selectedMail.subject || '(无主题)' }}</h3>
-                </div>
+          <div v-else class="mail-viewer-reading-card mail-detail-container">
+            <div class="mail-detail-header">
+              <div class="mail-detail-subject">{{ selectedMail.subject || '(无主题)' }}</div>
+              <div class="mail-meta-info">
+                <div><strong>发件人:</strong> {{ selectedMail.from || '-' }}</div>
+                <div><strong>时 间:</strong> {{ formatDate(selectedMail.receivedAt) }}</div>
+                <div><strong>邮 箱:</strong> {{ account || '-' }}</div>
+                <div><strong>类 型:</strong> {{ resolveModeLabel(renderedMail.mode) }}</div>
+              </div>
+            </div>
+
+            <div v-if="renderedMail.snippet" class="mail-detail-summary">
+              {{ renderedMail.snippet }}
+            </div>
+
+            <div class="mail-viewer-body-shell mail-html-shell">
+              <div class="mail-viewer-body-toolbar mail-html-toolbar">
+                <span class="mail-viewer-canvas-note mail-html-note">正文内容已按安全策略清洗。</span>
                 <span
                   v-if="shouldShowFolderBadge(selectedMail)"
                   class="mail-folder-badge"
@@ -188,38 +197,8 @@
                   <span>{{ selectedMail.folderLabel }}</span>
                 </span>
               </div>
-              <div class="mail-viewer-meta-grid">
-                <div class="mail-viewer-meta-item">
-                  <span class="mail-viewer-meta-label">发件人</span>
-                  <strong class="mail-viewer-meta-value">{{ selectedMail.from || '-' }}</strong>
-                </div>
-                <div class="mail-viewer-meta-item">
-                  <span class="mail-viewer-meta-label">时间</span>
-                  <strong class="mail-viewer-meta-value">{{ formatDate(selectedMail.receivedAt) }}</strong>
-                </div>
-                <div class="mail-viewer-meta-item">
-                  <span class="mail-viewer-meta-label">邮箱</span>
-                  <strong class="mail-viewer-meta-value">{{ account || '-' }}</strong>
-                </div>
-              </div>
-            </section>
 
-            <section class="mail-viewer-summary-card">
-              <p class="mail-viewer-kicker">邮件摘要</p>
-              <p class="mail-viewer-summary-text">
-                {{ renderedMail.snippet || '暂无摘要信息，已为你展示邮件正文。' }}
-              </p>
-            </section>
-
-            <section class="mail-viewer-canvas-card">
-              <div class="mail-viewer-canvas-toolbar">
-                <span class="mail-viewer-doc-mode" :class="`mail-viewer-doc-mode-${renderedMail.mode}`">
-                  {{ resolveModeLabel(renderedMail.mode) }}
-                </span>
-                <span class="mail-viewer-canvas-note">正文内容已按安全策略清洗，并以接近真实邮件的样式渲染。</span>
-              </div>
-
-              <div class="mail-viewer-frame-shell" :class="`mail-viewer-frame-shell-${renderedMail.mode}`">
+              <div class="mail-viewer-frame-shell mail-html-body" :class="`mail-viewer-frame-shell-${renderedMail.mode}`">
                 <iframe
                   class="mail-viewer-frame"
                   :title="selectedMail.subject || '邮件正文'"
@@ -230,7 +209,7 @@
                   @load="handleFrameLoad"
                 />
               </div>
-            </section>
+            </div>
           </div>
         </div>
       </section>

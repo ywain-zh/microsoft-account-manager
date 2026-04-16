@@ -1,27 +1,11 @@
 <template>
-  <div class="console-shell">
+  <div class="console-shell console-shell-spec">
     <aside class="console-sidebar">
-      <div class="console-brand">
-        <span class="console-brand-badge" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none">
-            <path
-              d="M7.75 7.75h8.5a1.5 1.5 0 0 1 1.5 1.5v5.5a1.5 1.5 0 0 1-1.5 1.5h-8.5a1.5 1.5 0 0 1-1.5-1.5v-5.5a1.5 1.5 0 0 1 1.5-1.5Z"
-              stroke="currentColor"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="1.5"
-            />
-            <path
-              d="m8.5 9 3.04 2.34a.75.75 0 0 0 .92 0L15.5 9"
-              stroke="currentColor"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="1.5"
-            />
-          </svg>
-        </span>
-        <div class="console-brand-title-wrap">
-          <h1 class="console-brand-title">邮箱管理</h1>
+      <div class="console-brand console-brand-spec">
+        <span class="console-brand-badge console-brand-badge-letter" aria-hidden="true">M</span>
+        <div class="console-brand-title-wrap console-brand-title-wrap-spec">
+          <h1 class="console-brand-title">Microsoft Account Manager</h1>
+          <p class="console-brand-subtitle">Admin Console</p>
         </div>
       </div>
 
@@ -93,36 +77,31 @@
     </aside>
 
     <main class="console-main">
-      <div class="console-main-shell">
-        <header class="console-header">
-          <div class="console-header-panel">
-            <div class="console-header-copy">
-              <p class="console-header-kicker page-pill">{{ currentGroupLabel }}</p>
-              <h2>{{ route.meta.title || '邮箱管理' }}</h2>
-              <p>{{ route.meta.description || '在统一后台中管理邮箱服务。' }}</p>
-            </div>
+      <header class="console-header console-header-bar">
+        <div class="console-header-copy">
+          <p class="console-header-kicker">Admin Console</p>
+          <span class="console-header-context">{{ currentGroupLabel }}</span>
+        </div>
 
-            <div class="console-user-card">
-              <div>
-                <p class="console-user-label">当前登录</p>
-                <strong>{{ currentUser }}</strong>
-              </div>
-              <n-button
-                secondary
-                class="header-logout-button"
-                :loading="logoutLoading"
-                @click="handleLogout"
-              >
-                退出登录
-              </n-button>
-            </div>
+        <div class="console-header-actions">
+          <div class="console-user-chip">
+            <span class="console-user-chip-label">当前登录</span>
+            <strong>{{ currentUser }}</strong>
           </div>
-        </header>
+          <n-button
+            secondary
+            class="header-logout-button"
+            :loading="logoutLoading"
+            @click="handleLogout"
+          >
+            退出登录
+          </n-button>
+        </div>
+      </header>
 
-        <section class="console-content">
-          <RouterView />
-        </section>
-      </div>
+      <section class="console-content">
+        <RouterView />
+      </section>
     </main>
   </div>
 </template>

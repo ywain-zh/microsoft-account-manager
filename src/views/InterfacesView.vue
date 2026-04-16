@@ -1,26 +1,12 @@
 <template>
-  <div class="page-stack interface-page">
-    <section class="page-intro-card page-intro-card-split">
-      <div class="page-intro-copy">
-        <p class="page-intro-eyebrow">Interfaces & Docs</p>
-        <h3>接口配置与调用文档</h3>
-        <p>统一查看上传映射规则、开放 API 说明和后台管理接口，方便前后端联调与维护。</p>
-      </div>
-
-      <div class="page-intro-stats">
-        <div class="page-stat-tile">
-          <span class="page-stat-label">Base URL</span>
-          <strong class="page-stat-value page-stat-value-code">{{ apiBaseUrl }}</strong>
-        </div>
-        <div class="page-stat-tile">
-          <span class="page-stat-label">上传鉴权头</span>
-          <strong class="page-stat-value page-stat-value-code">{{ ingestTokenHeader }}</strong>
-        </div>
-      </div>
+  <div class="page-stack page-stack-compact interface-page interface-page-compact page-container">
+    <section class="page-header">
+      <h1 class="main-title">接口配置与调用文档</h1>
+      <p class="page-desc">统一维护上传映射配置，并查看开放 API 与管理端 API 说明。</p>
     </section>
 
     <div class="interface-grid interface-grid-balanced">
-      <n-card :bordered="false" size="small" class="content-card interface-card">
+      <n-card :bordered="false" size="small" class="content-card interface-card main-card">
         <div class="card-section-stack">
           <div class="card-section-header">
             <p class="section-kicker">Upload Endpoint</p>
@@ -37,7 +23,7 @@
         </div>
       </n-card>
 
-      <n-card :bordered="false" size="small" class="content-card interface-card">
+      <n-card :bordered="false" size="small" class="content-card interface-card main-card">
         <div class="card-section-stack">
           <div class="card-section-header">
             <p class="section-kicker">Mapping Config</p>
@@ -89,7 +75,7 @@
       </n-card>
     </div>
 
-    <n-card :bordered="false" title="请求示例" size="small" class="content-card interface-card">
+    <n-card :bordered="false" size="small" class="content-card interface-card main-card">
       <div class="card-section-stack">
         <div class="card-section-header">
           <p class="section-kicker">Examples</p>
@@ -108,7 +94,7 @@
       </div>
     </n-card>
 
-    <n-card :bordered="false" title="接口总览" size="small" class="content-card interface-card">
+    <n-card :bordered="false" size="small" class="content-card interface-card main-card">
       <div class="card-section-stack">
         <div class="card-section-header">
           <p class="section-kicker">Overview</p>
@@ -136,7 +122,7 @@
     </n-card>
 
     <div class="interface-grid">
-      <n-card :bordered="false" title="开放取件 API（Token 鉴权）" size="small" class="content-card interface-card">
+      <n-card :bordered="false" size="small" class="content-card interface-card main-card">
         <div class="card-section-stack">
           <div class="card-section-header">
             <p class="section-kicker">Open API</p>
@@ -163,7 +149,7 @@
         </div>
       </n-card>
 
-      <n-card :bordered="false" title="管理端 API（登录会话）" size="small" class="content-card interface-card">
+      <n-card :bordered="false" size="small" class="content-card interface-card main-card">
         <div class="card-section-stack">
           <div class="card-section-header">
             <p class="section-kicker">Admin API</p>

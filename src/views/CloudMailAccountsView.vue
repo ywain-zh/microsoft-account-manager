@@ -1,31 +1,17 @@
 <template>
-  <div class="page-stack">
-    <section class="page-intro-card page-intro-card-split">
-      <div class="page-intro-copy">
-        <p class="page-intro-eyebrow">Cloud Mail Console</p>
-        <h3>Cloud Mail 邮箱管理</h3>
-        <p>集中维护 Cloud Mail 服务配置、可用域名与邮箱账号，打开邮箱即可查看最近收件内容。</p>
-      </div>
-
-      <div class="page-intro-stats">
-        <div class="page-stat-tile">
-          <span class="page-stat-label">账号总数</span>
-          <strong class="page-stat-value">{{ total }}</strong>
-        </div>
-        <div class="page-stat-tile">
-          <span class="page-stat-label">可用域名</span>
-          <strong class="page-stat-value">{{ availableDomains.length }}</strong>
-        </div>
-      </div>
+  <div class="page-stack page-stack-compact page-container">
+    <section class="page-header">
+      <h1 class="main-title">Cloud Mail 邮箱管理</h1>
+      <p class="page-desc">维护 Cloud Mail 服务配置、域名与邮箱账号，点击邮箱即可查看最近邮件。</p>
     </section>
 
-    <n-card :bordered="false" size="small" class="content-card cloud-mail-card">
-      <div class="list-toolbar list-toolbar-compact">
+    <n-card :bordered="false" size="small" class="content-card cloud-mail-card main-card">
+      <div class="list-toolbar list-toolbar-compact list-toolbar-spec toolbar">
         <div class="list-toolbar-left">
           <n-input
             v-model:value="searchKeyword"
             clearable
-            class="toolbar-search"
+            class="toolbar-search search-input"
             placeholder="按邮箱搜索 Cloud Mail 账号"
             @keyup.enter="handleSearch"
           >
@@ -91,20 +77,20 @@
       </div>
 
       <template v-if="hasConfiguredCloudMail">
-        <div class="cloud-mail-summary cloud-mail-summary-grid">
-          <div class="cloud-mail-summary-card">
+        <div class="cloud-mail-config-strip">
+          <div class="cloud-mail-config-item">
             <span class="cloud-mail-summary-label">API URI</span>
             <strong class="cloud-mail-summary-value">{{ storedConfig.apiBaseUrl }}</strong>
           </div>
-          <div class="cloud-mail-summary-card">
+          <div class="cloud-mail-config-item">
             <span class="cloud-mail-summary-label">管理员邮箱</span>
             <strong class="cloud-mail-summary-value">{{ storedConfig.adminEmail }}</strong>
           </div>
-          <div class="cloud-mail-summary-card">
+          <div class="cloud-mail-config-item">
             <span class="cloud-mail-summary-label">管理员密码</span>
             <strong class="cloud-mail-summary-value">{{ maskedAdminPassword }}</strong>
           </div>
-          <div class="cloud-mail-summary-card">
+          <div class="cloud-mail-config-item">
             <span class="cloud-mail-summary-label">可用域名</span>
             <strong class="cloud-mail-summary-value">{{ availableDomainsDisplay }}</strong>
           </div>
