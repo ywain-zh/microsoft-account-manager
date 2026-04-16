@@ -4205,9 +4205,9 @@ body {
 
 .inbox-modal-shell {
   width: 960px;
-  height: 760px;
-  max-width: calc(100vw - 48px);
-  max-height: calc(100vh - 48px);
+  max-width: 95vw;
+  height: 80vh;
+  max-height: 760px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -4256,7 +4256,7 @@ body {
   margin: 0;
   min-width: 0;
   max-width: min(38vw, 360px);
-  color: #475569;
+  color: #64748b;
   font-size: 14px;
   line-height: 1.4;
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
@@ -4540,10 +4540,11 @@ body {
   background: transparent;
 }
 
-@media (max-width: 960px) {
+@media (max-width: 768px) {
   .inbox-modal-shell {
     width: calc(100vw - 24px);
-    height: min(760px, calc(100vh - 24px));
+    max-width: none;
+    height: calc(100vh - 24px);
     max-height: calc(100vh - 24px);
   }
 
@@ -4575,7 +4576,8 @@ body {
 @media (max-width: 640px) {
   .inbox-modal-shell {
     width: calc(100vw - 16px);
-    height: min(760px, calc(100vh - 16px));
+    max-width: none;
+    height: calc(100vh - 16px);
     max-height: calc(100vh - 16px);
   }
 
