@@ -1,6 +1,25 @@
 <template>
   <div class="page-stack">
-    <n-card size="small" class="content-card cloud-mail-card">
+    <section class="page-intro-card page-intro-card-split">
+      <div class="page-intro-copy">
+        <p class="page-intro-eyebrow">Cloud Mail Console</p>
+        <h3>Cloud Mail 邮箱管理</h3>
+        <p>集中维护 Cloud Mail 服务配置、可用域名与邮箱账号，打开邮箱即可查看最近收件内容。</p>
+      </div>
+
+      <div class="page-intro-stats">
+        <div class="page-stat-tile">
+          <span class="page-stat-label">账号总数</span>
+          <strong class="page-stat-value">{{ total }}</strong>
+        </div>
+        <div class="page-stat-tile">
+          <span class="page-stat-label">可用域名</span>
+          <strong class="page-stat-value">{{ availableDomains.length }}</strong>
+        </div>
+      </div>
+    </section>
+
+    <n-card :bordered="false" size="small" class="content-card cloud-mail-card">
       <div class="list-toolbar list-toolbar-compact">
         <div class="list-toolbar-left">
           <n-input
@@ -19,10 +38,10 @@
         </div>
 
         <div class="list-toolbar-right">
-          <n-tag v-if="checkedRowKeys.length > 0" size="small" type="warning">
+          <n-tag v-if="checkedRowKeys.length > 0" size="small" class="toolbar-selection-tag" type="warning">
             已选 {{ checkedRowKeys.length }} 条
           </n-tag>
-          <n-button size="small" class="toolbar-button" secondary @click="openConfigModal">
+          <n-button size="small" class="toolbar-button toolbar-button-muted" secondary @click="openConfigModal">
             <template #icon>
               <GearGlyph />
             </template>
@@ -30,7 +49,8 @@
           </n-button>
           <n-button
             size="small"
-            class="toolbar-button"
+            secondary
+            class="toolbar-button toolbar-button-muted"
             :loading="tableLoading"
             :disabled="!hasConfiguredCloudMail"
             @click="refreshAccounts"
@@ -42,7 +62,7 @@
           </n-button>
           <n-button
             size="small"
-            class="toolbar-button"
+            class="toolbar-button toolbar-button-secondary-primary"
             type="primary"
             secondary
             :disabled="!hasConfiguredCloudMail || availableDomains.length === 0"
@@ -55,7 +75,8 @@
           </n-button>
           <n-button
             size="small"
-            class="toolbar-button"
+            ghost
+            class="toolbar-button toolbar-button-danger"
             type="error"
             :loading="deleteLoading"
             :disabled="!hasConfiguredCloudMail || checkedRowKeys.length === 0"
@@ -70,7 +91,7 @@
       </div>
 
       <template v-if="hasConfiguredCloudMail">
-        <div class="cloud-mail-summary">
+        <div class="cloud-mail-summary cloud-mail-summary-grid">
           <div class="cloud-mail-summary-card">
             <span class="cloud-mail-summary-label">API URI</span>
             <strong class="cloud-mail-summary-value">{{ storedConfig.apiBaseUrl }}</strong>
@@ -100,6 +121,7 @@
         <n-data-table
           class="account-table account-table-modern"
           size="small"
+          :bordered="false"
           :columns="columns"
           :data="accounts"
           :row-key="rowKey"
@@ -110,7 +132,7 @@
           @update:checked-row-keys="handleCheckedRowKeysUpdate"
         />
 
-        <div class="list-footer">
+        <div class="list-footer list-footer-card">
           <div class="list-footer-meta">共 {{ total }} 条</div>
           <n-pagination
             :page="tablePage"
@@ -132,7 +154,9 @@
         </div>
         <n-empty description="尚未配置 Cloud Mail 服务">
           <template #extra>
-            <n-button type="primary" @click="openConfigModal">先配置 Cloud Mail</n-button>
+            <n-button class="empty-primary-button" type="primary" @click="openConfigModal">
+              先配置 Cloud Mail
+            </n-button>
           </template>
         </n-empty>
         <p class="cloud-mail-empty-note">
@@ -141,7 +165,13 @@
       </div>
     </n-card>
 
-    <n-modal v-model:show="configVisible" preset="card" class="console-modal" title="Cloud Mail 配置信息">
+    <n-modal
+      v-model:show="configVisible"
+      preset="card"
+      :bordered="false"
+      class="console-modal"
+      title="Cloud Mail 配置信息"
+    >
       <n-form label-placement="top" autocomplete="off">
         <div class="form-autofill-guard" aria-hidden="true">
           <input type="text" tabindex="-1" autocomplete="username" />
@@ -184,13 +214,21 @@
 
       <template #footer>
         <n-space justify="end">
-          <n-button @click="configVisible = false">取消</n-button>
-          <n-button type="primary" :loading="configSaving" @click="saveConfig">保存配置</n-button>
+          <n-button class="dialog-cancel-button" @click="configVisible = false">取消</n-button>
+          <n-button class="dialog-primary-button" type="primary" :loading="configSaving" @click="saveConfig">
+            保存配置
+          </n-button>
         </n-space>
       </template>
     </n-modal>
 
-    <n-modal v-model:show="createVisible" preset="card" class="console-modal cloud-mail-create-modal" title="新增邮箱">
+    <n-modal
+      v-model:show="createVisible"
+      preset="card"
+      :bordered="false"
+      class="console-modal cloud-mail-create-modal"
+      title="新增邮箱"
+    >
       <n-form label-placement="top" autocomplete="off">
         <div class="form-autofill-guard" aria-hidden="true">
           <input type="text" tabindex="-1" autocomplete="username" />
@@ -235,8 +273,10 @@
 
       <template #footer>
         <n-space justify="end">
-          <n-button @click="createVisible = false">取消</n-button>
-          <n-button type="primary" :loading="createLoading" @click="createAccount">确认新增</n-button>
+          <n-button class="dialog-cancel-button" @click="createVisible = false">取消</n-button>
+          <n-button class="dialog-primary-button" type="primary" :loading="createLoading" @click="createAccount">
+            确认新增
+          </n-button>
         </n-space>
       </template>
     </n-modal>

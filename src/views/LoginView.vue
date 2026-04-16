@@ -27,8 +27,20 @@
         </div>
       </header>
 
+      <section class="auth-showcase" aria-label="控制台特性">
+        <p class="page-pill auth-showcase-pill">Modern SaaS Console</p>
+        <h1>统一处理邮箱账号、Cloud Mail 与接口配置</h1>
+        <p class="auth-copy">延续现有登录逻辑，只升级为更轻量、更通透的后台入口视觉风格。</p>
+
+        <div class="auth-showcase-points">
+          <span class="auth-showcase-point">卡片化布局</span>
+          <span class="auth-showcase-point">浅蓝灰底色</span>
+          <span class="auth-showcase-point">统一操作节奏</span>
+        </div>
+      </section>
+
       <section class="auth-panel auth-panel-single" aria-labelledby="login-title">
-        <n-card class="auth-card auth-card-single" bordered>
+        <n-card :bordered="false" class="auth-card auth-card-single">
           <div class="auth-card-body">
             <div class="auth-card-header">
               <h1 id="login-title">欢迎回来</h1>
@@ -102,7 +114,13 @@
               </n-form>
 
               <div class="auth-submit-row">
-                <n-button attr-type="submit" type="primary" size="large" :loading="loginLoading">
+                <n-button
+                  attr-type="submit"
+                  class="auth-primary-button"
+                  type="primary"
+                  size="large"
+                  :loading="loginLoading"
+                >
                   <span class="auth-button-content">
                     <span class="auth-button-icon" aria-hidden="true">
                       <svg viewBox="0 0 24 24" fill="none">

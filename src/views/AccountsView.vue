@@ -1,6 +1,25 @@
 <template>
   <div class="page-stack">
-    <n-card size="small" class="content-card account-list-card">
+    <section class="page-intro-card page-intro-card-split">
+      <div class="page-intro-copy">
+        <p class="page-intro-eyebrow">Microsoft Accounts</p>
+        <h3>邮箱账户列表</h3>
+        <p>集中搜索、检测、导入和维护微软邮箱账号，点击邮箱地址即可直接打开收件箱。</p>
+      </div>
+
+      <div class="page-intro-stats">
+        <div class="page-stat-tile">
+          <span class="page-stat-label">账户总数</span>
+          <strong class="page-stat-value">{{ accounts.length }}</strong>
+        </div>
+        <div class="page-stat-tile">
+          <span class="page-stat-label">当前选中</span>
+          <strong class="page-stat-value">{{ checkedRowKeys.length }}</strong>
+        </div>
+      </div>
+    </section>
+
+    <n-card :bordered="false" size="small" class="content-card account-list-card">
       <div class="list-toolbar list-toolbar-compact">
         <div class="list-toolbar-left">
           <n-input
@@ -13,20 +32,37 @@
         </div>
 
         <div class="list-toolbar-right">
-          <n-tag v-if="checkedRowKeys.length > 0" size="small" type="warning">
+          <n-tag v-if="checkedRowKeys.length > 0" size="small" class="toolbar-selection-tag" type="warning">
             已选 {{ checkedRowKeys.length }} 条
           </n-tag>
-          <n-button size="small" class="toolbar-button" :loading="syncLoading" @click="refreshAccounts(false)">
-            检测选中
-          </n-button>
-          <n-button size="small" class="toolbar-button" :loading="syncLoading" @click="refreshAccounts(true)">
-            检测全部
-          </n-button>
-          <n-button size="small" class="toolbar-button" @click="selectAll">全选</n-button>
-          <n-button size="small" class="toolbar-button" @click="selectInverse">反选</n-button>
           <n-button
             size="small"
-            class="toolbar-button"
+            secondary
+            class="toolbar-button toolbar-button-muted"
+            :loading="syncLoading"
+            @click="refreshAccounts(false)"
+          >
+            检测选中
+          </n-button>
+          <n-button
+            size="small"
+            secondary
+            class="toolbar-button toolbar-button-muted"
+            :loading="syncLoading"
+            @click="refreshAccounts(true)"
+          >
+            检测全部
+          </n-button>
+          <n-button size="small" secondary class="toolbar-button toolbar-button-muted" @click="selectAll">
+            全选
+          </n-button>
+          <n-button size="small" secondary class="toolbar-button toolbar-button-muted" @click="selectInverse">
+            反选
+          </n-button>
+          <n-button
+            size="small"
+            ghost
+            class="toolbar-button toolbar-button-danger"
             type="error"
             :loading="batchDeleteLoading"
             :disabled="checkedRowKeys.length === 0"
@@ -34,17 +70,39 @@
           >
             批量删除
           </n-button>
-          <n-button size="small" class="toolbar-button" :loading="tableLoading" @click="loadAccounts">刷新列表</n-button>
-          <n-button size="small" class="toolbar-button" type="primary" secondary @click="openCreateModal">
+          <n-button
+            size="small"
+            secondary
+            class="toolbar-button toolbar-button-muted"
+            :loading="tableLoading"
+            @click="loadAccounts"
+          >
+            刷新列表
+          </n-button>
+          <n-button
+            size="small"
+            class="toolbar-button toolbar-button-secondary-primary"
+            type="primary"
+            secondary
+            @click="openCreateModal"
+          >
             新增账户
           </n-button>
-          <n-button size="small" class="toolbar-button" type="primary" @click="openImportModal">批量导入</n-button>
+          <n-button
+            size="small"
+            class="toolbar-button toolbar-button-primary"
+            type="primary"
+            @click="openImportModal"
+          >
+            批量导入
+          </n-button>
         </div>
       </div>
 
       <n-data-table
         class="account-table account-table-modern"
         size="small"
+        :bordered="false"
         :columns="accountColumns"
         :data="pagedAccounts"
         :row-key="rowKey"
@@ -55,7 +113,7 @@
         @update:checked-row-keys="handleCheckedRowKeysUpdate"
       />
 
-      <div class="list-footer">
+      <div class="list-footer list-footer-card">
         <div class="list-footer-meta">共 {{ accounts.length }} 条</div>
         <n-pagination
           v-model:page="tablePage"
@@ -69,7 +127,13 @@
       </div>
     </n-card>
 
-    <n-modal v-model:show="createVisible" preset="card" class="console-modal" title="新增账户">
+    <n-modal
+      v-model:show="createVisible"
+      preset="card"
+      :bordered="false"
+      class="console-modal"
+      title="新增账户"
+    >
       <n-form label-placement="top">
         <n-grid :cols="24" :x-gap="14" :y-gap="8">
           <n-gi :span="24" :md="6">
@@ -102,13 +166,21 @@
 
       <template #footer>
         <n-space justify="end">
-          <n-button @click="createVisible = false">取消</n-button>
-          <n-button type="primary" :loading="createLoading" @click="createAccount">保存账户</n-button>
+          <n-button class="dialog-cancel-button" @click="createVisible = false">取消</n-button>
+          <n-button class="dialog-primary-button" type="primary" :loading="createLoading" @click="createAccount">
+            保存账户
+          </n-button>
         </n-space>
       </template>
     </n-modal>
 
-    <n-modal v-model:show="importVisible" preset="card" class="console-modal" title="批量导入">
+    <n-modal
+      v-model:show="importVisible"
+      preset="card"
+      :bordered="false"
+      class="console-modal"
+      title="批量导入"
+    >
       <div class="import-modal-body">
         <n-input
           v-model:value="importText"
@@ -129,8 +201,10 @@
             @change="handleTxtFileChange"
           />
           <n-space justify="end">
-            <n-button secondary :loading="importLoading" @click="triggerTxtImport">导入 TXT</n-button>
-            <n-button type="primary" :loading="importLoading" @click="handleImportText">
+            <n-button class="dialog-secondary-button" secondary :loading="importLoading" @click="triggerTxtImport">
+              导入 TXT
+            </n-button>
+            <n-button class="dialog-primary-button" type="primary" :loading="importLoading" @click="handleImportText">
               导入文本
             </n-button>
           </n-space>
@@ -138,7 +212,13 @@
       </template>
     </n-modal>
 
-    <n-modal v-model:show="editVisible" preset="card" class="console-modal" title="编辑账户">
+    <n-modal
+      v-model:show="editVisible"
+      preset="card"
+      :bordered="false"
+      class="console-modal"
+      title="编辑账户"
+    >
       <n-form label-placement="top">
         <n-grid :cols="24" :x-gap="14" :y-gap="8">
           <n-gi :span="24" :md="6">
@@ -166,8 +246,10 @@
 
       <template #footer>
         <n-space justify="end">
-          <n-button @click="editVisible = false">取消</n-button>
-          <n-button type="primary" :loading="editLoading" @click="updateAccount">保存修改</n-button>
+          <n-button class="dialog-cancel-button" @click="editVisible = false">取消</n-button>
+          <n-button class="dialog-primary-button" type="primary" :loading="editLoading" @click="updateAccount">
+            保存修改
+          </n-button>
         </n-space>
       </template>
     </n-modal>

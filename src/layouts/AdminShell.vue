@@ -93,25 +93,36 @@
     </aside>
 
     <main class="console-main">
-      <header class="console-header">
-        <div class="console-header-copy">
-          <p class="console-header-kicker">{{ currentGroupLabel }}</p>
-          <h2>{{ route.meta.title || '邮箱管理' }}</h2>
-          <p>{{ route.meta.description || '在统一后台中管理邮箱服务。' }}</p>
-        </div>
+      <div class="console-main-shell">
+        <header class="console-header">
+          <div class="console-header-panel">
+            <div class="console-header-copy">
+              <p class="console-header-kicker page-pill">{{ currentGroupLabel }}</p>
+              <h2>{{ route.meta.title || '邮箱管理' }}</h2>
+              <p>{{ route.meta.description || '在统一后台中管理邮箱服务。' }}</p>
+            </div>
 
-        <div class="console-user-card">
-          <div>
-            <p class="console-user-label">当前登录</p>
-            <strong>{{ currentUser }}</strong>
+            <div class="console-user-card">
+              <div>
+                <p class="console-user-label">当前登录</p>
+                <strong>{{ currentUser }}</strong>
+              </div>
+              <n-button
+                secondary
+                class="header-logout-button"
+                :loading="logoutLoading"
+                @click="handleLogout"
+              >
+                退出登录
+              </n-button>
+            </div>
           </div>
-          <n-button secondary :loading="logoutLoading" @click="handleLogout">退出登录</n-button>
-        </div>
-      </header>
+        </header>
 
-      <section class="console-content">
-        <RouterView />
-      </section>
+        <section class="console-content">
+          <RouterView />
+        </section>
+      </div>
     </main>
   </div>
 </template>
