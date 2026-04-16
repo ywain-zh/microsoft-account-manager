@@ -4199,57 +4199,40 @@ body {
 
 /* HTML-accurate inbox modal */
 .inbox-modal {
-  width: min(1000px, 95vw) !important;
+  width: auto !important;
+  max-width: none !important;
 }
 
-.inbox-modal > .n-card {
-  position: relative;
+.inbox-modal-shell {
+  width: min(960px, 95vw);
+  height: 80vh;
+  max-height: min(760px, calc(100vh - 24px));
   display: flex;
   flex-direction: column;
-  width: min(1000px, 95vw);
-  height: 85vh;
-  max-height: 90vh;
   overflow: hidden;
-  border-radius: 12px !important;
+  border-radius: 12px;
   background: #ffffff;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15), 0 4px 12px rgba(0, 0, 0, 0.05) !important;
-}
-
-.inbox-modal > .n-card > .n-card-header {
-  padding: 0 !important;
-  border-bottom: 0 !important;
-}
-
-.inbox-modal > .n-card > .n-card__content {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  padding: 0 !important;
-  overflow: hidden;
-}
-
-.inbox-modal .n-card-header__main {
-  width: 100%;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15), 0 4px 12px rgba(0, 0, 0, 0.05);
 }
 
 .inbox-modal .modal-header {
   display: flex;
-  align-items: center;
   justify-content: space-between;
+  align-items: center;
   gap: 16px;
   width: 100%;
-  min-height: 64px;
   padding: 16px 24px;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid #e2e8f0;
   background: #ffffff;
+  flex: none;
 }
 
 .inbox-modal .modal-header-left {
   display: flex;
   align-items: center;
   gap: 16px;
-  min-width: 0;
   flex: 1;
+  min-width: 0;
 }
 
 .inbox-modal .modal-header h2 {
@@ -4266,12 +4249,12 @@ body {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  flex-wrap: wrap;
 }
 
 .inbox-modal .current-email {
   margin: 0;
   min-width: 0;
+  max-width: min(38vw, 360px);
   color: #475569;
   font-size: 14px;
   line-height: 1.4;
@@ -4339,8 +4322,8 @@ body {
 }
 
 .inbox-modal .btn-close:hover {
-  background: #f8fafc;
-  color: #1e293b;
+  background: #f1f5f9;
+  color: #f56c6c;
 }
 
 .inbox-modal .spin {
@@ -4365,10 +4348,10 @@ body {
   display: flex;
   flex-direction: column;
   width: 320px;
-  min-width: 320px;
+  min-width: 300px;
   min-height: 0;
   background: #f8fafc;
-  border-right: 1px solid #f1f5f9;
+  border-right: 1px solid #e2e8f0;
 }
 
 .inbox-modal .inbox-spin,
@@ -4383,7 +4366,8 @@ body {
   flex: 1;
   min-height: 0;
   padding: 12px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .inbox-modal .inbox-mail-item {
@@ -4400,16 +4384,16 @@ body {
   border: 1px solid transparent;
   border-radius: 8px;
   background: #ffffff;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
   cursor: pointer;
   text-align: left;
   transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .inbox-modal .inbox-mail-item:hover {
-  border-color: #dbeafe;
+  border-color: #ecf5ff;
   background: #ffffff;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
 }
 
 .inbox-modal .inbox-mail-item.active {
@@ -4422,6 +4406,7 @@ body {
   grid-area: sender;
   min-width: 0;
   margin: 0;
+  padding-right: 16px;
   color: #475569;
   font-size: 14px;
   line-height: 1.4;
@@ -4460,20 +4445,23 @@ body {
   min-width: 0;
   min-height: 0;
   padding: 32px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   background: #ffffff;
 }
 
 .inbox-modal .mail-detail-container {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 0;
   min-width: 0;
+  min-height: 100%;
 }
 
 .inbox-modal .mail-detail-header {
   padding-bottom: 24px;
-  border-bottom: 1px solid #f1f5f9;
+  margin-bottom: 24px;
+  border-bottom: 1px solid #e2e8f0;
 }
 
 .inbox-modal .mail-detail-subject {
@@ -4486,10 +4474,10 @@ body {
 
 .inbox-modal .mail-meta-info {
   display: grid;
-  gap: 8px;
+  gap: 0;
   color: #475569;
-  font-size: 14px;
-  line-height: 1.7;
+  font-size: 13px;
+  line-height: 2;
 }
 
 .inbox-modal .mail-meta-info strong {
@@ -4500,9 +4488,13 @@ body {
 }
 
 .inbox-modal .mail-html-body {
+  flex: 1;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  color: #333333;
+  font-size: 14px;
+  line-height: 1.6;
   background: #ffffff;
 }
 
@@ -4540,7 +4532,7 @@ body {
 
 .inbox-modal ::-webkit-scrollbar-thumb {
   background: #cbd5e1;
-  border-radius: 999px;
+  border-radius: 4px;
 }
 
 .inbox-modal ::-webkit-scrollbar-track {
@@ -4548,9 +4540,10 @@ body {
 }
 
 @media (max-width: 960px) {
-  .inbox-modal > .n-card {
-    height: 85vh;
-    max-height: 90vh;
+  .inbox-modal-shell {
+    width: min(960px, calc(100vw - 24px));
+    height: min(80vh, calc(100vh - 24px));
+    max-height: calc(100vh - 24px);
   }
 
   .inbox-modal .modal-header {
@@ -4579,8 +4572,15 @@ body {
 }
 
 @media (max-width: 640px) {
+  .inbox-modal-shell {
+    width: calc(100vw - 16px);
+    height: calc(100vh - 16px);
+    max-height: calc(100vh - 16px);
+  }
+
   .inbox-modal .modal-header {
     align-items: flex-start;
+    padding: 14px 16px;
   }
 
   .inbox-modal .modal-header-left {
@@ -4590,6 +4590,7 @@ body {
 
   .inbox-modal .email-action-group {
     align-items: flex-start;
+    flex-wrap: wrap;
   }
 
   .inbox-modal .inbox-content {

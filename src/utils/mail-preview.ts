@@ -330,15 +330,16 @@ function buildMailDocument(contentMarkup: string, mode: RenderedMailPreview['mod
       body {
         margin: 0;
         padding: 0;
-        color: #1f2937;
-        font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-        background:
-          radial-gradient(circle at top, rgba(15, 23, 42, 0.05), transparent 28%),
-          linear-gradient(180deg, #f8fbff 0%, #eef3f9 100%);
+        color: #333333;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        font-size: 14px;
+        line-height: 1.6;
+        background: #ffffff;
+        overflow-x: hidden;
       }
 
       a {
-        color: #0f766e;
+        color: #0f6ad9;
         text-decoration: none;
         word-break: break-word;
       }
@@ -365,31 +366,31 @@ function buildMailDocument(contentMarkup: string, mode: RenderedMailPreview['mod
       }
 
       .mail-doc-shell {
-        padding: 28px clamp(16px, 3vw, 28px);
+        width: 100%;
+        padding: 0;
+        background: #ffffff;
       }
 
       .mail-doc-card {
-        width: min(100%, 900px);
-        margin: 0 auto;
-        border-radius: 24px;
-        border: 1px solid rgba(148, 163, 184, 0.22);
+        width: 100%;
+        margin: 0;
+        border: 0;
+        border-radius: 0;
         background: #ffffff;
-        box-shadow:
-          0 28px 44px rgba(15, 23, 42, 0.08),
-          inset 0 1px 0 rgba(255, 255, 255, 0.8);
+        box-shadow: none;
         overflow: hidden;
       }
 
       .mail-doc-card-html {
-        padding: 24px;
+        padding: 0;
       }
 
       .mail-doc-card-text {
-        padding: 28px;
+        padding: 0;
       }
 
       .mail-doc-card-empty {
-        padding: 28px;
+        padding: 32px 0;
       }
 
       .mail-doc-card[data-mode='html'] [data-mail-table='true'] {
@@ -410,7 +411,7 @@ function buildMailDocument(contentMarkup: string, mode: RenderedMailPreview['mod
         white-space: normal;
         word-break: break-word;
         line-height: 1.8;
-        font-size: 15px;
+        font-size: 14px;
         color: #334155;
       }
 
