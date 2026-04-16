@@ -4204,9 +4204,10 @@ body {
 }
 
 .inbox-modal-shell {
-  width: min(960px, 95vw);
-  height: 80vh;
-  max-height: min(760px, calc(100vh - 24px));
+  width: 960px;
+  height: 760px;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -4541,8 +4542,8 @@ body {
 
 @media (max-width: 960px) {
   .inbox-modal-shell {
-    width: min(960px, calc(100vw - 24px));
-    height: min(80vh, calc(100vh - 24px));
+    width: calc(100vw - 24px);
+    height: min(760px, calc(100vh - 24px));
     max-height: calc(100vh - 24px);
   }
 
@@ -4574,7 +4575,7 @@ body {
 @media (max-width: 640px) {
   .inbox-modal-shell {
     width: calc(100vw - 16px);
-    height: calc(100vh - 16px);
+    height: min(760px, calc(100vh - 16px));
     max-height: calc(100vh - 16px);
   }
 
