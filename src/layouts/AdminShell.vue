@@ -24,6 +24,37 @@
                 stroke-width="1.7"
               />
             </svg>
+            <svg v-else-if="item.key === 'sub2api'" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M12 4.5v3"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-width="1.7"
+              />
+              <path
+                d="M12 16.5v3"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-width="1.7"
+              />
+              <path
+                d="M5.75 12h3"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-width="1.7"
+              />
+              <path
+                d="M15.25 12h3"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-width="1.7"
+              />
+              <path
+                d="M12 15.5A3.5 3.5 0 1 0 12 8.5a3.5 3.5 0 0 0 0 7Z"
+                stroke="currentColor"
+                stroke-width="1.7"
+              />
+            </svg>
             <svg v-else viewBox="0 0 24 24" fill="none">
               <path
                 d="M6.75 7.75h10.5v8.5H6.75z"

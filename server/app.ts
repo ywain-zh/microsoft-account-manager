@@ -87,6 +87,64 @@ interface CloudMailRemoteEnvelope<T> {
   data?: T;
 }
 
+interface Sub2ApiConfig {
+  baseUrl: string;
+  adminApiKey: string;
+}
+
+type Sub2ApiPlanType = 'free' | 'plus' | 'team' | '';
+type Sub2ApiDetectionOutcome = 'success' | 'quota' | 'unauthorized' | 'abnormal';
+type Sub2ApiLogLevel = 'info' | 'success' | 'warning' | 'error';
+
+interface Sub2ApiAccountItem {
+  id: number;
+  name: string;
+  status: string;
+  errorMessage: string | null;
+  planType: Sub2ApiPlanType;
+}
+
+interface Sub2ApiDetectionSummary {
+  totalAccounts: number;
+  processedAccounts: number;
+  availableAccounts: number;
+  freeAvailableAccounts: number;
+  plusAvailableAccounts: number;
+  teamAvailableAccounts: number;
+  quotaExhaustedAccounts: number;
+  unauthorizedAccounts: number;
+  abnormalAccounts: number;
+}
+
+interface Sub2ApiDetectionLogItem {
+  id: string;
+  timestamp: string;
+  level: Sub2ApiLogLevel;
+  message: string;
+  accountId?: number | null;
+  accountName?: string | null;
+}
+
+interface Sub2ApiDetectionProgress {
+  totalAccounts: number;
+  processedAccounts: number;
+  currentAccountId?: number | null;
+  currentAccountName?: string | null;
+  outcome?: Sub2ApiDetectionOutcome;
+}
+
+interface Sub2ApiTestResult {
+  outcome: Sub2ApiDetectionOutcome;
+  reason: string;
+  planType: Sub2ApiPlanType;
+}
+
+interface Sub2ApiDeleteAccountDetail {
+  accountId: number;
+  ok: boolean;
+  message: string;
+}
+
 interface SessionPayload {
   username: string;
   exp: number;
@@ -174,6 +232,15 @@ const DEFAULT_CLOUD_MAIL_CONFIG: CloudMailConfig = {
   adminEmail: '',
   adminPassword: '',
   availableDomains: []
+};
+
+const SUB2API_CONFIG_KEY = 'sub2api_config';
+const SUB2API_TEST_MODEL = 'gpt-5.4';
+const SUB2API_PAGE_SIZE = 100;
+
+const DEFAULT_SUB2API_CONFIG: Sub2ApiConfig = {
+  baseUrl: '',
+  adminApiKey: ''
 };
 
 const ACCOUNT_SELECT_SQL = `
@@ -643,6 +710,173 @@ app.put('/api/cloud-mail/config', async (c) => {
   return c.json({ item });
 });
 
+app.get('/api/sub2api/config', async (c) => {
+  const item = await getSub2ApiConfig(c.env.DB);
+  return c.json({ item });
+});
+
+app.put('/api/sub2api/config', async (c) => {
+  const body = await readJson<Partial<Sub2ApiConfig>>(c);
+  const item = normalizeSub2ApiConfig(body);
+  validateSub2ApiConfig(item);
+  await validateSub2ApiConnection(item);
+  await setAppSetting(c.env.DB, SUB2API_CONFIG_KEY, JSON.stringify(item));
+  return c.json({ item });
+});
+
+app.post('/api/sub2api/check', async (c) => {
+  const config = await getSub2ApiConfig(c.env.DB);
+  ensureSub2ApiConfigured(config);
+
+  let logCounter = 0;
+  let aborted = false;
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const emit = (eventName: 'log' | 'progress' | 'summary' | 'done' | 'error', payload: unknown): void => {
+        if (aborted) {
+          return;
+        }
+
+        controller.enqueue(
+          textEncoder.encode(`event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`)
+        );
+      };
+
+      const emitSummary = (summary: Sub2ApiDetectionSummary): void => {
+        emit('summary', { ...summary });
+      };
+
+      const emitLog = (
+        level: Sub2ApiLogLevel,
+        message: string,
+        account?: Pick<Sub2ApiAccountItem, 'id' | 'name'>
+      ): void => {
+        logCounter += 1;
+        const item: Sub2ApiDetectionLogItem = {
+          id: `${Date.now()}-${logCounter}`,
+          timestamp: new Date().toISOString(),
+          level,
+          message,
+          accountId: account?.id ?? null,
+          accountName: account?.name ?? null
+        };
+        emit('log', item);
+      };
+
+      const closeStream = (): void => {
+        if (aborted) {
+          return;
+        }
+        aborted = true;
+        controller.close();
+      };
+
+      const run = async (): Promise<void> => {
+        try {
+          const summary = createDefaultSub2ApiDetectionSummary();
+          emitSummary(summary);
+          emit('progress', {
+            totalAccounts: 0,
+            processedAccounts: 0
+          } as Sub2ApiDetectionProgress);
+
+          emitLog('info', '开始拉取 Sub2API 账号列表');
+          const accounts = await listAllSub2ApiAccounts(config);
+          summary.totalAccounts = accounts.length;
+          emitSummary(summary);
+          emit('progress', {
+            totalAccounts: summary.totalAccounts,
+            processedAccounts: summary.processedAccounts
+          } as Sub2ApiDetectionProgress);
+
+          if (accounts.length === 0) {
+            emitLog('warning', '未拉取到任何账号，请检查 Sub2API 账号列表');
+            emit('done', { summary: { ...summary } });
+            closeStream();
+            return;
+          }
+
+          emitLog('info', `账号列表拉取完成，共 ${accounts.length} 个账号，开始逐个检测`);
+
+          for (let index = 0; index < accounts.length; index += 1) {
+            if (aborted) {
+              return;
+            }
+
+            const account = accounts[index];
+            emitLog('info', `[${index + 1}/${accounts.length}] 开始检测 ${account.name}`, account);
+
+            const result = await testSub2ApiAccount(config, account, (level, message) => {
+              emitLog(level, `[${account.name}] ${message}`, account);
+            });
+
+            applySub2ApiDetectionResult(summary, result);
+            emitSummary(summary);
+            emit('progress', {
+              totalAccounts: summary.totalAccounts,
+              processedAccounts: summary.processedAccounts,
+              currentAccountId: account.id,
+              currentAccountName: account.name,
+              outcome: result.outcome
+            } as Sub2ApiDetectionProgress);
+
+            emitLog(resolveSub2ApiOutcomeLogLevel(result.outcome), formatSub2ApiResultMessage(result), account);
+          }
+
+          emitLog(
+            'success',
+            `检测完成：总可用 ${summary.availableAccounts}，401 ${summary.unauthorizedAccounts}，额度清空 ${summary.quotaExhaustedAccounts}，异常 ${summary.abnormalAccounts}`
+          );
+          emit('done', { summary: { ...summary } });
+          closeStream();
+        } catch (error) {
+          const message = getErrorMessage(error);
+          emitLog('error', message);
+          emit('error', { message });
+          closeStream();
+        }
+      };
+
+      void run();
+    },
+    cancel() {
+      aborted = true;
+    }
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive'
+    }
+  });
+});
+
+app.post('/api/sub2api/accounts/batch-delete', async (c) => {
+  const config = await getSub2ApiConfig(c.env.DB);
+  ensureSub2ApiConfigured(config);
+
+  const body = await readJson<{ accountIds?: unknown }>(c);
+  const accountIds = parseAccountIds(body.accountIds);
+
+  if (accountIds.length === 0) {
+    throw new HTTPException(400, { message: '请至少选择一个 401 账号' });
+  }
+
+  const details = await deleteSub2ApiAccounts(config, accountIds);
+  const deleted = details.filter((item) => item.ok).length;
+
+  return c.json({
+    ok: true as const,
+    total: accountIds.length,
+    deleted,
+    skipped: accountIds.length - deleted,
+    details
+  });
+});
+
 app.get('/api/cloud-mail/accounts', async (c) => {
   const config = await getCloudMailConfig(c.env.DB);
   ensureCloudMailConfigured(config);
@@ -831,6 +1065,18 @@ function asText(value: unknown): string {
   return String(value);
 }
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof HTTPException) {
+    return error.message;
+  }
+
+  if (error instanceof Error) {
+    return error.message || '发生未知错误';
+  }
+
+  return '发生未知错误';
+}
+
 function toNullableText(value: unknown): string | null {
   const text = asText(value).trim();
   return text ? text : null;
@@ -955,6 +1201,21 @@ async function getCloudMailConfig(db: D1Database): Promise<CloudMailConfig> {
   }
 }
 
+async function getSub2ApiConfig(db: D1Database): Promise<Sub2ApiConfig> {
+  const value = await getAppSetting(db, SUB2API_CONFIG_KEY);
+
+  if (!value) {
+    return DEFAULT_SUB2API_CONFIG;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as Partial<Sub2ApiConfig>;
+    return normalizeSub2ApiConfig(parsed);
+  } catch {
+    return DEFAULT_SUB2API_CONFIG;
+  }
+}
+
 function normalizeIngestConfig(input: Partial<IngestConfig>): IngestConfig {
   return {
     delimiter: asText(input.delimiter).trim() || DEFAULT_INGEST_CONFIG.delimiter,
@@ -1038,6 +1299,13 @@ function normalizeCloudMailDomains(value: unknown): string[] {
   );
 }
 
+function normalizeSub2ApiConfig(input: Partial<Sub2ApiConfig>): Sub2ApiConfig {
+  return {
+    baseUrl: normalizeSub2ApiBaseUrl(input.baseUrl),
+    adminApiKey: asText(input.adminApiKey).trim()
+  };
+}
+
 function validateCloudMailConfig(config: CloudMailConfig): void {
   if (!config.apiBaseUrl || !config.adminEmail || !config.adminPassword) {
     throw new HTTPException(400, { message: '请完整填写 API URI、管理员邮箱和管理员密码' });
@@ -1077,9 +1345,59 @@ function validateCloudMailConfig(config: CloudMailConfig): void {
   }
 }
 
+function normalizeSub2ApiBaseUrl(value: unknown): string {
+  const raw = asText(value).trim();
+  if (!raw) {
+    return '';
+  }
+
+  const withProtocol = /^[a-z]+:\/\//i.test(raw) ? raw : `https://${raw}`;
+
+  try {
+    const url = new URL(withProtocol);
+    url.search = '';
+    url.hash = '';
+    const pathname = url.pathname.replace(/\/+$/, '').replace(/\/api\/v1$/i, '');
+    return `${url.origin}${pathname}`;
+  } catch {
+    return raw;
+  }
+}
+
+function validateSub2ApiConfig(config: Sub2ApiConfig): void {
+  if (!config.baseUrl || !config.adminApiKey) {
+    throw new HTTPException(400, { message: '请完整填写 Sub2API 地址和管理员 API Key' });
+  }
+
+  if (config.baseUrl.length > 500) {
+    throw new HTTPException(400, { message: 'Sub2API 地址长度不能超过 500 个字符' });
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(config.baseUrl);
+  } catch {
+    throw new HTTPException(400, { message: 'Sub2API 地址格式不合法' });
+  }
+
+  if (!/^https?:$/.test(parsedUrl.protocol)) {
+    throw new HTTPException(400, { message: 'Sub2API 地址必须以 http:// 或 https:// 开头' });
+  }
+
+  if (config.adminApiKey.length > 1024) {
+    throw new HTTPException(400, { message: '管理员 API Key 长度不能超过 1024 个字符' });
+  }
+}
+
 function ensureCloudMailConfigured(config: CloudMailConfig): void {
   if (!config.apiBaseUrl || !config.adminEmail || !config.adminPassword) {
     throw new HTTPException(400, { message: '请先完成 Cloud Mail 配置' });
+  }
+}
+
+function ensureSub2ApiConfigured(config: Sub2ApiConfig): void {
+  if (!config.baseUrl || !config.adminApiKey) {
+    throw new HTTPException(400, { message: '请先完成 Sub2API 配置' });
   }
 }
 
@@ -1212,6 +1530,697 @@ async function requestCloudMail<T>(
   }
 
   return payload.data as T;
+}
+
+function createDefaultSub2ApiDetectionSummary(): Sub2ApiDetectionSummary {
+  return {
+    totalAccounts: 0,
+    processedAccounts: 0,
+    availableAccounts: 0,
+    freeAvailableAccounts: 0,
+    plusAvailableAccounts: 0,
+    teamAvailableAccounts: 0,
+    quotaExhaustedAccounts: 0,
+    unauthorizedAccounts: 0,
+    abnormalAccounts: 0
+  };
+}
+
+function buildSub2ApiUrl(
+  baseUrl: string,
+  path: string,
+  query?: Record<string, string | number | null | undefined>
+): string {
+  const normalizedBase = normalizeSub2ApiBaseUrl(baseUrl);
+  const baseWithSlash = normalizedBase.endsWith('/') ? normalizedBase : `${normalizedBase}/`;
+  const url = new URL(path.replace(/^\/+/, ''), baseWithSlash);
+
+  if (query) {
+    for (const [key, value] of Object.entries(query)) {
+      if (value === null || value === undefined || value === '') {
+        continue;
+      }
+      url.searchParams.set(key, String(value));
+    }
+  }
+
+  return url.toString();
+}
+
+async function fetchSub2Api(
+  config: Sub2ApiConfig,
+  path: string,
+  init: RequestInit = {},
+  query?: Record<string, string | number | null | undefined>
+): Promise<Response> {
+  const headers = new Headers(init.headers);
+  headers.set('x-api-key', config.adminApiKey);
+
+  if (init.body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  try {
+    return await fetch(buildSub2ApiUrl(config.baseUrl, path, query), {
+      ...init,
+      headers
+    });
+  } catch {
+    throw new HTTPException(502, { message: 'Sub2API 服务连接失败，请检查地址' });
+  }
+}
+
+async function requestSub2Api<T>(
+  config: Sub2ApiConfig,
+  path: string,
+  init: RequestInit = {},
+  query?: Record<string, string | number | null | undefined>
+): Promise<T> {
+  const response = await fetchSub2Api(config, path, init, query);
+  const rawText = await response.text();
+
+  if (!response.ok) {
+    throw new HTTPException(response.status >= 500 ? 502 : 400, {
+      message: resolveSub2ApiErrorMessage(response.status, rawText)
+    });
+  }
+
+  if (!rawText.trim()) {
+    return {} as T;
+  }
+
+  try {
+    return JSON.parse(rawText) as T;
+  } catch {
+    throw new HTTPException(502, { message: 'Sub2API 返回的数据格式不正确' });
+  }
+}
+
+function resolveSub2ApiErrorMessage(status: number, rawText: string): string {
+  const remoteMessage = extractSub2ApiMessage(rawText);
+  if (status === 401 || status === 403) {
+    return remoteMessage || 'Sub2API 管理员 API Key 无效，请检查配置';
+  }
+
+  if (status === 404) {
+    return remoteMessage || 'Sub2API 接口不存在，请确认地址是否正确';
+  }
+
+  if (status >= 500) {
+    return remoteMessage || 'Sub2API 服务暂时不可用，请稍后重试';
+  }
+
+  if (remoteMessage) {
+    return remoteMessage;
+  }
+
+  const trimmed = rawText.trim();
+  if (trimmed) {
+    return truncate(trimmed, 240);
+  }
+
+  return `Sub2API 请求失败 (${status})`;
+}
+
+function extractSub2ApiMessage(value: unknown): string {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return '';
+    }
+
+    try {
+      return extractSub2ApiMessage(JSON.parse(trimmed));
+    } catch {
+      return trimmed;
+    }
+  }
+
+  if (!value || typeof value !== 'object') {
+    return '';
+  }
+
+  const record = value as Record<string, unknown>;
+  const directFields = [
+    record.message,
+    record.error,
+    record.detail,
+    record.msg,
+    record.reason,
+    record.statusText
+  ];
+
+  for (const field of directFields) {
+    const text = asText(field).trim();
+    if (text) {
+      return text;
+    }
+  }
+
+  if (record.data !== undefined) {
+    const nested = extractSub2ApiMessage(record.data);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return '';
+}
+
+async function validateSub2ApiConnection(config: Sub2ApiConfig): Promise<void> {
+  await requestSub2Api<unknown>(config, '/api/v1/admin/accounts', {}, { page: 1, page_size: 1 });
+}
+
+async function listAllSub2ApiAccounts(config: Sub2ApiConfig): Promise<Sub2ApiAccountItem[]> {
+  const collected: Sub2ApiAccountItem[] = [];
+  const seenIds = new Set<number>();
+  let page = 1;
+
+  while (true) {
+    const payload = await requestSub2Api<unknown>(config, '/api/v1/admin/accounts', {}, {
+      page,
+      page_size: SUB2API_PAGE_SIZE
+    });
+
+    const items = extractSub2ApiItems(payload);
+    const normalized = items
+      .map((item) => normalizeSub2ApiAccount(item))
+      .filter((item): item is Sub2ApiAccountItem => item !== null);
+
+    let appended = 0;
+    for (const item of normalized) {
+      if (seenIds.has(item.id)) {
+        continue;
+      }
+
+      seenIds.add(item.id);
+      collected.push(item);
+      appended += 1;
+    }
+
+    if (items.length < SUB2API_PAGE_SIZE || appended === 0 || page >= 500) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  return collected;
+}
+
+async function deleteSub2ApiAccounts(
+  config: Sub2ApiConfig,
+  accountIds: number[]
+): Promise<Sub2ApiDeleteAccountDetail[]> {
+  const details: Sub2ApiDeleteAccountDetail[] = [];
+
+  for (const accountId of accountIds) {
+    details.push(await deleteSub2ApiAccount(config, accountId));
+  }
+
+  return details;
+}
+
+async function deleteSub2ApiAccount(
+  config: Sub2ApiConfig,
+  accountId: number
+): Promise<Sub2ApiDeleteAccountDetail> {
+  try {
+    const response = await fetchSub2Api(config, `/api/v1/admin/accounts/${accountId}`, {
+      method: 'DELETE'
+    });
+    const rawText = await response.text();
+
+    if (!response.ok) {
+      return {
+        accountId,
+        ok: false,
+        message: resolveSub2ApiErrorMessage(response.status, rawText)
+      };
+    }
+
+    return {
+      accountId,
+      ok: true,
+      message: formatSub2ApiDeleteResultMessage(rawText)
+    };
+  } catch (error) {
+    return {
+      accountId,
+      ok: false,
+      message: getErrorMessage(error)
+    };
+  }
+}
+
+function formatSub2ApiDeleteResultMessage(rawText: string): string {
+  const trimmed = rawText.trim();
+  if (!trimmed) {
+    return '账号已删除';
+  }
+
+  try {
+    const parsed = toRecord(JSON.parse(trimmed));
+    const nestedMessage = asText(toRecord(parsed?.data)?.message).trim();
+    if (nestedMessage) {
+      return truncate(nestedMessage, 240);
+    }
+
+    const directMessage = asText(parsed?.detail ?? parsed?.message).trim();
+    if (directMessage && directMessage.toLowerCase() !== 'success') {
+      return truncate(directMessage, 240);
+    }
+  } catch {
+    // Ignore invalid JSON payloads and fall back to text extraction.
+  }
+
+  const resolvedMessage = extractSub2ApiMessage(trimmed);
+  if (resolvedMessage && resolvedMessage.toLowerCase() !== 'success') {
+    return truncate(resolvedMessage, 240);
+  }
+
+  return '账号已删除';
+}
+
+function extractSub2ApiItems(payload: unknown): unknown[] {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  const record = toRecord(payload);
+  if (!record) {
+    return [];
+  }
+
+  const candidates = [record.items, record.list, record.accounts, record.rows, record.results];
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+
+  if (Array.isArray(record.data)) {
+    return record.data;
+  }
+
+  const nested = toRecord(record.data);
+  if (!nested) {
+    return [];
+  }
+
+  const nestedCandidates = [nested.items, nested.list, nested.accounts, nested.rows, nested.results];
+  for (const candidate of nestedCandidates) {
+    if (Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+
+  return [];
+}
+
+function normalizeSub2ApiAccount(value: unknown): Sub2ApiAccountItem | null {
+  const record = toRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const id = Number.parseInt(asText(record.id).trim(), 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    return null;
+  }
+
+  const credentials = toRecord(record.credentials);
+  return {
+    id,
+    name:
+      asText(record.name ?? record.account ?? record.email ?? record.username).trim() || `账号 #${id}`,
+    status: asText(record.status).trim(),
+    errorMessage: toNullableText(record.error_message ?? record.errorMessage ?? record.message),
+    planType: normalizeSub2ApiPlanType(credentials?.chatgpt_plan_type ?? credentials?.plan_type)
+  };
+}
+
+function normalizeSub2ApiPlanType(value: unknown): Sub2ApiPlanType {
+  const normalized = asText(value).trim().toLowerCase();
+  if (!normalized) {
+    return '';
+  }
+
+  if (normalized === 'free' || normalized.includes('free')) {
+    return 'free';
+  }
+
+  if (normalized === 'plus' || normalized.includes('plus')) {
+    return 'plus';
+  }
+
+  if (normalized === 'team' || normalized.includes('team')) {
+    return 'team';
+  }
+
+  return '';
+}
+
+async function testSub2ApiAccount(
+  config: Sub2ApiConfig,
+  account: Sub2ApiAccountItem,
+  onLog: (level: Sub2ApiLogLevel, message: string) => void
+): Promise<Sub2ApiTestResult> {
+  const response = await fetchSub2Api(config, `/api/v1/admin/accounts/${account.id}/test`, {
+    method: 'POST',
+    body: JSON.stringify({
+      model_id: SUB2API_TEST_MODEL
+    })
+  });
+
+  if (!response.ok) {
+    const rawText = await response.text();
+    const reason = resolveSub2ApiErrorMessage(response.status, rawText);
+    return {
+      outcome: classifySub2ApiFailure(reason),
+      reason,
+      planType: account.planType
+    };
+  }
+
+  const result = await consumeSub2ApiTestStream(response, onLog);
+  return {
+    ...result,
+    planType: account.planType
+  };
+}
+
+async function consumeSub2ApiTestStream(
+  response: Response,
+  onLog: (level: Sub2ApiLogLevel, message: string) => void
+): Promise<Omit<Sub2ApiTestResult, 'planType'>> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    return {
+      outcome: 'abnormal',
+      reason: '检测接口没有返回可读取的数据流'
+    };
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let sawCompletion = false;
+  let sawResponseContent = false;
+  let failureReason = '';
+
+  const handleEventPayload = (payloadText: string): void => {
+    const parsed = parseSub2ApiStreamPayload(payloadText);
+    if (parsed === null) {
+      const line = payloadText.trim();
+      if (!line) {
+        return;
+      }
+
+      onLog('info', truncate(line, 240));
+      if (/测试完成|test complete|completed/i.test(line)) {
+        sawCompletion = true;
+      }
+      if (!failureReason && looksLikeSub2ApiFailure(line)) {
+        failureReason = line;
+      }
+      return;
+    }
+
+    const eventType = asText(parsed.type).trim().toLowerCase();
+    const text = resolveSub2ApiStreamMessage(parsed);
+
+    if (eventType === 'error') {
+      failureReason = text || '检测失败';
+      onLog('warning', truncate(failureReason, 240));
+      return;
+    }
+
+    if (
+      eventType === 'test_complete' ||
+      eventType === 'complete' ||
+      eventType === 'success' ||
+      eventType === 'finished' ||
+      eventType === 'done'
+    ) {
+      sawCompletion = true;
+    }
+
+    if (eventType === 'response' || eventType === 'message' || eventType === 'result') {
+      if (text) {
+        sawResponseContent = true;
+      }
+    }
+
+    if (text) {
+      onLog(eventType === 'test_start' ? 'info' : 'success', truncate(text, 240));
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+
+    while (true) {
+      const eventBoundary = buffer.indexOf('\n\n');
+      if (eventBoundary === -1) {
+        break;
+      }
+
+      const chunk = buffer.slice(0, eventBoundary);
+      buffer = buffer.slice(eventBoundary + 2);
+      const payloadText = extractSub2ApiEventData(chunk);
+      if (payloadText) {
+        handleEventPayload(payloadText);
+      }
+    }
+  }
+
+  buffer += decoder.decode();
+  const tailPayload = extractSub2ApiEventData(buffer);
+  if (tailPayload) {
+    handleEventPayload(tailPayload);
+  }
+
+  if (failureReason) {
+    return {
+      outcome: classifySub2ApiFailure(failureReason),
+      reason: truncate(failureReason.trim(), 240)
+    };
+  }
+
+  if (sawCompletion || sawResponseContent) {
+    return {
+      outcome: 'success',
+      reason: '账号可用'
+    };
+  }
+
+  const fallbackReason = buffer.trim();
+  if (fallbackReason) {
+    return {
+      outcome: classifySub2ApiFailure(fallbackReason),
+      reason: truncate(fallbackReason, 240)
+    };
+  }
+
+  return {
+    outcome: 'abnormal',
+    reason: '检测结束但没有识别到明确结果'
+  };
+}
+
+function extractSub2ApiEventData(block: string): string {
+  const lines = block
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter(Boolean);
+
+  if (lines.length === 0) {
+    return '';
+  }
+
+  const dataLines = lines
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).trim());
+
+  if (dataLines.length > 0) {
+    return dataLines.join('\n').trim();
+  }
+
+  return lines.join('\n').trim();
+}
+
+function parseSub2ApiStreamPayload(payloadText: string): Record<string, unknown> | null {
+  const trimmed = payloadText.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    return toRecord(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function resolveSub2ApiStreamMessage(payload: Record<string, unknown>): string {
+  const direct = [
+    payload.message,
+    payload.error,
+    payload.content,
+    payload.response,
+    payload.result,
+    payload.output
+  ];
+
+  for (const field of direct) {
+    const text = asText(field).trim();
+    if (text) {
+      return text;
+    }
+  }
+
+  if (payload.type !== undefined) {
+    const normalizedType = asText(payload.type).trim().toLowerCase();
+    if (normalizedType === 'test_start') {
+      const model = asText(payload.model ?? payload.model_id).trim() || SUB2API_TEST_MODEL;
+      return `远端测试已启动，模型 ${model}`;
+    }
+  }
+
+  return '';
+}
+
+function looksLikeSub2ApiFailure(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  return (
+    normalized.includes('401') ||
+    normalized.includes('429') ||
+    normalized.includes('unauthorized') ||
+    normalized.includes('authentication failed') ||
+    normalized.includes('token_invalidated') ||
+    normalized.includes('quota') ||
+    normalized.includes('rate limit') ||
+    normalized.includes('error')
+  );
+}
+
+function classifySub2ApiFailure(reason: string): Sub2ApiDetectionOutcome {
+  const normalized = reason.trim().toLowerCase();
+
+  if (
+    normalized.includes('401') ||
+    normalized.includes('unauthorized') ||
+    normalized.includes('authentication failed') ||
+    normalized.includes('token_invalidated') ||
+    normalized.includes('invalid api key')
+  ) {
+    return 'unauthorized';
+  }
+
+  if (
+    normalized.includes('429') ||
+    normalized.includes('quota') ||
+    normalized.includes('rate limit') ||
+    normalized.includes('too many requests') ||
+    normalized.includes('额度') ||
+    normalized.includes('limit reached')
+  ) {
+    return 'quota';
+  }
+
+  return 'abnormal';
+}
+
+function applySub2ApiDetectionResult(
+  summary: Sub2ApiDetectionSummary,
+  result: Sub2ApiTestResult
+): void {
+  summary.processedAccounts += 1;
+
+  if (result.outcome === 'success') {
+    summary.availableAccounts += 1;
+
+    if (result.planType === 'free') {
+      summary.freeAvailableAccounts += 1;
+    } else if (result.planType === 'plus') {
+      summary.plusAvailableAccounts += 1;
+    } else if (result.planType === 'team') {
+      summary.teamAvailableAccounts += 1;
+    }
+
+    return;
+  }
+
+  if (result.outcome === 'unauthorized') {
+    summary.unauthorizedAccounts += 1;
+    return;
+  }
+
+  if (result.outcome === 'quota') {
+    summary.quotaExhaustedAccounts += 1;
+    return;
+  }
+
+  summary.abnormalAccounts += 1;
+}
+
+function resolveSub2ApiOutcomeLogLevel(outcome: Sub2ApiDetectionOutcome): Sub2ApiLogLevel {
+  if (outcome === 'success') {
+    return 'success';
+  }
+
+  if (outcome === 'quota') {
+    return 'warning';
+  }
+
+  return 'error';
+}
+
+function formatSub2ApiResultMessage(result: Sub2ApiTestResult): string {
+  if (result.outcome === 'success') {
+    const planLabel = formatSub2ApiPlanLabel(result.planType);
+    return planLabel ? `检测通过，套餐 ${planLabel}` : '检测通过，套餐未识别';
+  }
+
+  if (result.outcome === 'quota') {
+    return `额度清空或限流：${result.reason}`;
+  }
+
+  if (result.outcome === 'unauthorized') {
+    return `检测命中 401：${result.reason}`;
+  }
+
+  return `检测异常：${result.reason}`;
+}
+
+function formatSub2ApiPlanLabel(planType: Sub2ApiPlanType): string {
+  if (planType === 'free') {
+    return 'Free';
+  }
+
+  if (planType === 'plus') {
+    return 'Plus';
+  }
+
+  if (planType === 'team') {
+    return 'Team';
+  }
+
+  return '';
+}
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
 }
 
 function resolveCloudMailToken(data: unknown): string {

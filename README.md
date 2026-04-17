@@ -30,14 +30,25 @@
 - 生产环境禁止使用 `latest`，必须使用已审核通过的固定镜像 tag。
 - 不要仅根据本文件执行部署命令；部署时必须严格按 [DEPLOY_LITE.md](./DEPLOY_LITE.md) 执行。
 
+## Git 工作流 / 分支说明
+- `main`：上游基线分支，跟踪 `upstream/main`，用于同步原项目完整代码。
+- `dev`：本仓库集成与发布主线，所有待发布内容最终都先进入这里。
+- `clouded`：Claude 专用工作分支，Claude 以后默认在这里修改代码。
+- `codex`：Codex 专用工作分支，后续启用时与 `clouded` 遵循同一流程。
+- 发布固定顺序：`clouded / codex -> dev -> release 文档 -> tag -> GHCR -> 部署`。
+- 详细分支职责与冲突处理规则见 [BRANCH_LAYOUT.md](./BRANCH_LAYOUT.md)。
+
 ## 代码修改后的发布顺序
 以后改代码后的标准路径固定如下：
-1. 本地执行 `npm run typecheck` 和 `npm run build`。
-2. 基于 `releases/RELEASE_TEMPLATE.md` 新建本次 `releases/RELEASE-*.md`。
-3. 提交代码并 `git push origin dev`。
-4. 创建固定 tag 并 push，例如 `git tag 2026.04.16-1 && git push origin 2026.04.16-1`。
-5. 等待 GitHub Actions 将镜像发布到 `ghcr.io/ywain-zh/microsoft-account-manager:<tag>`。
-6. 用户审核通过并明确批准后，才允许按 [DEPLOY_LITE.md](./DEPLOY_LITE.md) 去服务器执行 `docker compose pull` 和 `docker compose up -d`。
+1. 如有上游更新，先同步 `upstream/main -> main`，再按需合并到 `dev`。
+2. Claude 在 `clouded` 工作，Codex 在 `codex` 工作；不直接在 `dev` / `main` 上做日常开发。
+3. 发布前先把待发布分支合并到 `dev`，并在 `dev` 统一解决冲突。
+4. 本地执行 `npm run typecheck` 和 `npm run build`。
+5. 基于 `releases/RELEASE_TEMPLATE.md` 新建本次 `releases/RELEASE-*.md`。
+6. 提交代码并 `git push origin dev`。
+7. 创建固定 tag 并 push，例如 `git tag 2026.04.16-1 && git push origin 2026.04.16-1`。
+8. 等待 GitHub Actions 将镜像发布到 `ghcr.io/ywain-zh/microsoft-account-manager:<tag>`。
+9. 用户审核通过并明确批准后，才允许按 [DEPLOY_LITE.md](./DEPLOY_LITE.md) 去服务器执行 `docker compose pull` 和 `docker compose up -d`。
 
 这条顺序是后续唯一推荐路径。服务器不负责构建，只负责拉固定 tag 镜像并运行。
 

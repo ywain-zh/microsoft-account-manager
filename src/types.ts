@@ -70,6 +70,64 @@ export interface CloudMailCreatePayload {
   domain: string;
 }
 
+export interface Sub2ApiConfig {
+  baseUrl: string;
+  adminApiKey: string;
+}
+
+export type Sub2ApiPlanType = 'free' | 'plus' | 'team' | '';
+export type Sub2ApiDetectionOutcome = 'success' | 'quota' | 'unauthorized' | 'abnormal';
+export type Sub2ApiLogLevel = 'info' | 'success' | 'warning' | 'error';
+
+export interface Sub2ApiDetectionSummary {
+  totalAccounts: number;
+  processedAccounts: number;
+  availableAccounts: number;
+  freeAvailableAccounts: number;
+  plusAvailableAccounts: number;
+  teamAvailableAccounts: number;
+  quotaExhaustedAccounts: number;
+  unauthorizedAccounts: number;
+  abnormalAccounts: number;
+}
+
+export interface Sub2ApiDetectionLogItem {
+  id: string;
+  timestamp: string;
+  level: Sub2ApiLogLevel;
+  message: string;
+  accountId?: number | null;
+  accountName?: string | null;
+}
+
+export interface Sub2ApiDetectionProgress {
+  totalAccounts: number;
+  processedAccounts: number;
+  currentAccountId?: number | null;
+  currentAccountName?: string | null;
+  outcome?: Sub2ApiDetectionOutcome;
+}
+
+export interface Sub2ApiDetectedIssueItem {
+  accountId: number;
+  accountName: string | null;
+  reason: string;
+}
+
+export interface Sub2ApiDeleteAccountDetail {
+  accountId: number;
+  ok: boolean;
+  message: string;
+}
+
+export interface Sub2ApiDeleteAccountsResponse {
+  ok: true;
+  total: number;
+  deleted: number;
+  skipped: number;
+  details: Sub2ApiDeleteAccountDetail[];
+}
+
 export type TokenStatus = 'unknown' | 'valid' | 'invalid';
 
 export type MailFetchMode = 'auto' | 'graph' | 'imap';
