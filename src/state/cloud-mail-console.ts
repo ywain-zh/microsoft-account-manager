@@ -133,6 +133,18 @@ const selectedMail = computed(() => {
   return mailItems.value.find((item) => item.id === selectedMailId.value) ?? null;
 });
 
+function markMailAsRead(id: string): void {
+  mailItems.value = mailItems.value.map((item) => {
+    if (item.id !== id || item.isRead === true) {
+      return item;
+    }
+    return {
+      ...item,
+      isRead: true
+    };
+  });
+}
+
 let initialLoadPromise: Promise<void> | null = null;
 
 function getErrorMessage(error: unknown): string {
@@ -613,6 +625,7 @@ export function useCloudMailConsole() {
     openMailModal,
     refreshMailInbox,
     formatDate,
-    clearMailState
+    clearMailState,
+    markMailAsRead
   };
 }

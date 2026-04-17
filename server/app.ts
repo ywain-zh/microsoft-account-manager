@@ -1534,11 +1534,42 @@ function normalizeCloudMailReadState(row: Record<string, unknown>): boolean | nu
 }
 
 function detectGraphReadState(value: unknown): boolean | null {
-  return typeof value === 'boolean' ? value : null;
+  return normalizeMicrosoftReadState(value);
 }
 
 function detectOutlookReadState(value: unknown): boolean | null {
-  return typeof value === 'boolean' ? value : null;
+  return normalizeMicrosoftReadState(value);
+}
+
+function normalizeMicrosoftReadState(value: unknown): boolean | null {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof value === 'number') {
+    if (value === 1) {
+      return true;
+    }
+    if (value === 0) {
+      return false;
+    }
+  }
+
+  if (typeof value === 'string') {
+    const text = value.trim().toLowerCase();
+    if (!text) {
+      return null;
+    }
+
+    if (['true', '1', 'yes', 'read', 'seen'].includes(text)) {
+      return true;
+    }
+    if (['false', '0', 'no', 'unread', 'new'].includes(text)) {
+      return false;
+    }
+  }
+
+  return null;
 }
 
 function toCloudMailMailItem(input: unknown): AccountMailItem | null {

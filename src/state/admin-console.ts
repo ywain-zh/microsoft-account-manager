@@ -90,6 +90,18 @@ const selectedMail = computed(() => {
   return mailItems.value.find((item) => item.id === selectedMailId.value) ?? null;
 });
 
+function markMailAsRead(id: string): void {
+  mailItems.value = mailItems.value.map((item) => {
+    if (item.id !== id || item.isRead === true) {
+      return item;
+    }
+    return {
+      ...item,
+      isRead: true
+    };
+  });
+}
+
 let authCheckPromise: Promise<boolean> | null = null;
 
 function getErrorMessage(error: unknown): string {
@@ -727,6 +739,7 @@ export function useAdminConsole() {
     resolveTokenStatusTone,
     resolveCountdownLabel,
     resolveCountdownTone,
-    formatMailDate
+    formatMailDate,
+    markMailAsRead
   };
 }

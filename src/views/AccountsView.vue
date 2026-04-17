@@ -342,6 +342,7 @@ const {
   resolveCountdownLabel,
   resolveCountdownTone,
   formatMailDate,
+  markMailAsRead,
   isAuthenticated,
   initialDataLoaded
 } = admin;
@@ -569,6 +570,7 @@ async function handleImportText(): Promise<void> {
 
 function selectMail(id: string): void {
   selectedMailId.value = id;
+  markMailAsRead(id);
 }
 
 function handleMailVisibleChange(value: boolean): void {

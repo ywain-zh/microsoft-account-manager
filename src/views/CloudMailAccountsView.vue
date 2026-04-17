@@ -516,7 +516,8 @@ const {
   copyMailAccount,
   formatDate,
   openMailModal,
-  refreshMailInbox
+  refreshMailInbox,
+  markMailAsRead
 } = cloudMail;
 
 const apiUriInputProps = {
@@ -703,6 +704,7 @@ const columns: DataTableColumns<CloudMailAccountItem> = [
 
 function selectMail(id: string): void {
   selectedMailId.value = id;
+  markMailAsRead(id);
 }
 
 function handleMailVisibleChange(value: boolean): void {
