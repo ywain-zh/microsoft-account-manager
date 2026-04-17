@@ -1,105 +1,76 @@
 <template>
-  <div class="console-shell console-shell-spec">
-    <aside class="console-sidebar">
-      <div class="console-brand console-brand-spec">
-        <span class="console-brand-badge console-brand-badge-letter" aria-hidden="true">M</span>
-        <div class="console-brand-title-wrap console-brand-title-wrap-spec">
-          <h1 class="console-brand-title">Microsoft Account Manager</h1>
-          <p class="console-brand-subtitle">Admin Console</p>
-        </div>
+  <div class="console-shell console-shell-flat">
+    <aside class="console-sidebar-flat">
+      <div class="console-brand-flat">
+        <span class="console-brand-mark" aria-hidden="true">M</span>
+        <span class="console-brand-name">邮箱管理平台</span>
       </div>
 
-      <nav class="console-nav" aria-label="主导航">
-        <section
-          v-for="group in navigation"
-          :key="group.key"
-          class="console-nav-group"
-          :class="{ 'console-nav-group-open': expandedGroups.includes(group.key) }"
+      <nav class="console-nav-flat" aria-label="主导航">
+        <RouterLink
+          v-for="item in navigation"
+          :key="item.path"
+          :to="item.path"
+          class="console-nav-link-flat"
+          :class="{ 'console-nav-link-flat-active': route.path === item.path }"
         >
-          <button
-            class="console-nav-group-button"
-            :class="{ 'console-nav-group-button-active': currentGroupKey === group.key }"
-            type="button"
-            :aria-expanded="expandedGroups.includes(group.key)"
-            @click="toggleGroup(group.key)"
-          >
-            <span class="console-nav-group-leading">
-              <span class="console-nav-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none">
-                  <path
-                    d="M5.75 8.25h12.5"
-                    stroke="currentColor"
-                    stroke-linecap="round"
-                    stroke-width="1.5"
-                  />
-                  <path
-                    d="M5.75 12h12.5"
-                    stroke="currentColor"
-                    stroke-linecap="round"
-                    stroke-width="1.5"
-                  />
-                  <path
-                    d="M5.75 15.75h7"
-                    stroke="currentColor"
-                    stroke-linecap="round"
-                    stroke-width="1.5"
-                  />
-                </svg>
-              </span>
-              <span class="console-nav-label">{{ group.label }}</span>
-            </span>
-            <span class="console-nav-chevron" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none">
-                <path
-                  d="m8.75 10.5 3.25 3.25 3.25-3.25"
-                  stroke="currentColor"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="1.7"
-                />
-              </svg>
-            </span>
-          </button>
-
-          <div v-if="expandedGroups.includes(group.key)" class="console-subnav">
-            <RouterLink
-              v-for="item in group.children"
-              :key="item.path"
-              :to="item.path"
-              class="console-subnav-link"
-              :class="{ 'console-subnav-link-active': route.path === item.path }"
-            >
-              <span class="console-subnav-label">{{ item.label }}</span>
-            </RouterLink>
-          </div>
-        </section>
+          <span class="console-nav-link-icon" aria-hidden="true">
+            <svg v-if="item.key === 'cloud-mail'" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M7 18.25h9.25a4.25 4.25 0 1 0-.88-8.41A5.5 5.5 0 0 0 5.6 12.11 3.75 3.75 0 0 0 7 18.25Z"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.7"
+              />
+            </svg>
+            <svg v-else viewBox="0 0 24 24" fill="none">
+              <path
+                d="M6.75 7.75h10.5v8.5H6.75z"
+                stroke="currentColor"
+                stroke-linejoin="round"
+                stroke-width="1.7"
+              />
+              <path
+                d="M6.75 10.5h10.5"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-width="1.7"
+              />
+              <path
+                d="M9.5 5.75v2"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-width="1.7"
+              />
+              <path
+                d="M14.5 5.75v2"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-width="1.7"
+              />
+            </svg>
+          </span>
+          <span>{{ item.label }}</span>
+        </RouterLink>
       </nav>
     </aside>
 
-    <main class="console-main">
-      <header class="console-header console-header-bar">
-        <div class="console-header-copy">
-          <p class="console-header-kicker">Admin Console</p>
-          <span class="console-header-context">{{ currentGroupLabel }}</span>
-        </div>
-
-        <div class="console-header-actions">
-          <div class="console-user-chip">
-            <span class="console-user-chip-label">当前登录</span>
-            <strong>{{ currentUser }}</strong>
+    <main class="console-main-flat">
+      <header class="console-topbar-flat">
+        <div class="console-topbar-spacer"></div>
+        <div class="console-topbar-actions">
+          <div class="console-user-flat">
+            <span>当前登录: <strong>{{ currentUser }}</strong></span>
+            <span class="console-user-avatar" aria-hidden="true">{{ userAvatarLabel }}</span>
           </div>
-          <n-button
-            secondary
-            class="header-logout-button"
-            :loading="logoutLoading"
-            @click="handleLogout"
-          >
-            退出登录
+          <n-button text class="header-logout-button-flat" :loading="logoutLoading" @click="handleLogout">
+            退出
           </n-button>
         </div>
       </header>
 
-      <section class="console-content">
+      <section class="console-content-flat">
         <RouterView />
       </section>
     </main>
@@ -107,7 +78,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, watch } from 'vue';
 import { NButton } from 'naive-ui';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 import { consoleNavigation, defaultConsoleRoute } from '../config/navigation';
@@ -118,30 +89,11 @@ const { currentUser, isAuthenticated, logoutLoading } = admin;
 const route = useRoute();
 const router = useRouter();
 const navigation = consoleNavigation;
-const expandedGroups = ref(consoleNavigation.map((group) => group.key));
 
-const currentGroupLabel = computed(() => {
-  const matchedGroup = consoleNavigation.find((group) => {
-    return group.children.some((item) => item.path === route.path);
-  });
-  return matchedGroup?.label ?? '邮箱服务';
+const userAvatarLabel = computed(() => {
+  const normalized = currentUser.value.trim();
+  return normalized ? normalized.slice(0, 1).toUpperCase() : 'A';
 });
-
-const currentGroupKey = computed(() => {
-  const matchedGroup = consoleNavigation.find((group) => {
-    return group.children.some((item) => item.path === route.path);
-  });
-  return matchedGroup?.key ?? consoleNavigation[0]?.key ?? '';
-});
-
-function toggleGroup(key: string): void {
-  if (expandedGroups.value.includes(key)) {
-    expandedGroups.value = expandedGroups.value.filter((item) => item !== key);
-    return;
-  }
-
-  expandedGroups.value = [...expandedGroups.value, key];
-}
 
 async function handleLogout(): Promise<void> {
   await admin.logout();

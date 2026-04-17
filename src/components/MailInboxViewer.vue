@@ -1,10 +1,15 @@
 <template>
-  <n-modal
-    :show="show"
-    class="inbox-modal"
-    @update:show="handleShowUpdate"
-  >
-    <div class="inbox-modal-shell" role="dialog" aria-modal="true" @click.stop>
+  <n-modal :show="show" class="inbox-modal" @update:show="handleShowUpdate">
+    <n-card
+      class="inbox-modal-card"
+      :bordered="false"
+      size="small"
+      role="dialog"
+      aria-modal="true"
+      style="width: 1000px; max-width: 95vw; height: 85vh; max-height: 90vh;"
+      content-style="padding: 0; display: flex; flex-direction: column; height: 100%; overflow: hidden;"
+      @click.stop
+    >
       <div class="modal-header">
         <div class="modal-header-left">
           <h2>{{ title }}</h2>
@@ -16,7 +21,8 @@
               title="复制邮箱"
               aria-label="复制邮箱"
               :disabled="!account"
-              @click="emit('copy')"
+              :class="{ 'btn-small-action-success': copyFeedbackVisible }"
+              @click="handleCopy"
             >
               <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <rect
@@ -39,7 +45,7 @@
                   stroke-linejoin="round"
                 />
               </svg>
-              <span>复制</span>
+              <span>{{ copyFeedbackVisible ? '已复制' : '复制' }}</span>
             </button>
             <button
               class="btn-small-action"
@@ -93,13 +99,33 @@
                 v-for="item in items"
                 :key="item.id"
                 class="inbox-mail-item"
-                :class="{ active: selectedMailId === item.id }"
+                :class="{
+                  active: selectedMailId === item.id,
+                  'inbox-mail-item-unread': item.isRead === false,
+                  'inbox-mail-item-read': item.isRead === true,
+                  'inbox-mail-item-neutral': item.isRead === null
+                }"
                 type="button"
                 @click="emit('select', item.id)"
               >
-                <div class="mail-sender">{{ item.from || '未知发件人' }}</div>
-                <div class="mail-subject">{{ item.subject || '(无主题)' }}</div>
-                <div class="mail-date">{{ formatDate(item.receivedAt) }}</div>
+                <div class="mail-item-topline">
+                  <div class="mail-sender-wrap">
+                    <span v-if="item.isRead === false" class="mail-unread-dot" aria-hidden="true"></span>
+                    <div class="mail-sender" :title="item.from || '未知发件人'">{{ item.from || '未知发件人' }}</div>
+                  </div>
+                  <div class="mail-date">{{ formatDate(item.receivedAt) }}</div>
+                </div>
+                <div class="mail-item-badges">
+                  <span class="mail-folder-badge" :class="`mail-folder-badge-${item.folderKind}`">
+                    {{ item.folderLabel }}
+                  </span>
+                  <span v-if="item.isRead === false" class="mail-state-badge mail-state-badge-unread">未读</span>
+                  <span v-else-if="item.isRead === true" class="mail-state-badge mail-state-badge-read">已读</span>
+                </div>
+                <div class="mail-subject" :title="item.subject || '(无主题)'">{{ item.subject || '(无主题)' }}</div>
+                <div class="mail-snippet" :title="resolveSnippet(item)">
+                  {{ resolveSnippet(item) || '暂无邮件摘要' }}
+                </div>
               </button>
             </div>
           </n-spin>
@@ -112,7 +138,16 @@
 
           <div v-else class="mail-detail-container">
             <div class="mail-detail-header">
-              <div class="mail-detail-subject">{{ selectedMail.subject || '(无主题)' }}</div>
+              <div class="mail-detail-header-topline">
+                <div class="mail-detail-subject">{{ selectedMail.subject || '(无主题)' }}</div>
+                <div class="mail-detail-badges">
+                  <span class="mail-folder-badge" :class="`mail-folder-badge-${selectedMail.folderKind}`">
+                    {{ selectedMail.folderLabel }}
+                  </span>
+                  <span v-if="selectedMail.isRead === false" class="mail-state-badge mail-state-badge-unread">未读</span>
+                  <span v-else-if="selectedMail.isRead === true" class="mail-state-badge mail-state-badge-read">已读</span>
+                </div>
+              </div>
               <div class="mail-meta-info">
                 <div><strong>发件人:</strong> {{ selectedMail.from || '-' }}</div>
                 <div><strong>收件人:</strong> {{ account || '-' }}</div>
@@ -125,45 +160,34 @@
                 class="mail-html-frame"
                 :title="selectedMail.subject || '邮件正文'"
                 :srcdoc="renderedMail.srcdoc"
-                :style="{ height: `${iframeHeight}px` }"
                 sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin"
                 referrerpolicy="no-referrer"
-                @load="handleFrameLoad"
               />
             </div>
           </div>
         </section>
       </div>
-    </div>
+    </n-card>
   </n-modal>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
-import { NEmpty, NModal, NSpin } from 'naive-ui';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { NCard, NEmpty, NModal, NSpin } from 'naive-ui';
 import type { AccountMailItem } from '../types';
-import {
-  buildMailPreview,
-  defaultMailFrameHeight,
-  extractMailSnippet,
-  maxMailFrameHeight
-} from '../utils/mail-preview';
+import { buildMailPreview, extractMailSnippet } from '../utils/mail-preview';
 
 interface MailInboxViewerProps {
   show: boolean;
   title: string;
-  subtitle: string;
   account: string;
   items: AccountMailItem[];
   loading: boolean;
   selectedMailId: string;
   formatDate: (value: string) => string;
-  showJunkBadge?: boolean;
 }
 
-const props = withDefaults(defineProps<MailInboxViewerProps>(), {
-  showJunkBadge: true
-});
+const props = defineProps<MailInboxViewerProps>();
 
 const emit = defineEmits<{
   (event: 'update:show', value: boolean): void;
@@ -177,61 +201,589 @@ const selectedMail = computed(() => {
 });
 
 const renderedMail = computed(() => buildMailPreview(selectedMail.value));
-const iframeHeight = ref(defaultMailFrameHeight);
-
-watch(
-  () => renderedMail.value.srcdoc,
-  () => {
-    iframeHeight.value = defaultMailFrameHeight;
-  }
-);
+const copyFeedbackVisible = ref(false);
+let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
 
 watch(
   () => props.show,
   (visible) => {
     if (!visible) {
-      iframeHeight.value = defaultMailFrameHeight;
+      resetCopyFeedback();
     }
   }
 );
-
-function handleShowUpdate(value: boolean): void {
-  emit('update:show', value);
-}
-
-function handleFrameLoad(event: Event): void {
-  const target = event.currentTarget;
-  if (!(target instanceof HTMLIFrameElement)) {
-    return;
-  }
-
-  void nextTick(() => {
-    try {
-      const rootHeight = target.contentDocument?.documentElement.scrollHeight ?? 0;
-      const bodyHeight = target.contentDocument?.body.scrollHeight ?? 0;
-      const nextHeight = Math.max(defaultMailFrameHeight, rootHeight, bodyHeight);
-      iframeHeight.value = Math.min(nextHeight + 8, maxMailFrameHeight);
-    } catch {
-      iframeHeight.value = defaultMailFrameHeight;
-    }
-  });
-}
-
-function shouldShowFolderBadge(item: AccountMailItem): boolean {
-  return props.showJunkBadge || item.folderKind !== 'junk';
-}
 
 function resolveSnippet(item: AccountMailItem): string {
   return extractMailSnippet(item);
 }
 
-function resolveModeLabel(mode: ReturnType<typeof buildMailPreview>['mode']): string {
-  if (mode === 'html') {
-    return 'HTML 邮件';
-  }
-  if (mode === 'text') {
-    return '纯文本邮件';
-  }
-  return '空邮件';
+function handleShowUpdate(value: boolean): void {
+  emit('update:show', value);
 }
+
+function handleCopy(): void {
+  emit('copy');
+  copyFeedbackVisible.value = true;
+  if (copyFeedbackTimer) {
+    clearTimeout(copyFeedbackTimer);
+  }
+  copyFeedbackTimer = setTimeout(() => {
+    copyFeedbackVisible.value = false;
+    copyFeedbackTimer = null;
+  }, 2000);
+}
+
+function resetCopyFeedback(): void {
+  copyFeedbackVisible.value = false;
+  if (copyFeedbackTimer) {
+    clearTimeout(copyFeedbackTimer);
+    copyFeedbackTimer = null;
+  }
+}
+
+onBeforeUnmount(() => {
+  resetCopyFeedback();
+});
 </script>
+
+<style scoped>
+:deep(.inbox-modal) {
+  width: auto !important;
+  max-width: none !important;
+}
+
+:deep(.inbox-modal .n-card) {
+  border-radius: 12px !important;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15) !important;
+}
+
+.inbox-modal-card {
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 24px;
+  border-bottom: 1px solid #f1f5f9;
+  background: #ffffff;
+  flex-shrink: 0;
+}
+
+.modal-header-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex: 1;
+  min-width: 0;
+}
+
+.modal-header-left h2 {
+  margin: 0;
+  color: #1e293b;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.email-action-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.current-email {
+  margin: 0;
+  min-width: 0;
+  max-width: min(38vw, 360px);
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.4;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btn-small-action,
+.btn-close {
+  font: inherit;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-small-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: transparent;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.btn-small-action:hover:not(:disabled) {
+  background: #f4f6f8;
+  border-color: #409eff;
+  color: #409eff;
+}
+
+.btn-small-action:active:not(:disabled) {
+  background: #ecf5ff;
+}
+
+.btn-small-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.btn-small-action-success {
+  color: #047857;
+  border-color: #047857;
+}
+
+.btn-small-action-success:hover:not(:disabled) {
+  background: #f0fdf4;
+  border-color: #047857;
+  color: #047857;
+}
+
+.btn-small-action svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.btn-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 24px;
+  line-height: 1;
+  flex: none;
+}
+
+.btn-close:hover {
+  background: #f1f5f9;
+  color: #f56c6c;
+}
+
+.spin {
+  animation: inbox-modal-spin 1s linear infinite;
+}
+
+@keyframes inbox-modal-spin {
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.inbox-split-view {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.inbox-sider {
+  display: flex;
+  flex-direction: column;
+  width: 320px;
+  min-width: 300px;
+  min-height: 0;
+  background: #f8fafc;
+  border-right: 1px solid #f1f5f9;
+}
+
+.inbox-spin,
+:deep(.inbox-spin .n-spin-content) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.inbox-list {
+  flex: 1;
+  min-height: 0;
+  padding: 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.inbox-mail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  margin: 0 0 10px;
+  padding: 14px 14px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease,
+    transform 0.2s ease;
+}
+
+.inbox-mail-item:hover {
+  border-color: #dbeafe;
+  background: #ffffff;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+  transform: translateY(-1px);
+}
+
+.inbox-mail-item.active {
+  border-color: #409eff;
+  background: linear-gradient(180deg, #eff6ff 0%, #ecf5ff 100%);
+  box-shadow: none;
+}
+
+.inbox-mail-item-unread {
+  border-color: rgba(64, 158, 255, 0.14);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+}
+
+.inbox-mail-item-read,
+.inbox-mail-item-neutral {
+  background: #ffffff;
+}
+
+.mail-item-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mail-sender-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mail-unread-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #409eff;
+  flex: none;
+  box-shadow: 0 0 0 4px rgba(64, 158, 255, 0.12);
+}
+
+.mail-sender {
+  min-width: 0;
+  margin: 0;
+  color: #334155;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.inbox-mail-item-unread .mail-sender,
+.inbox-mail-item.active .mail-sender {
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.mail-date {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  text-align: right;
+  flex: none;
+}
+
+.mail-item-badges,
+.mail-detail-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mail-folder-badge,
+.mail-state-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.mail-folder-badge-inbox {
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.mail-folder-badge-junk {
+  background: #fff7ed;
+  color: #ea580c;
+}
+
+.mail-state-badge-unread {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.mail-state-badge-read {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.mail-subject {
+  min-width: 0;
+  margin: 0;
+  color: #1e293b;
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.inbox-mail-item-read .mail-subject,
+.inbox-mail-item-neutral .mail-subject {
+  color: #334155;
+}
+
+.mail-snippet {
+  display: -webkit-box;
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.55;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.inbox-content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 24px;
+  overflow: hidden;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+}
+
+.mail-detail-container {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.mail-detail-header {
+  padding: 24px 28px;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.06);
+}
+
+.mail-detail-header-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.mail-detail-subject {
+  margin: 0;
+  color: #1e293b;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.mail-meta-info {
+  display: grid;
+  gap: 2px;
+  color: #475569;
+  font-size: 13px;
+  line-height: 2;
+}
+
+.mail-meta-info strong {
+  display: inline-block;
+  width: 60px;
+  color: #1e293b;
+  font-weight: 600;
+}
+
+.mail-html-body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  padding: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 20px;
+  background: linear-gradient(180deg, #f8fafc 0%, #eef4fb 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.mail-html-frame {
+  display: block;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+}
+
+.inbox-empty-state {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 24px;
+  color: #64748b;
+  text-align: center;
+}
+
+.inbox-empty-state-sider {
+  background: #f8fafc;
+}
+
+:deep(.inbox-empty-state .n-empty__description) {
+  color: #64748b;
+}
+
+.inbox-split-view ::-webkit-scrollbar,
+.inbox-content::-webkit-scrollbar,
+.inbox-list::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.inbox-split-view ::-webkit-scrollbar-thumb,
+.inbox-content::-webkit-scrollbar-thumb,
+.inbox-list::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+.inbox-split-view ::-webkit-scrollbar-track,
+.inbox-content::-webkit-scrollbar-track,
+.inbox-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (max-width: 768px) {
+  .inbox-modal-card {
+    width: calc(100vw - 24px) !important;
+    max-width: none !important;
+    height: calc(100vh - 24px) !important;
+    max-height: calc(100vh - 24px) !important;
+  }
+
+  .modal-header {
+    padding: 16px 20px;
+  }
+
+  .modal-header-left {
+    align-items: flex-start;
+  }
+
+  .inbox-split-view {
+    flex-direction: column;
+  }
+
+  .inbox-sider {
+    width: 100%;
+    min-width: 0;
+    max-height: 320px;
+    border-right: 0;
+    border-bottom: 1px solid #f1f5f9;
+  }
+
+  .inbox-content {
+    padding: 18px;
+  }
+
+  .mail-detail-header,
+  .mail-html-body {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+}
+
+@media (max-width: 640px) {
+  .inbox-modal-card {
+    width: calc(100vw - 16px) !important;
+    max-width: none !important;
+    height: calc(100vh - 16px) !important;
+    max-height: calc(100vh - 16px) !important;
+  }
+
+  .modal-header {
+    align-items: flex-start;
+    padding: 14px 16px;
+  }
+
+  .modal-header-left {
+    gap: 12px;
+    flex-direction: column;
+  }
+
+  .email-action-group {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .inbox-content {
+    padding: 16px;
+  }
+
+  .mail-item-topline,
+  .mail-detail-header-topline {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .mail-detail-subject {
+    font-size: 20px;
+  }
+}
+</style>

@@ -127,6 +127,7 @@ interface AccountMailItem {
   content: string;
   folderKind: 'inbox' | 'junk';
   folderLabel: string;
+  isRead: boolean | null;
 }
 
 interface FetchActionResult {
@@ -1460,6 +1461,86 @@ function detectCloudMailContentType(html: string, text: string): string {
   return html ? 'html' : '';
 }
 
+function formatMailboxDisplay(name: string, email: string): string {
+  const normalizedName = name.trim();
+  const normalizedEmail = email.trim();
+  if (normalizedName && normalizedEmail && normalizedName !== normalizedEmail) {
+    return `${normalizedName} <${normalizedEmail}>`;
+  }
+  return normalizedEmail || normalizedName;
+}
+
+function normalizeCloudMailFolderKind(row: Record<string, unknown>): 'inbox' | 'junk' {
+  const candidates = [
+    row.folderKind,
+    row.folderType,
+    row.folder,
+    row.mailFolder,
+    row.boxType,
+    row.typeName
+  ];
+
+  for (const candidate of candidates) {
+    const text = asText(candidate).trim().toLowerCase();
+    if (!text) {
+      continue;
+    }
+    if (['junk', 'junkemail', 'junk_email', 'spam', 'trashspam'].includes(text)) {
+      return 'junk';
+    }
+    if (['inbox', 'in_box', 'mailinbox'].includes(text)) {
+      return 'inbox';
+    }
+  }
+
+  const numericCandidates = [row.type, row.boxType, row.folderTypeCode];
+  for (const candidate of numericCandidates) {
+    const text = asText(candidate).trim();
+    if (!text) {
+      continue;
+    }
+    if (text === '1') {
+      return 'junk';
+    }
+    if (text === '0') {
+      return 'inbox';
+    }
+  }
+
+  return 'inbox';
+}
+
+function normalizeCloudMailReadState(row: Record<string, unknown>): boolean | null {
+  const candidates = [row.isRead, row.read, row.readFlag, row.seen, row.isSeen, row.status];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'boolean') {
+      return candidate;
+    }
+
+    const text = asText(candidate).trim().toLowerCase();
+    if (!text) {
+      continue;
+    }
+    if (['1', 'true', 'yes', 'read', 'seen'].includes(text)) {
+      return true;
+    }
+    if (['0', 'false', 'no', 'unread', 'new'].includes(text)) {
+      return false;
+    }
+  }
+
+  return null;
+}
+
+function detectGraphReadState(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
+function detectOutlookReadState(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
 function toCloudMailMailItem(input: unknown): AccountMailItem | null {
   if (!input || typeof input !== 'object') {
     return null;
@@ -1478,10 +1559,8 @@ function toCloudMailMailItem(input: unknown): AccountMailItem | null {
     asText(row.emailId ?? row.id).trim() ||
     `${senderEmail || senderName}-${receivedAt}-${subject || rawText.slice(0, 24)}`;
 
-  const from =
-    senderName && senderEmail && senderName !== senderEmail
-      ? `${senderName} <${senderEmail}>`
-      : senderEmail || senderName;
+  const folderKind = normalizeCloudMailFolderKind(row);
+  const from = formatMailboxDisplay(senderName, senderEmail);
 
   return {
     id,
@@ -1491,8 +1570,9 @@ function toCloudMailMailItem(input: unknown): AccountMailItem | null {
     preview: rawText || rawHtml,
     contentType: detectCloudMailContentType(rawHtml, rawText),
     content: rawHtml || rawText,
-    folderKind: 'inbox',
-    folderLabel: getFolderLabel('inbox')
+    folderKind,
+    folderLabel: getFolderLabel(folderKind),
+    isRead: normalizeCloudMailReadState(row)
   };
 }
 
@@ -2037,8 +2117,8 @@ async function readGraphFolderMessages(
   includeBody = false
 ): Promise<{ ok: true; messages: AccountMailItem[] } | { ok: false; error: string }> {
   const select = includeBody
-    ? 'id,subject,from,receivedDateTime,bodyPreview,body'
-    : 'id,subject,from,receivedDateTime,bodyPreview';
+    ? 'id,subject,from,receivedDateTime,bodyPreview,body,isRead'
+    : 'id,subject,from,receivedDateTime,bodyPreview,isRead';
 
   const firstUrl = new URL(`${GRAPH_MAIL_FOLDERS_URL}/${folderId}/messages`);
   firstUrl.searchParams.set('$top', String(MAIL_PAGE_SIZE));
@@ -2104,8 +2184,8 @@ async function readOutlookFolderMessages(
   includeBody = false
 ): Promise<{ ok: true; messages: AccountMailItem[] } | { ok: false; error: string }> {
   const select = includeBody
-    ? 'Id,Subject,From,DateTimeReceived,BodyPreview,Body'
-    : 'Id,Subject,From,DateTimeReceived,BodyPreview';
+    ? 'Id,Subject,From,DateTimeReceived,BodyPreview,Body,IsRead'
+    : 'Id,Subject,From,DateTimeReceived,BodyPreview,IsRead';
 
   const firstUrl = new URL(`${OUTLOOK_MAIL_FOLDERS_URL}/${folderId}/messages`);
   firstUrl.searchParams.set('$top', String(MAIL_PAGE_SIZE));
@@ -2171,11 +2251,13 @@ function normalizeGraphMailItem(
   folderKind: 'inbox' | 'junk'
 ): AccountMailItem {
   const fromNode = item.from;
-  let from = '';
+  let senderName = '';
+  let senderAddress = '';
   if (fromNode && typeof fromNode === 'object') {
     const mailAddressNode = (fromNode as Record<string, unknown>).emailAddress;
     if (mailAddressNode && typeof mailAddressNode === 'object') {
-      from = asText((mailAddressNode as Record<string, unknown>).address).trim();
+      senderName = asText((mailAddressNode as Record<string, unknown>).name).trim();
+      senderAddress = asText((mailAddressNode as Record<string, unknown>).address).trim();
     }
   }
 
@@ -2193,13 +2275,14 @@ function normalizeGraphMailItem(
   return {
     id: asText(item.id).trim(),
     subject: asText(item.subject).trim(),
-    from,
+    from: formatMailboxDisplay(senderName, senderAddress),
     receivedAt: asText(item.receivedDateTime).trim(),
     preview: asText(item.bodyPreview).trim(),
     contentType,
     content,
     folderKind,
-    folderLabel: getFolderLabel(folderKind)
+    folderLabel: getFolderLabel(folderKind),
+    isRead: detectGraphReadState(item.isRead)
   };
 }
 
@@ -2209,11 +2292,13 @@ function normalizeOutlookMailItem(
   folderKind: 'inbox' | 'junk'
 ): AccountMailItem {
   const fromNode = item.From;
-  let from = '';
+  let senderName = '';
+  let senderAddress = '';
   if (fromNode && typeof fromNode === 'object') {
     const emailNode = (fromNode as Record<string, unknown>).EmailAddress;
     if (emailNode && typeof emailNode === 'object') {
-      from = asText((emailNode as Record<string, unknown>).Address).trim();
+      senderName = asText((emailNode as Record<string, unknown>).Name).trim();
+      senderAddress = asText((emailNode as Record<string, unknown>).Address).trim();
     }
   }
 
@@ -2231,13 +2316,14 @@ function normalizeOutlookMailItem(
   return {
     id: asText(item.Id).trim(),
     subject: asText(item.Subject).trim(),
-    from,
+    from: formatMailboxDisplay(senderName, senderAddress),
     receivedAt: asText(item.DateTimeReceived).trim(),
     preview: asText(item.BodyPreview).trim(),
     contentType,
     content,
     folderKind,
-    folderLabel: getFolderLabel(folderKind)
+    folderLabel: getFolderLabel(folderKind),
+    isRead: detectOutlookReadState(item.IsRead)
   };
 }
 

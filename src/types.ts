@@ -100,6 +100,7 @@ export interface AccountMailItem {
   content: string;
   folderKind: 'inbox' | 'junk';
   folderLabel: string;
+  isRead: boolean | null;
 }
 
 export interface AccountMessagesResponse {

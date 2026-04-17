@@ -330,16 +330,16 @@ function buildMailDocument(contentMarkup: string, mode: RenderedMailPreview['mod
       body {
         margin: 0;
         padding: 0;
-        color: #333333;
+        color: #334155;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
         font-size: 14px;
-        line-height: 1.6;
-        background: #ffffff;
+        line-height: 1.7;
+        background: linear-gradient(180deg, #f8fafc 0%, #eef4fb 100%);
         overflow-x: hidden;
       }
 
       a {
-        color: #0f6ad9;
+        color: #2563eb;
         text-decoration: none;
         word-break: break-word;
       }
@@ -360,43 +360,63 @@ function buildMailDocument(contentMarkup: string, mode: RenderedMailPreview['mod
         max-width: 100% !important;
       }
 
+      pre,
+      code {
+        font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+      }
+
       pre {
         white-space: pre-wrap;
         word-break: break-word;
+        padding: 16px;
+        border-radius: 12px;
+        background: #f8fafc;
+        overflow-x: auto;
+      }
+
+      blockquote {
+        margin: 1.2em 0;
+        padding: 0 0 0 16px;
+        border-left: 3px solid #cbd5e1;
+        color: #475569;
+      }
+
+      hr {
+        border: 0;
+        border-top: 1px solid #e2e8f0;
+        margin: 24px 0;
       }
 
       .mail-doc-shell {
         width: 100%;
-        padding: 0;
-        background: #ffffff;
+        padding: 20px;
       }
 
       .mail-doc-card {
-        width: 100%;
-        margin: 0;
-        border: 0;
-        border-radius: 0;
+        width: min(100%, 920px);
+        margin: 0 auto;
+        border: 1px solid #e2e8f0;
+        border-radius: 18px;
         background: #ffffff;
-        box-shadow: none;
+        box-shadow: 0 20px 50px rgba(15, 23, 42, 0.08);
         overflow: hidden;
       }
 
-      .mail-doc-card-html {
-        padding: 0;
-      }
-
+      .mail-doc-card-html,
       .mail-doc-card-text {
-        padding: 0;
+        padding: 28px 32px;
       }
 
       .mail-doc-card-empty {
-        padding: 32px 0;
+        padding: 40px 32px;
       }
 
       .mail-doc-card[data-mode='html'] [data-mail-table='true'] {
         display: block;
         width: 100% !important;
+        margin: 18px 0;
         overflow-x: auto;
+        border-radius: 12px;
       }
 
       .mail-doc-card[data-mode='html'] [data-mail-table='true'] > tbody,
@@ -407,18 +427,27 @@ function buildMailDocument(contentMarkup: string, mode: RenderedMailPreview['mod
         min-width: 100%;
       }
 
+      .mail-doc-card[data-mode='html'] table {
+        border-collapse: collapse;
+      }
+
+      .mail-doc-card[data-mode='html'] td,
+      .mail-doc-card[data-mode='html'] th {
+        max-width: 100%;
+      }
+
       .mail-text-body {
         white-space: normal;
         word-break: break-word;
-        line-height: 1.8;
-        font-size: 14px;
+        line-height: 1.85;
+        font-size: 15px;
         color: #334155;
       }
 
       .mail-empty-state {
         display: grid;
         gap: 10px;
-        min-height: 240px;
+        min-height: 260px;
         align-content: center;
         justify-items: center;
         text-align: center;
@@ -434,6 +463,18 @@ function buildMailDocument(contentMarkup: string, mode: RenderedMailPreview['mod
         max-width: 34ch;
         margin: 0;
         line-height: 1.7;
+      }
+
+      @media (max-width: 640px) {
+        .mail-doc-shell {
+          padding: 10px;
+        }
+
+        .mail-doc-card-html,
+        .mail-doc-card-text,
+        .mail-doc-card-empty {
+          padding: 20px 18px;
+        }
       }
     </style>
   </head>

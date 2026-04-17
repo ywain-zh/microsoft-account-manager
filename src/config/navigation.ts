@@ -1,39 +1,21 @@
-export interface ConsoleNavChild {
+export interface ConsoleNavItem {
+  key: string;
   label: string;
   path: string;
 }
 
-export interface ConsoleNavGroup {
-  key: string;
-  label: string;
-  children: ConsoleNavChild[];
-}
+export const defaultConsoleRoute = '/services/cloud-mail/accounts';
 
-export const defaultConsoleRoute = '/services/microsoft-mail/accounts';
-
-export const consoleNavigation: ConsoleNavGroup[] = [
+export const consoleNavigation: ConsoleNavItem[] = [
   {
     key: 'cloud-mail',
     label: 'Cloud Mail',
-    children: [
-      {
-        label: '邮箱列表',
-        path: '/services/cloud-mail/accounts'
-      }
-    ]
+    path: '/services/cloud-mail/accounts'
   },
   {
     key: 'microsoft-mail',
     label: '微软邮箱',
-    children: [
-      {
-        label: '邮箱列表',
-        path: '/services/microsoft-mail/accounts'
-      },
-      {
-        label: '接口管理',
-        path: '/services/microsoft-mail/interfaces'
-      }
-    ]
+    path: '/services/microsoft-mail/accounts'
   }
 ];
+
