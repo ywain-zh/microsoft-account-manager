@@ -10,7 +10,9 @@ import type {
   CloudMailMessagesResponse,
   IngestConfig,
   ImportResult,
-  MailFetchMode
+  MailFetchMode,
+  Sub2ApiConfig,
+  Sub2ApiDeleteAccountsResponse
 } from './types';
 
 interface ApiError {
@@ -46,6 +48,30 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   return payload;
+}
+
+async function requestStream(path: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  if (init.body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  const response = await fetch(path, {
+    ...init,
+    headers,
+    credentials: 'same-origin'
+  });
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => ({}))) as ApiError;
+    const message = payload.message ?? `请求失败 (${response.status})`;
+    if (response.status === 401) {
+      throw new UnauthorizedError(message);
+    }
+    throw new Error(message);
+  }
+
+  return response;
 }
 
 function buildQuery(params: Record<string, string | number | undefined | null>): string {
@@ -166,6 +192,31 @@ export const api = {
   updateCloudMailConfig(payload: CloudMailConfig): Promise<{ item: CloudMailConfig }> {
     return request<{ item: CloudMailConfig }>('/api/cloud-mail/config', {
       method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  getSub2ApiConfig(): Promise<{ item: Sub2ApiConfig }> {
+    return request<{ item: Sub2ApiConfig }>('/api/sub2api/config');
+  },
+
+  updateSub2ApiConfig(payload: Sub2ApiConfig): Promise<{ item: Sub2ApiConfig }> {
+    return request<{ item: Sub2ApiConfig }>('/api/sub2api/config', {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  startSub2ApiCheck(signal?: AbortSignal): Promise<Response> {
+    return requestStream('/api/sub2api/check', {
+      method: 'POST',
+      signal
+    });
+  },
+
+  deleteSub2ApiAccounts(payload: { accountIds: number[] }): Promise<Sub2ApiDeleteAccountsResponse> {
+    return request<Sub2ApiDeleteAccountsResponse>('/api/sub2api/accounts/batch-delete', {
+      method: 'POST',
       body: JSON.stringify(payload)
     });
   },

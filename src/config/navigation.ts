@@ -13,9 +13,13 @@ export const consoleNavigation: ConsoleNavItem[] = [
     path: '/services/cloud-mail/accounts'
   },
   {
+    key: 'sub2api',
+    label: 'Sub2API 检测',
+    path: '/services/sub2api/checker'
+  },
+  {
     key: 'microsoft-mail',
     label: '微软邮箱',
     path: '/services/microsoft-mail/accounts'
   }
 ];
-
