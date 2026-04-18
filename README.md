@@ -32,17 +32,15 @@
 
 ## Git 工作流 / 分支说明
 - `main`：上游基线分支，跟踪 `upstream/main`，用于同步原项目完整代码。
-- `dev`：本仓库集成与发布主线，所有待发布内容最终都先进入这里。
-- `clouded`：Claude 专用工作分支，Claude 以后默认在这里修改代码。
-- `codex`：Codex 专用工作分支，后续启用时与 `clouded` 遵循同一流程。
-- 发布固定顺序：`clouded / codex -> dev -> release 文档 -> tag -> GHCR -> 部署`。
-- 详细分支职责与冲突处理规则见 [BRANCH_LAYOUT.md](./BRANCH_LAYOUT.md)。
+- `dev`：本仓库日常开发、集成与发布主线，以后直接在这里修改代码。
+- 发布固定顺序：`dev -> release 文档 -> tag -> GHCR -> 部署`。
+- 详细分支职责与同步规则见 [BRANCH_LAYOUT.md](./BRANCH_LAYOUT.md)。
 
 ## 代码修改后的发布顺序
 以后改代码后的标准路径固定如下：
 1. 如有上游更新，先同步 `upstream/main -> main`，再按需合并到 `dev`。
-2. Claude 在 `clouded` 工作，Codex 在 `codex` 工作；不直接在 `dev` / `main` 上做日常开发。
-3. 发布前先把待发布分支合并到 `dev`，并在 `dev` 统一解决冲突。
+2. 日常代码直接在 `dev` 上开发，不在 `main` 上做功能开发。
+3. 如有同步冲突或发布前问题，统一在 `dev` 解决并完成验证。
 4. 本地执行 `npm run typecheck` 和 `npm run build`。
 5. 基于 `releases/RELEASE_TEMPLATE.md` 新建本次 `releases/RELEASE-*.md`。
 6. 提交代码并 `git push origin dev`。

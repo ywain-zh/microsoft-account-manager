@@ -33,17 +33,16 @@ export RELEASE_DOC=releases/RELEASE-2026-04-15-02.md
 
 ## 发布来源分支约束
 - `dev` 是本仓库唯一默认发布来源分支。
-- `clouded`（Claude 专用分支）和 `codex`（Codex 专用分支）只负责开发，不允许直接部署。
-- 以后所有待发布内容必须先合并到 `dev`，再执行 release 文档、tag、GHCR、服务器部署流程。
-- 如果本次发布同时包含多个工作分支或 `upstream/main` 同步内容，必须先在 `dev` 完成冲突处理、联调和验证。
+- 以后日常代码修改直接在 `dev` 完成，不再依赖额外的长期工作分支。
+- 如存在临时分支或上游同步内容，也必须先合并回 `dev`，再执行 release 文档、tag、GHCR、服务器部署流程。
 - 冲突未解决、验证未完成、release 文档未补齐时，不允许进入部署步骤。
 
 ## 部署前 Git 检查项
 1. 确认本次待发布提交已经进入 `dev`。
-2. 确认本次发布不是直接从 `clouded` / `codex` 发出。
+2. 确认本次发布不是直接从其他临时分支发出。
 3. 确认如包含 `upstream/main` 同步，本次同步已先进入 `main`，再合并到 `dev`。
-4. 确认所有分支冲突已在 `dev` 解决，并完成类型检查、构建和关键流程验证。
-5. 确认 release 文档已写明来源分支、集成分支、是否涉及冲突处理、是否涉及上游同步。
+4. 确认所有冲突已在 `dev` 解决，并完成类型检查、构建和关键流程验证。
+5. 确认 release 文档已写明来源分支、是否涉及冲突处理、是否涉及上游同步。
 
 部署前检查命令：
 
@@ -83,7 +82,7 @@ docker images | grep microsoft-account-manager
 - 回滚时必须切回上一个已验证的固定 tag。
 
 ## 代码修改后的标准发布流程
-以后只要代码有变更，标准流程固定为“上游同步（如需要） -> AI 专用分支开发 -> 合并到 `dev` -> 解决冲突并验证 -> 编写 release 文档 -> 推送 `dev` -> push tag 发镜像 -> 等待审核批准 -> 服务器 pull/up”。不要跳过中间步骤，也不要把构建挪到服务器上执行。
+以后只要代码有变更，标准流程固定为“上游同步（如需要） -> 直接在 `dev` 开发 -> 解决冲突并验证 -> 编写 release 文档 -> 推送 `dev` -> push tag 发镜像 -> 等待审核批准 -> 服务器 pull/up”。不要跳过中间步骤，也不要把构建挪到服务器上执行。
 
 本地发布准备命令：
 
@@ -96,11 +95,7 @@ cd /path/to/microsoft-account-manager
 # git checkout dev
 # git merge --no-ff main
 
-# Claude / Codex 在各自工作分支完成开发后，统一合并到 dev
-# git checkout dev
-# git merge --no-ff clouded
-# git merge --no-ff codex
-
+# 日常代码直接在 dev 开发并验证
 npm run typecheck
 npm run build
 cp releases/RELEASE_TEMPLATE.md releases/RELEASE-2026-04-16-01.md

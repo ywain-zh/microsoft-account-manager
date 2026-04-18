@@ -1,137 +1,142 @@
 <template>
-  <div class="page-stack page-stack-compact page-container sub2api-page">
-    <section class="page-header page-header-spec">
-      <div class="page-title page-title-spec">
-        <h1 class="main-title">Sub2API 检测</h1>
+  <div class="page-container sub2api-page">
+    <div class="page-header">
+      <div>
+        <div class="page-title">
+          <h1>Sub2API 检测</h1>
+          <span class="tag-pill blue">鉴权: x-api-key</span>
+          <span class="tag-pill green">模型: {{ modelId }}</span>
+        </div>
+        <p class="page-desc">通过管理员 API Key 批量检测 Sub2API 账户管理中的账号状态，固定模型为 gpt-5.4。</p>
       </div>
-      <p class="page-desc">通过管理员 API Key 批量检测 Sub2API 账户管理中的账号，固定模型为 gpt-5.4。</p>
-    </section>
+    </div>
 
-    <n-card :bordered="false" size="small" class="content-card sub2api-card">
-      <div class="sub2api-shell">
-        <section class="sub2api-panel">
-          <div class="sub2api-panel-head">
-            <div>
-              <h2 class="sub2api-section-title">连接配置</h2>
-              <p class="sub2api-section-desc">所有检测请求都由本项目后端发起，页面不会直接暴露 Sub2API 管理员 Key。</p>
-            </div>
-            <div class="sub2api-chip-row">
-              <n-tag round size="small" type="info">鉴权: x-api-key</n-tag>
-              <n-tag round size="small" type="success">模型: {{ modelId }}</n-tag>
-            </div>
+    <n-card
+      class="main-card"
+      :bordered="false"
+      content-style="padding: 24px; display: flex; flex-direction: column; gap: 20px;"
+    >
+      <div class="toolbar">
+        <button class="btn btn-default" type="button" @click="showConfigModal = true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          配置信息
+        </button>
+
+        <button
+          class="btn btn-success"
+          type="button"
+          :disabled="runLoading || !hasConfiguredSub2Api"
+          @click="startDetection"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+          {{ runLoading ? '检测中...' : '开始检测' }}
+        </button>
+
+        <button
+          class="btn btn-danger-ghost"
+          type="button"
+          :disabled="runLoading || deleteLoading || !hasUnauthorizedCandidates"
+          @click="clearUnauthorizedAccounts"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          </svg>
+          {{ deleteLoading ? '清理中...' : `一键清除 401 账号 (${unauthorizedCandidates.length})` }}
+        </button>
+
+        <button class="btn btn-default" type="button" :disabled="logs.length === 0" @click="clearLogs">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="1 4 1 10 7 10"></polyline>
+            <polyline points="23 20 23 14 17 14"></polyline>
+            <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path>
+          </svg>
+          清空日志
+        </button>
+      </div>
+
+      <div class="stats-grid">
+        <div v-for="item in summaryCards" :key="item.key" class="stat-card" :class="`c-${item.tone}`">
+          <div class="stat-title">{{ item.label }}</div>
+          <div class="stat-value">{{ item.value }}</div>
+        </div>
+      </div>
+
+      <div class="log-section">
+        <div class="log-section-header">
+          <div>
+            <span class="log-title">检测日志</span>
+            <span class="log-desc">
+              已处理 {{ progress.processedAccounts }} / {{ summary.totalAccounts }}
+              <template v-if="progress.currentAccountName">
+                ，当前账号 {{ progress.currentAccountName }}
+              </template>
+            </span>
           </div>
+          <span class="run-status" :class="runLoading ? 'is-running' : 'is-idle'">
+            {{ runLoading ? '检测中' : '待运行' }}
+          </span>
+        </div>
 
-          <n-form label-placement="top" autocomplete="off">
-            <div class="form-autofill-guard" aria-hidden="true">
-              <input type="text" tabindex="-1" autocomplete="username" />
-              <input type="password" tabindex="-1" autocomplete="current-password" />
-            </div>
-            <n-grid :cols="24" :x-gap="14" :y-gap="8">
-              <n-gi :span="24" :m="12">
-                <n-form-item label="Sub2API 地址">
-                  <n-input
-                    v-model:value="configForm.baseUrl"
-                    placeholder="例如：http://47.251.82.144:8080"
-                    :input-props="baseUrlInputProps"
-                    @keyup.enter="saveConfig"
-                  />
-                </n-form-item>
-              </n-gi>
-              <n-gi :span="24" :m="12">
-                <n-form-item label="管理员 API Key">
-                  <n-input
-                    v-model:value="configForm.adminApiKey"
-                    type="password"
-                    show-password-on="click"
-                    placeholder="请输入 x-api-key"
-                    :input-props="apiKeyInputProps"
-                    @keyup.enter="saveConfig"
-                  />
-                </n-form-item>
-              </n-gi>
-            </n-grid>
-          </n-form>
-
-          <div class="sub2api-actions">
-            <n-button class="sub2api-action-button" :loading="configSaving" @click="saveConfig">
-              保存配置
-            </n-button>
-            <n-button
-              type="primary"
-              class="sub2api-action-button"
-              :loading="runLoading"
-              :disabled="!hasConfiguredSub2Api"
-              @click="startDetection"
-            >
-              开始检测
-            </n-button>
-            <n-button
-              type="error"
-              class="sub2api-action-button"
-              :loading="deleteLoading"
-              :disabled="runLoading || !hasUnauthorizedCandidates"
-              @click="clearUnauthorizedAccounts"
-            >
-              一键清除 401 账号 ({{ unauthorizedCandidates.length }})
-            </n-button>
-            <n-button class="sub2api-action-button" :disabled="logs.length === 0" @click="clearLogs">
-              清空日志
-            </n-button>
+        <div ref="logTerminalRef" class="log-terminal">
+          <div v-if="logs.length === 0" class="log-empty">检测开始后，日志会实时输出在这里。</div>
+          <div v-for="item in logs" :key="item.id" class="log-line">
+            <span class="log-time">{{ formatLogTime(item.timestamp) }}</span>
+            <span class="log-badge" :class="resolveLevelBadgeTone(item.level)">
+              {{ resolveLevelLabel(item.level) }}
+            </span>
+            <span class="log-message">{{ item.message }}</span>
           </div>
-        </section>
-
-        <section class="sub2api-summary-grid">
-          <article
-            v-for="item in summaryCards"
-            :key="item.key"
-            class="sub2api-summary-card"
-            :class="item.tone ? `sub2api-summary-card-${item.tone}` : ''"
-          >
-            <span class="sub2api-summary-label">{{ item.label }}</span>
-            <strong class="sub2api-summary-value">{{ item.value }}</strong>
-          </article>
-        </section>
-
-        <section class="sub2api-panel">
-          <div class="sub2api-terminal-head">
-            <div>
-              <h2 class="sub2api-section-title">检测日志</h2>
-              <p class="sub2api-section-desc">
-                已处理 {{ progress.processedAccounts }} / {{ summary.totalAccounts }}
-                <template v-if="progress.currentAccountName">
-                  ，当前账号 {{ progress.currentAccountName }}
-                </template>
-              </p>
-            </div>
-            <n-tag round size="small" :type="runLoading ? 'warning' : 'default'">
-              {{ runLoading ? '检测中' : '待运行' }}
-            </n-tag>
-          </div>
-
-          <div ref="terminalBodyRef" class="sub2api-terminal">
-            <div v-if="logs.length === 0" class="sub2api-terminal-empty">
-              检测开始后，日志会实时输出在这里。
-            </div>
-            <div
-              v-for="item in logs"
-              :key="item.id"
-              class="sub2api-log-line"
-              :class="`sub2api-log-line-${item.level}`"
-            >
-              <span class="sub2api-log-time">{{ formatLogTime(item.timestamp) }}</span>
-              <span class="sub2api-log-badge">{{ resolveLevelLabel(item.level) }}</span>
-              <span class="sub2api-log-message">{{ item.message }}</span>
-            </div>
-          </div>
-        </section>
+        </div>
       </div>
     </n-card>
+
+    <n-modal v-model:show="showConfigModal" preset="card" title="连接配置" style="width: 600px; border-radius: 12px;">
+      <p class="config-modal-desc">所有检测请求都由本项目后端发起，页面不会直接暴露 Sub2API 管理员 Key。</p>
+      <n-form label-placement="top" autocomplete="off" class="config-modal-form">
+        <div class="form-autofill-guard" aria-hidden="true">
+          <input type="text" tabindex="-1" autocomplete="username" />
+          <input type="password" tabindex="-1" autocomplete="current-password" />
+        </div>
+
+        <n-form-item label="Sub2API 地址">
+          <n-input
+            v-model:value="configForm.baseUrl"
+            placeholder="例如：http://47.251.82.144:8080"
+            :input-props="baseUrlInputProps"
+            @keyup.enter="handleSaveConfig"
+          />
+        </n-form-item>
+
+        <n-form-item label="管理员 API Key">
+          <n-input
+            v-model:value="configForm.adminApiKey"
+            type="password"
+            show-password-on="click"
+            placeholder="请输入 x-api-key"
+            :input-props="apiKeyInputProps"
+            @keyup.enter="handleSaveConfig"
+          />
+        </n-form-item>
+      </n-form>
+      <template #footer>
+        <div class="config-modal-footer">
+          <n-button @click="showConfigModal = false">取消</n-button>
+          <n-button type="primary" :loading="configSaving" @click="handleSaveConfig">保存配置</n-button>
+        </div>
+      </template>
+    </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { NButton, NCard, NForm, NFormItem, NGi, NGrid, NInput, NTag } from 'naive-ui';
+import { NButton, NCard, NForm, NFormItem, NInput, NModal } from 'naive-ui';
 import { useSub2ApiConsole } from '../state/sub2api-console';
 import type { Sub2ApiLogLevel } from '../types';
 
@@ -157,7 +162,8 @@ const {
   stopDetection
 } = sub2api;
 
-const terminalBodyRef = ref<HTMLElement | null>(null);
+const showConfigModal = ref(false);
+const logTerminalRef = ref<HTMLElement | null>(null);
 
 const baseUrlInputProps = {
   autocomplete: 'off',
@@ -182,49 +188,49 @@ const summaryCards = computed(() => {
       key: 'totalAccounts',
       label: '总账号数',
       value: summary.totalAccounts,
-      tone: ''
+      tone: 'gray'
     },
     {
       key: 'availableAccounts',
       label: '总可用账号',
       value: summary.availableAccounts,
-      tone: 'success'
+      tone: 'green'
     },
     {
       key: 'freeAvailableAccounts',
       label: 'Free 可用',
       value: summary.freeAvailableAccounts,
-      tone: 'info'
+      tone: 'blue'
     },
     {
       key: 'plusAvailableAccounts',
       label: 'Plus 可用',
       value: summary.plusAvailableAccounts,
-      tone: 'info'
+      tone: 'purple'
     },
     {
       key: 'teamAvailableAccounts',
       label: 'Team 可用',
       value: summary.teamAvailableAccounts,
-      tone: 'info'
+      tone: 'blue'
     },
     {
       key: 'quotaExhaustedAccounts',
       label: '额度清空数',
       value: summary.quotaExhaustedAccounts,
-      tone: 'warning'
+      tone: 'yellow'
     },
     {
       key: 'unauthorizedAccounts',
       label: '401 账号数',
       value: summary.unauthorizedAccounts,
-      tone: 'danger'
+      tone: 'red'
     },
     {
       key: 'abnormalAccounts',
       label: '异常账号数',
       value: summary.abnormalAccounts,
-      tone: 'danger'
+      tone: 'red'
     }
   ];
 });
@@ -243,20 +249,32 @@ function resolveLevelLabel(level: Sub2ApiLogLevel): string {
     return 'OK';
   }
 
-  if (level === 'warning') {
+  if (level === 'warning' || level === 'error') {
     return 'WARN';
-  }
-
-  if (level === 'error') {
-    return 'ERR';
   }
 
   return 'INFO';
 }
 
+function resolveLevelBadgeTone(level: Sub2ApiLogLevel): 'ok' | 'warn' | 'info' {
+  if (level === 'success') {
+    return 'ok';
+  }
+
+  if (level === 'warning' || level === 'error') {
+    return 'warn';
+  }
+
+  return 'info';
+}
+
+async function handleSaveConfig(): Promise<void> {
+  await saveConfig();
+}
+
 async function scrollTerminalToBottom(): Promise<void> {
   await nextTick();
-  const element = terminalBodyRef.value;
+  const element = logTerminalRef.value;
   if (!element) {
     return;
   }
@@ -282,240 +300,349 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.sub2api-page {
-  gap: 0;
+.page-container {
+  padding: 24px;
+  background-color: #f4f6f8;
+  min-height: 100%;
 }
 
-.main-title {
-  margin: 0;
-  color: #1e293b;
+.page-header {
+  margin-bottom: 24px;
+}
+
+.page-title {
+  display: flex;
+  align-items: baseline;
+  margin-bottom: 8px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.page-title h1 {
   font-size: 22px;
   font-weight: 600;
-  line-height: 1.2;
+  margin: 0;
+  color: #1e293b;
+}
+
+.tag-pill {
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid transparent;
+}
+
+.tag-pill.blue {
+  background-color: #ecf5ff;
+  color: #409eff;
+  border-color: #d9ebff;
+}
+
+.tag-pill.green {
+  background-color: #f0fdf4;
+  color: #16a34a;
+  border-color: #dcfce7;
 }
 
 .page-desc {
-  margin: 0;
   color: #94a3b8;
   font-size: 14px;
+  margin: 0;
+}
+
+.main-card {
+  border-radius: 12px;
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.03);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #f1f5f9;
+  flex-wrap: wrap;
+}
+
+.btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.2s;
+  background: #fff;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.btn:disabled {
+  opacity: 0.56;
+  cursor: not-allowed;
+}
+
+.btn-default {
+  border-color: #e2e8f0;
+  color: #1e293b;
+}
+
+.btn-default:hover:not(:disabled) {
+  border-color: #409eff;
+  color: #409eff;
+}
+
+.btn-success {
+  background: #10b981;
+  color: #fff;
+}
+
+.btn-success:hover:not(:disabled) {
+  background: #059669;
+}
+
+.btn-danger-ghost {
+  background: transparent;
+  color: #f56c6c;
+  border-color: #f56c6c;
+}
+
+.btn-danger-ghost:hover:not(:disabled) {
+  background: #fef0f0;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 12px;
+}
+
+.stat-card {
+  background-color: #ffffff;
+  border: 1px solid #f1f5f9;
+  border-radius: 6px;
+  padding: 12px 14px;
+  position: relative;
+  overflow: hidden;
+}
+
+.stat-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+}
+
+.stat-card.c-gray::before {
+  background-color: #cbd5e1;
+}
+
+.stat-card.c-green::before {
+  background-color: #10b981;
+}
+
+.stat-card.c-blue::before {
+  background-color: #3b82f6;
+}
+
+.stat-card.c-purple::before {
+  background-color: #8b5cf6;
+}
+
+.stat-card.c-yellow::before {
+  background-color: #f59e0b;
+}
+
+.stat-card.c-red::before {
+  background-color: #ef4444;
+}
+
+.stat-title {
+  font-size: 12px;
+  color: #475569;
+  margin-bottom: 4px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.stat-value {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1e293b;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.log-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.log-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.log-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.log-desc {
+  font-size: 13px;
+  color: #94a3b8;
+  margin-left: 12px;
+}
+
+.run-status {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.run-status.is-running {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.run-status.is-idle {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.log-terminal {
+  background-color: #0f172a;
+  border-radius: 8px;
+  padding: 16px;
+  height: 440px;
+  overflow-y: auto;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 13px;
   line-height: 1.6;
+  color: #e2e8f0;
 }
 
-.sub2api-card :deep(.n-card__content) {
-  padding: 24px !important;
+.log-empty {
+  color: #94a3b8;
 }
 
-.sub2api-shell {
-  display: grid;
-  gap: 20px;
-}
-
-.sub2api-panel {
-  display: grid;
-  gap: 18px;
-  padding: 20px 22px;
-  border: 1px solid #e2e8f0;
-  border-radius: 18px;
-  background:
-    radial-gradient(circle at top left, rgba(56, 189, 248, 0.08), transparent 36%),
-    linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-}
-
-.sub2api-panel-head,
-.sub2api-terminal-head {
+.log-line {
+  margin-bottom: 6px;
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.sub2api-section-title {
-  margin: 0 0 6px;
-  color: #1e293b;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.sub2api-section-desc {
-  margin: 0;
-  color: #64748b;
-  font-size: 13px;
-  line-height: 1.7;
-}
-
-.sub2api-chip-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.sub2api-actions {
-  display: flex;
-  align-items: center;
   gap: 12px;
-  flex-wrap: wrap;
 }
 
-.sub2api-action-button {
-  min-width: 108px;
-}
-
-.sub2api-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.sub2api-summary-card {
-  display: grid;
-  gap: 10px;
-  min-height: 108px;
-  padding: 18px;
-  border: 1px solid #e2e8f0;
-  border-radius: 16px;
-  background: #ffffff;
-  box-shadow: 0 12px 30px rgba(148, 163, 184, 0.08);
-}
-
-.sub2api-summary-card-success {
-  border-color: rgba(16, 185, 129, 0.28);
-  background: linear-gradient(180deg, rgba(240, 253, 250, 0.96), #ffffff);
-}
-
-.sub2api-summary-card-info {
-  border-color: rgba(59, 130, 246, 0.2);
-  background: linear-gradient(180deg, rgba(239, 246, 255, 0.9), #ffffff);
-}
-
-.sub2api-summary-card-warning {
-  border-color: rgba(245, 158, 11, 0.24);
-  background: linear-gradient(180deg, rgba(255, 251, 235, 0.94), #ffffff);
-}
-
-.sub2api-summary-card-danger {
-  border-color: rgba(248, 113, 113, 0.22);
-  background: linear-gradient(180deg, rgba(254, 242, 242, 0.94), #ffffff);
-}
-
-.sub2api-summary-label {
+.log-time {
   color: #64748b;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  flex-shrink: 0;
 }
 
-.sub2api-summary-value {
-  color: #0f172a;
-  font-size: 30px;
-  font-weight: 700;
-  line-height: 1.1;
-}
-
-.sub2api-terminal {
-  overflow: auto;
-  min-height: 360px;
-  max-height: 520px;
-  padding: 16px 18px;
-  border-radius: 16px;
-  background:
-    radial-gradient(circle at top right, rgba(34, 197, 94, 0.12), transparent 28%),
-    linear-gradient(180deg, #08111f 0%, #0f172a 52%, #111827 100%);
-  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.08);
-}
-
-.sub2api-terminal-empty {
-  color: rgba(226, 232, 240, 0.72);
-  font-size: 13px;
-  line-height: 1.8;
-}
-
-.sub2api-log-line {
-  display: grid;
-  grid-template-columns: 92px 52px minmax(0, 1fr);
-  gap: 12px;
-  align-items: start;
-  padding: 8px 0;
-  color: #e2e8f0;
-  font-family: 'Fira Code', 'SFMono-Regular', Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.7;
-}
-
-.sub2api-log-line + .sub2api-log-line {
-  border-top: 1px solid rgba(148, 163, 184, 0.08);
-}
-
-.sub2api-log-time {
-  color: rgba(148, 163, 184, 0.8);
-}
-
-.sub2api-log-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 22px;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: rgba(148, 163, 184, 0.14);
-  color: #cbd5e1;
+.log-badge {
+  padding: 2px 6px;
+  border-radius: 4px;
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  font-weight: bold;
+  flex-shrink: 0;
+  width: 44px;
+  text-align: center;
 }
 
-.sub2api-log-message {
-  word-break: break-word;
+.log-badge.warn {
+  background-color: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
 }
 
-.sub2api-log-line-success .sub2api-log-badge {
-  background: rgba(34, 197, 94, 0.16);
-  color: #86efac;
+.log-badge.info {
+  background-color: rgba(56, 130, 246, 0.2);
+  color: #60a5fa;
 }
 
-.sub2api-log-line-warning .sub2api-log-badge {
-  background: rgba(245, 158, 11, 0.18);
-  color: #fcd34d;
+.log-badge.ok {
+  background-color: rgba(16, 185, 129, 0.2);
+  color: #34d399;
 }
 
-.sub2api-log-line-error .sub2api-log-badge {
-  background: rgba(248, 113, 113, 0.18);
-  color: #fca5a5;
+.log-message {
+  color: #cbd5e1;
+  word-break: break-all;
 }
 
-.sub2api-log-line-success .sub2api-log-message {
-  color: #bbf7d0;
+.config-modal-desc {
+  font-size: 13px;
+  color: #94a3b8;
+  margin: 0 0 24px;
 }
 
-.sub2api-log-line-warning .sub2api-log-message {
-  color: #fde68a;
+.config-modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.sub2api-log-line-error .sub2api-log-message {
-  color: #fecaca;
+.config-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
 }
 
-@media (max-width: 1180px) {
-  .sub2api-summary-grid {
+.form-autofill-guard {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+@media (max-width: 1440px) {
+  .stats-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .stats-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .log-section-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 
-@media (max-width: 768px) {
-  .sub2api-panel-head,
-  .sub2api-terminal-head,
-  .sub2api-actions {
-    align-items: stretch;
+@media (max-width: 640px) {
+  .page-container {
+    padding: 16px;
+  }
+
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .log-line {
     flex-direction: column;
-  }
-
-  .sub2api-summary-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .sub2api-log-line {
-    grid-template-columns: 1fr;
     gap: 6px;
+  }
+
+  .log-desc {
+    display: block;
+    margin-left: 0;
+    margin-top: 6px;
   }
 }
 </style>
