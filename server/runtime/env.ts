@@ -14,6 +14,10 @@ export interface RuntimeConfig {
   sessionSecret: string;
   ingestToken: string;
   mailApiToken: string;
+  microsoftClientId: string;
+  microsoftClientSecret: string;
+  microsoftTenantId: string;
+  microsoftRedirectUri: string;
 }
 
 function asBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -57,6 +61,10 @@ export function resolveRuntimeConfig(): RuntimeConfig {
     adminPassword: process.env.ADMIN_PASSWORD?.trim() || '',
     sessionSecret: process.env.SESSION_SECRET?.trim() || '',
     ingestToken: process.env.INGEST_TOKEN?.trim() || '',
-    mailApiToken: process.env.MAIL_API_TOKEN?.trim() || ''
+    mailApiToken: process.env.MAIL_API_TOKEN?.trim() || '',
+    microsoftClientId: process.env.MS_CLIENT_ID?.trim() || '',
+    microsoftClientSecret: process.env.MS_CLIENT_SECRET?.trim() || '',
+    microsoftTenantId: process.env.MS_TENANT_ID?.trim() || '',
+    microsoftRedirectUri: process.env.MS_REDIRECT_URI?.trim() || ''
   };
 }

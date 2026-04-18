@@ -15,6 +15,7 @@ import type {
 const { message } = createDiscreteApi(['message']);
 const ADMIN_MAIL_FETCH_MODE: MailFetchMode = 'auto';
 const ACCOUNT_SEARCH_STORAGE_KEY = 'mail-console-account-search';
+const MICROSOFT_OAUTH_LOGIN_PATH = '/auth/microsoft';
 
 interface AccountFormState {
   account: string;
@@ -605,6 +606,38 @@ async function saveIngestConfig(): Promise<void> {
   }
 }
 
+function beginMicrosoftOauthLogin(): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.location.assign(MICROSOFT_OAUTH_LOGIN_PATH);
+}
+
+async function consumeMicrosoftOauthResult(query: Record<string, unknown>): Promise<void> {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const oauth = typeof query.oauth === 'string' ? query.oauth.trim() : '';
+  if (!oauth) {
+    return;
+  }
+
+  const account = typeof query.account === 'string' ? query.account.trim() : '';
+  const rawMessage = typeof query.message === 'string' ? query.message.trim() : '';
+
+  if (oauth === 'success') {
+    await loadAccounts();
+    if (account) {
+      searchKeyword.value = account;
+    }
+    message.success(account ? `OAuth 登录成功：${account}` : 'OAuth 登录成功');
+  } else {
+    message.error(rawMessage || 'OAuth 登录失败');
+  }
+}
+
 function resolveTokenStatusLabel(row: AccountItem): string {
   if (row.tokenStatus === 'valid') {
     return '有效';
@@ -735,6 +768,8 @@ export function useAdminConsole() {
     copyMailAccount,
     refreshMailInbox,
     saveIngestConfig,
+    beginMicrosoftOauthLogin,
+    consumeMicrosoftOauthResult,
     resolveTokenStatusLabel,
     resolveTokenStatusTone,
     resolveCountdownLabel,

@@ -12,6 +12,10 @@ type Bindings = {
   SESSION_SECRET?: string;
   INGEST_TOKEN?: string;
   MAIL_API_TOKEN?: string;
+  MS_CLIENT_ID?: string;
+  MS_CLIENT_SECRET?: string;
+  MS_TENANT_ID?: string;
+  MS_REDIRECT_URI?: string;
 };
 
 type Variables = {
@@ -28,6 +32,7 @@ interface AccountRow {
   password: string;
   clientId: string | null;
   refreshToken: string | null;
+  authType: 'manual' | 'microsoft_oauth';
   remark: string | null;
   createdAt: string;
   syncStatus: string;
@@ -145,9 +150,19 @@ interface Sub2ApiDeleteAccountDetail {
   message: string;
 }
 
+interface MicrosoftOauthStatePayload {
+  username: string;
+  exp: number;
+}
+
 interface SessionPayload {
   username: string;
   exp: number;
+}
+
+interface MicrosoftGraphMeResult {
+  account: string;
+  displayName: string | null;
 }
 
 interface ParseErrorItem {
@@ -215,6 +230,10 @@ const IMAP_SCOPE = 'https://outlook.office.com/IMAP.AccessAsUser.All offline_acc
 const DEFAULT_REFRESH_CONCURRENCY = 8;
 const MAIL_PAGE_SIZE = 100;
 const TOKEN_LIFETIME_DAYS = 90;
+const MICROSOFT_OAUTH_STATE_MAX_AGE_SECONDS = 60 * 10;
+const MICROSOFT_OAUTH_AUTHORIZE_SCOPE = 'offline_access openid profile User.Read Mail.Read';
+const MICROSOFT_GRAPH_ME_URL = 'https://graph.microsoft.com/v1.0/me';
+const MICROSOFT_OAUTH_REDIRECT_TARGET = '/services/microsoft-mail/accounts';
 
 const DEFAULT_INGEST_CONFIG: IngestConfig = {
   delimiter: '----',
@@ -250,6 +269,7 @@ const ACCOUNT_SELECT_SQL = `
     password,
     client_id AS clientId,
     refresh_token AS refreshToken,
+    IFNULL(auth_type, 'manual') AS authType,
     remark,
     created_at AS createdAt,
     IFNULL(sync_status, 'idle') AS syncStatus,
@@ -322,6 +342,99 @@ app.post('/api/auth/login', async (c) => {
   return c.json({ ok: true as const, username: expectedUsername });
 });
 
+
+app.get('/auth/microsoft', async (c) => {
+  const authUser = await authenticateRequest(c);
+  if (!authUser) {
+    const loginUrl = new URL('/login', c.req.url);
+    loginUrl.searchParams.set('redirect', MICROSOFT_OAUTH_REDIRECT_TARGET);
+    return c.redirect(loginUrl.toString(), 302);
+  }
+
+  const clientId = getMicrosoftClientId(c.env);
+  const tenantId = getMicrosoftTenantId(c.env);
+  const redirectUri = getMicrosoftRedirectUri(c.env);
+  const state = await createMicrosoftOauthState(authUser, getSessionSecret(c.env));
+  const authorizeUrl = buildMicrosoftAuthorizeUrl({
+    clientId,
+    tenantId,
+    redirectUri,
+    state
+  });
+
+  return c.redirect(authorizeUrl, 302);
+});
+
+app.get('/auth/microsoft/callback', async (c) => {
+  const code = asText(c.req.query('code')).trim();
+  const state = asText(c.req.query('state')).trim();
+  const remoteError = asText(c.req.query('error')).trim();
+  const remoteErrorDescription = asText(c.req.query('error_description')).trim();
+
+  if (remoteError) {
+    return redirectMicrosoftOauthResult(c, {
+      ok: false,
+      message: remoteErrorDescription || remoteError
+    });
+  }
+
+  if (!code || !state) {
+    return redirectMicrosoftOauthResult(c, {
+      ok: false,
+      message: '微软授权回调缺少 code 或 state'
+    });
+  }
+
+  const verified = await verifyMicrosoftOauthState(state, getSessionSecret(c.env));
+  if (!verified) {
+    return redirectMicrosoftOauthResult(c, {
+      ok: false,
+      message: '微软授权状态已失效，请重新发起 OAuth 登录'
+    });
+  }
+
+  const currentUser = await authenticateRequest(c);
+  if (!currentUser || currentUser !== verified.username) {
+    return redirectMicrosoftOauthResult(c, {
+      ok: false,
+      message: '当前登录状态已失效，请重新登录后再执行 OAuth 登录'
+    });
+  }
+
+  const exchanged = await exchangeMicrosoftAuthorizationCode(c.env, code);
+  if (!exchanged.ok) {
+    return redirectMicrosoftOauthResult(c, {
+      ok: false,
+      message: exchanged.error
+    });
+  }
+
+  const me = await readMicrosoftMe(exchanged.result.accessToken);
+  if (!me.ok) {
+    return redirectMicrosoftOauthResult(c, {
+      ok: false,
+      message: me.error
+    });
+  }
+
+  try {
+    await upsertMicrosoftOauthAccount(c.env.DB, {
+      account: me.result.account,
+      clientId: getMicrosoftClientId(c.env),
+      refreshToken: exchanged.result.refreshToken
+    });
+  } catch (error) {
+    return redirectMicrosoftOauthResult(c, {
+      ok: false,
+      message: error instanceof Error ? error.message : 'OAuth 账号写入失败'
+    });
+  }
+
+  return redirectMicrosoftOauthResult(c, {
+    ok: true,
+    account: me.result.account
+  });
+});
 app.get('/api/auth/me', (c) => {
   return c.json({ username: c.get('authUser') });
 });
@@ -334,7 +447,6 @@ app.post('/api/auth/logout', (c) => {
   });
   return c.json({ ok: true as const });
 });
-
 app.get('/api/accounts', async (c) => {
   const keyword = (c.req.query('keyword') ?? '').trim();
   const items = await queryAccounts(c.env.DB, keyword);
@@ -357,14 +469,15 @@ app.post('/api/accounts', async (c) => {
   try {
     insertResult = await c.env.DB
       .prepare(
-        `INSERT INTO accounts (account, password, client_id, refresh_token, remark)
-         VALUES (?, ?, ?, ?, ?)`
+        `INSERT INTO accounts (account, password, client_id, refresh_token, auth_type, remark)
+         VALUES (?, ?, ?, ?, ?, ?)`
       )
       .bind(
         payload.account,
         payload.password,
         payload.clientId,
         payload.refreshToken,
+        'manual',
         payload.remark
       )
       .run();
@@ -398,7 +511,7 @@ app.put('/api/accounts/:id', async (c) => {
     result = await c.env.DB
       .prepare(
         `UPDATE accounts
-         SET account = ?, password = ?, client_id = ?, refresh_token = ?, remark = ?
+         SET account = ?, password = ?, client_id = ?, refresh_token = ?, auth_type = ?, remark = ?
          WHERE id = ?`
       )
       .bind(
@@ -406,6 +519,7 @@ app.put('/api/accounts/:id', async (c) => {
         payload.password,
         payload.clientId,
         payload.refreshToken,
+        'manual',
         payload.remark,
         id
       )
@@ -512,14 +626,15 @@ app.post('/api/accounts/import', async (c) => {
     try {
       const result = await c.env.DB
         .prepare(
-          `INSERT OR IGNORE INTO accounts (account, password, client_id, refresh_token, remark)
-           VALUES (?, ?, ?, ?, ?)`
+          `INSERT OR IGNORE INTO accounts (account, password, client_id, refresh_token, auth_type, remark)
+           VALUES (?, ?, ?, ?, ?, ?)`
         )
         .bind(
           payload.account,
           payload.password,
           toNullableText(payload.clientId),
           toNullableText(payload.refreshToken),
+          'manual',
           toNullableText(payload.remark)
         )
         .run();
@@ -554,7 +669,7 @@ app.post('/api/accounts/refresh', async (c) => {
   }
 
   const details = await mapWithConcurrency(accounts, DEFAULT_REFRESH_CONCURRENCY, (account) =>
-    refreshAccountToken(c.env.DB, account)
+    refreshAccountToken({ MS_CLIENT_SECRET: c.env.MS_CLIENT_SECRET }, c.env.DB, account)
   );
   const success = details.filter((item) => item.ok).length;
   return c.json({
@@ -574,7 +689,7 @@ app.get('/api/accounts/:id/messages', async (c) => {
     throw new HTTPException(404, { message: '账号不存在' });
   }
 
-  const result = await fetchAccountMessages(c.env.DB, account, mode, true);
+  const result = await fetchAccountMessages({ MS_CLIENT_SECRET: c.env.MS_CLIENT_SECRET }, c.env.DB, account, mode, true);
   if (!result.ok) {
     throw new HTTPException(400, { message: result.message });
   }
@@ -599,7 +714,7 @@ app.get('/api/open/accounts/:id/messages', async (c) => {
     throw new HTTPException(404, { message: '账号不存在' });
   }
 
-  const result = await fetchAccountMessages(c.env.DB, account, mode, true);
+  const result = await fetchAccountMessages({ MS_CLIENT_SECRET: c.env.MS_CLIENT_SECRET }, c.env.DB, account, mode, true);
   if (!result.ok) {
     throw new HTTPException(400, { message: result.message });
   }
@@ -630,7 +745,7 @@ app.post('/api/open/messages', async (c) => {
     throw new HTTPException(400, { message: '请传入有效的 id 或 account' });
   }
 
-  const result = await fetchAccountMessages(c.env.DB, account, mode, true);
+  const result = await fetchAccountMessages({ MS_CLIENT_SECRET: c.env.MS_CLIENT_SECRET }, c.env.DB, account, mode, true);
   if (!result.ok) {
     throw new HTTPException(400, { message: result.message });
   }
@@ -975,14 +1090,15 @@ app.post('/api/upload/ingest', async (c) => {
       const payload = normalizeAccountPayload(record.payload, true);
       const result = await c.env.DB
         .prepare(
-          `INSERT OR IGNORE INTO accounts (account, password, client_id, refresh_token, remark)
-           VALUES (?, ?, ?, ?, ?)`
+          `INSERT OR IGNORE INTO accounts (account, password, client_id, refresh_token, auth_type, remark)
+           VALUES (?, ?, ?, ?, ?, ?)`
         )
         .bind(
           payload.account,
           payload.password,
           toNullableText(payload.clientId),
           toNullableText(payload.refreshToken),
+          'manual',
           toNullableText(payload.remark)
         )
         .run();
@@ -2827,7 +2943,11 @@ function sortMailMessages(messages: AccountMailItem[]): AccountMailItem[] {
   });
 }
 
-async function refreshAccountToken(db: D1Database, account: AccountRow): Promise<BatchActionDetail> {
+async function refreshAccountToken(
+  env: Pick<Bindings, 'MS_CLIENT_SECRET'>,
+  db: D1Database,
+  account: AccountRow
+): Promise<BatchActionDetail> {
   if (!account.clientId || !account.refreshToken) {
     const message = '缺少 client_id 或 refresh_token';
     await updateTokenState(db, account.id, {
@@ -2850,7 +2970,7 @@ async function refreshAccountToken(db: D1Database, account: AccountRow): Promise
     };
   }
 
-  const exchanged = await exchangeMicrosoftToken(account.refreshToken, account.clientId);
+  const exchanged = await exchangeMicrosoftToken(env, account.refreshToken, account.clientId);
   if (!exchanged.ok) {
     const message = exchanged.error || '刷新失败';
     await updateTokenState(db, account.id, {
@@ -2899,6 +3019,7 @@ async function refreshAccountToken(db: D1Database, account: AccountRow): Promise
 }
 
 async function fetchAccountMessages(
+  env: Pick<Bindings, 'MS_CLIENT_SECRET'>,
   db: D1Database,
   account: AccountRow,
   mode: MailFetchMode,
@@ -2936,6 +3057,7 @@ async function fetchAccountMessages(
   for (const resolvedMode of attemptModes) {
     lastResolvedMode = resolvedMode;
     const attempt = await attemptMailFetch(
+      env,
       account.clientId,
       latestRefreshToken,
       resolvedMode,
@@ -2999,6 +3121,7 @@ async function fetchAccountMessages(
 }
 
 async function attemptMailFetch(
+  env: Pick<Bindings, 'MS_CLIENT_SECRET'>,
   clientId: string,
   refreshToken: string,
   mode: ResolvedMailFetchMode,
@@ -3018,7 +3141,7 @@ async function attemptMailFetch(
       message: string;
     }
 > {
-  const exchanged = await exchangeMicrosoftToken(refreshToken, clientId, getScopeByMode(mode));
+  const exchanged = await exchangeMicrosoftToken(env, refreshToken, clientId, getScopeByMode(mode));
   if (!exchanged.ok) {
     return {
       ok: false,
@@ -3053,6 +3176,7 @@ async function attemptMailFetch(
 }
 
 async function exchangeMicrosoftToken(
+  env: Pick<Bindings, 'MS_CLIENT_SECRET'>,
   refreshToken: string,
   clientId: string,
   scope = ''
@@ -3061,6 +3185,12 @@ async function exchangeMicrosoftToken(
   params.set('client_id', clientId);
   params.set('grant_type', 'refresh_token');
   params.set('refresh_token', refreshToken);
+
+  const clientSecret = asText(env.MS_CLIENT_SECRET).trim();
+  if (clientSecret) {
+    params.set('client_secret', clientSecret);
+  }
+
   if (scope) {
     params.set('scope', scope);
   }
@@ -3105,6 +3235,7 @@ async function exchangeMicrosoftToken(
     }
   };
 }
+
 
 async function readGraphMessages(
   accessToken: string,
@@ -3612,6 +3743,7 @@ function isPublicApiPath(pathname: string): boolean {
   return (
     pathname === '/api/health' ||
     pathname === '/api/auth/login' ||
+    pathname === '/auth/microsoft/callback' ||
     pathname === INGEST_PATH ||
     pathname === OPEN_MESSAGES_PATH ||
     pathname === '/api/open/accounts' ||
@@ -3636,8 +3768,266 @@ async function authenticateRequest(c: Context<{ Bindings: Bindings; Variables: V
   return session.username;
 }
 
+function getMicrosoftClientId(env: Bindings): string {
+  const clientId = asText(env.MS_CLIENT_ID).trim();
+  if (!clientId) {
+    throw new HTTPException(500, { message: '服务端未配置 MS_CLIENT_ID 环境变量' });
+  }
+  return clientId;
+}
+
+function getMicrosoftClientSecret(env: Bindings): string {
+  const clientSecret = asText(env.MS_CLIENT_SECRET).trim();
+  if (!clientSecret) {
+    throw new HTTPException(500, { message: '服务端未配置 MS_CLIENT_SECRET 环境变量' });
+  }
+  return clientSecret;
+}
+
+function getMicrosoftTenantId(env: Bindings): string {
+  return asText(env.MS_TENANT_ID).trim() || 'consumers';
+}
+
+function getMicrosoftRedirectUri(env: Bindings): string {
+  const redirectUri = asText(env.MS_REDIRECT_URI).trim();
+  if (!redirectUri) {
+    throw new HTTPException(500, { message: '服务端未配置 MS_REDIRECT_URI 环境变量' });
+  }
+  return redirectUri;
+}
+
+function buildMicrosoftAuthorizeUrl(params: {
+  clientId: string;
+  tenantId: string;
+  redirectUri: string;
+  state: string;
+}): string {
+  const url = new URL(`https://login.microsoftonline.com/${params.tenantId}/oauth2/v2.0/authorize`);
+  url.searchParams.set('client_id', params.clientId);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('redirect_uri', params.redirectUri);
+  url.searchParams.set('response_mode', 'query');
+  url.searchParams.set('scope', MICROSOFT_OAUTH_AUTHORIZE_SCOPE);
+  url.searchParams.set('state', params.state);
+  url.searchParams.set('prompt', 'select_account');
+  return url.toString();
+}
+
+async function createMicrosoftOauthState(username: string, secret: string): Promise<string> {
+  const payload: MicrosoftOauthStatePayload = {
+    username,
+    exp: Math.floor(Date.now() / 1000) + MICROSOFT_OAUTH_STATE_MAX_AGE_SECONDS
+  };
+
+  const encodedPayload = encodeBase64UrlText(JSON.stringify(payload));
+  const signature = await signValue(encodedPayload, secret);
+  return `${encodedPayload}.${signature}`;
+}
+
+async function verifyMicrosoftOauthState(token: string, secret: string): Promise<MicrosoftOauthStatePayload | null> {
+  const [encodedPayload, signature] = token.split('.');
+  if (!encodedPayload || !signature) {
+    return null;
+  }
+
+  const expectedSignature = await signValue(encodedPayload, secret);
+  if (!timingSafeEqual(signature, expectedSignature)) {
+    return null;
+  }
+
+  let payload: Partial<MicrosoftOauthStatePayload>;
+  try {
+    payload = JSON.parse(decodeBase64UrlText(encodedPayload)) as Partial<MicrosoftOauthStatePayload>;
+  } catch {
+    return null;
+  }
+
+  if (typeof payload.username !== 'string' || typeof payload.exp !== 'number') {
+    return null;
+  }
+
+  if (payload.exp <= Math.floor(Date.now() / 1000)) {
+    return null;
+  }
+
+  return {
+    username: payload.username,
+    exp: payload.exp
+  };
+}
+
+function buildMicrosoftOauthResultUrl(params: { ok: boolean; message?: string; account?: string }): string {
+  const url = new URL(MICROSOFT_OAUTH_REDIRECT_TARGET, 'https://local.invalid');
+  url.searchParams.set('oauth', params.ok ? 'success' : 'error');
+  if (params.message) {
+    url.searchParams.set('message', params.message);
+  }
+  if (params.account) {
+    url.searchParams.set('account', params.account);
+  }
+  return `${url.pathname}${url.search}`;
+}
+
+function redirectMicrosoftOauthResult(
+  c: Context<{ Bindings: Bindings; Variables: Variables }>,
+  params: { ok: boolean; message?: string; account?: string }
+): Response {
+  const target = new URL(buildMicrosoftOauthResultUrl(params), c.req.url);
+  return c.redirect(target.toString(), 302);
+}
+
+async function exchangeMicrosoftAuthorizationCode(
+  env: Bindings,
+  code: string
+): Promise<{ ok: true; result: TokenExchangeResult } | { ok: false; error: string }> {
+  const params = new URLSearchParams();
+  params.set('client_id', getMicrosoftClientId(env));
+  params.set('client_secret', getMicrosoftClientSecret(env));
+  params.set('grant_type', 'authorization_code');
+  params.set('code', code);
+  params.set('redirect_uri', getMicrosoftRedirectUri(env));
+  params.set('scope', MICROSOFT_OAUTH_AUTHORIZE_SCOPE);
+
+  let response: Response;
+  try {
+    response = await fetch(MICROSOFT_TOKEN_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: params.toString()
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      error: `授权码换取令牌异常: ${error instanceof Error ? error.message : 'unknown error'}`
+    };
+  }
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return {
+      ok: false,
+      error: extractMicrosoftError(payload, response.status)
+    };
+  }
+
+  const accessToken = asText((payload as Record<string, unknown>).access_token).trim();
+  const refreshToken = asText((payload as Record<string, unknown>).refresh_token).trim();
+  if (!accessToken || !refreshToken) {
+    return {
+      ok: false,
+      error: '授权响应缺少 access_token 或 refresh_token'
+    };
+  }
+
+  return {
+    ok: true,
+    result: {
+      accessToken,
+      refreshToken
+    }
+  };
+}
+
+async function readMicrosoftMe(
+  accessToken: string
+): Promise<{ ok: true; result: MicrosoftGraphMeResult } | { ok: false; error: string }> {
+  let response: Response;
+  try {
+    response = await fetch(MICROSOFT_GRAPH_ME_URL, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      }
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      error: `读取微软账户信息异常: ${error instanceof Error ? error.message : 'unknown error'}`
+    };
+  }
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return {
+      ok: false,
+      error: extractMicrosoftError(payload, response.status)
+    };
+  }
+
+  const account = asText((payload as Record<string, unknown>).mail).trim().toLowerCase()
+    || asText((payload as Record<string, unknown>).userPrincipalName).trim().toLowerCase();
+  if (!account) {
+    return {
+      ok: false,
+      error: '微软账户信息缺少邮箱地址'
+    };
+  }
+
+  return {
+    ok: true,
+    result: {
+      account,
+      displayName: toNullableText((payload as Record<string, unknown>).displayName)
+    }
+  };
+}
+
+async function upsertMicrosoftOauthAccount(
+  db: D1Database,
+  payload: { account: string; clientId: string; refreshToken: string }
+): Promise<AccountRow> {
+  const existing = await fetchAccountByAccount(db, payload.account);
+  if (existing) {
+    await db
+      .prepare(
+        `UPDATE accounts
+         SET password = ?, client_id = ?, refresh_token = ?, auth_type = ?, token_status = ?, token_message = ?, token_checked_at = CURRENT_TIMESTAMP, refreshed_at = CURRENT_TIMESTAMP
+         WHERE id = ?`
+      )
+      .bind(
+        existing.password || 'oauth',
+        payload.clientId,
+        payload.refreshToken,
+        'microsoft_oauth',
+        'valid',
+        'OAuth 授权成功',
+        existing.id
+      )
+      .run();
+
+    const updated = await fetchAccountById(db, existing.id);
+    if (!updated) {
+      throw new Error('OAuth 账号更新成功，但读取结果失败');
+    }
+    return updated;
+  }
+
+  const result = await db
+    .prepare(
+      `INSERT INTO accounts (account, password, client_id, refresh_token, auth_type, remark, token_status, token_message, token_checked_at, refreshed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+    )
+    .bind(payload.account, 'oauth', payload.clientId, payload.refreshToken, 'microsoft_oauth', null, 'valid', 'OAuth 授权成功')
+    .run();
+
+  const inserted = await db.prepare(`${ACCOUNT_SELECT_SQL} WHERE id = ?`).bind(Number(result.meta.last_row_id)).first<AccountRow>();
+  if (!inserted) {
+    throw new Error('OAuth 账号创建成功，但读取结果失败');
+  }
+  return inserted;
+}
+
+
+
 function getConfiguredUsername(env: Bindings): string {
-  return asText(env.ADMIN_USERNAME).trim() || 'admin';
+  const username = asText(env.ADMIN_USERNAME);
+  if (!username) {
+    throw new HTTPException(500, {
+      message: '服务端未配置 ADMIN_USERNAME 环境变量'
+    });
+  }
+  return username;
 }
 
 function getConfiguredPassword(env: Bindings): string {

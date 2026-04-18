@@ -66,6 +66,13 @@
             </n-button>
             <n-button
               size="small"
+              class="toolbar-button toolbar-button-oauth"
+              @click="beginMicrosoftOauthLogin"
+            >
+              OAuth 登录
+            </n-button>
+            <n-button
+              size="small"
               class="toolbar-button toolbar-button-secondary-primary"
               @click="openCreateModal"
             >
@@ -257,6 +264,7 @@
 
 <script setup lang="ts">
 import { computed, h, onMounted, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import {
   NButton,
   NCard,
@@ -297,6 +305,8 @@ const CopyGlyph = () =>
   );
 
 const admin = useAdminConsole();
+const route = useRoute();
+const router = useRouter();
 const {
   accounts,
   searchKeyword,
@@ -337,6 +347,8 @@ const {
   copyAccountValue,
   copyMailAccount,
   refreshMailInbox,
+  beginMicrosoftOauthLogin,
+  consumeMicrosoftOauthResult,
   resolveTokenStatusLabel,
   resolveTokenStatusTone,
   resolveCountdownLabel,
@@ -414,6 +426,7 @@ function renderCodeChip(value: string | null | undefined): ReturnType<typeof h> 
   );
 }
 
+
 function renderEmailCell(row: AccountItem): ReturnType<typeof h> {
   return h('div', { class: 'account-cell' }, [
     h(
@@ -446,6 +459,12 @@ function renderEmailCell(row: AccountItem): ReturnType<typeof h> {
   ]);
 }
 
+function renderAuthTypeCell(row: AccountItem): ReturnType<typeof h> {
+  const label = row.authType === 'microsoft_oauth' ? 'OAuth' : '手动';
+  const toneClass = row.authType === 'microsoft_oauth' ? 'status-pill-success' : 'status-pill-default';
+  return h('span', { class: ['status-pill', toneClass] }, label);
+}
+
 const accountColumns: DataTableColumns<AccountItem> = [
   {
     type: 'selection',
@@ -457,6 +476,13 @@ const accountColumns: DataTableColumns<AccountItem> = [
     width: 250,
     render: (row) => renderEmailCell(row)
   },
+  {
+    title: '来源',
+    key: 'authType',
+    width: 84,
+    render: (row) => renderAuthTypeCell(row)
+  },
+
   {
     title: '密码',
     key: 'password',
@@ -580,6 +606,11 @@ function handleMailVisibleChange(value: boolean): void {
 onMounted(async () => {
   if (!initialDataLoaded.value && isAuthenticated.value) {
     await loadInitialData();
+  }
+
+  await consumeMicrosoftOauthResult(route.query);
+  if (route.query.oauth) {
+    await router.replace({ path: route.path, query: {} });
   }
 });
 </script>
@@ -711,19 +742,36 @@ onMounted(async () => {
   --n-ripple-color: rgba(245, 108, 108, 0.16) !important;
 }
 
+
+:deep(.microsoft-toolbar .toolbar-button-oauth) {
+  --n-color: #eff6ff !important;
+  --n-color-hover: #dbeafe !important;
+  --n-color-pressed: #dbeafe !important;
+  --n-color-focus: #dbeafe !important;
+  --n-text-color: #2563eb !important;
+  --n-text-color-hover: #1d4ed8 !important;
+  --n-text-color-pressed: #1d4ed8 !important;
+  --n-text-color-focus: #1d4ed8 !important;
+  --n-border: 1px solid rgba(37, 99, 235, 0.24) !important;
+  --n-border-hover: 1px solid rgba(29, 78, 216, 0.32) !important;
+  --n-border-pressed: 1px solid rgba(29, 78, 216, 0.32) !important;
+  --n-border-focus: 1px solid rgba(29, 78, 216, 0.32) !important;
+  --n-ripple-color: rgba(37, 99, 235, 0.16) !important;
+}
+
 :deep(.microsoft-toolbar .toolbar-button-secondary-primary) {
-  --n-color: #ecf5ff !important;
-  --n-color-hover: #d9ebff !important;
-  --n-color-pressed: #d9ebff !important;
-  --n-color-focus: #d9ebff !important;
+  --n-color: #ffffff !important;
+  --n-color-hover: #ecf5ff !important;
+  --n-color-pressed: #d9ecff !important;
+  --n-color-focus: #ecf5ff !important;
   --n-text-color: #409eff !important;
   --n-text-color-hover: #409eff !important;
   --n-text-color-pressed: #409eff !important;
   --n-text-color-focus: #409eff !important;
-  --n-border: 1px solid transparent !important;
-  --n-border-hover: 1px solid transparent !important;
-  --n-border-pressed: 1px solid transparent !important;
-  --n-border-focus: 1px solid transparent !important;
+  --n-border: 1px solid rgba(64, 158, 255, 0.56) !important;
+  --n-border-hover: 1px solid #409eff !important;
+  --n-border-pressed: 1px solid #409eff !important;
+  --n-border-focus: 1px solid #409eff !important;
   --n-ripple-color: rgba(64, 158, 255, 0.16) !important;
 }
 

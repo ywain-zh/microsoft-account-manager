@@ -4,6 +4,7 @@ export interface AccountItem {
   password: string;
   clientId: string | null;
   refreshToken: string | null;
+  authType: 'manual' | 'microsoft_oauth';
   remark: string | null;
   createdAt: string;
   syncStatus: string;

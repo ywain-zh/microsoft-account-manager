@@ -36,7 +36,11 @@ try {
     ADMIN_PASSWORD: config.adminPassword,
     SESSION_SECRET: config.sessionSecret,
     INGEST_TOKEN: config.ingestToken,
-    MAIL_API_TOKEN: config.mailApiToken
+    MAIL_API_TOKEN: config.mailApiToken,
+    MS_CLIENT_ID: config.microsoftClientId,
+    MS_CLIENT_SECRET: config.microsoftClientSecret,
+    MS_TENANT_ID: config.microsoftTenantId,
+    MS_REDIRECT_URI: config.microsoftRedirectUri
   };
 
   const server = serve({
