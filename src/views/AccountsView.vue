@@ -374,6 +374,10 @@ const pagedAccounts = computed(() => {
   return accounts.value.slice(start, start + tablePageSize.value);
 });
 
+watch(searchKeyword, () => {
+  tablePage.value = 1;
+});
+
 watch([accounts, tablePageSize], () => {
   if (tablePage.value > pageCount.value) {
     tablePage.value = pageCount.value;

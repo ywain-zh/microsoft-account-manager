@@ -224,15 +224,17 @@ function showBatchResult(prefix: string, result: BatchActionResult): void {
   message.warning(`${prefix}完成：成功 ${result.success}，失败 ${result.failure}`);
 }
 
-async function loadAccounts(): Promise<void> {
+async function loadAccounts(): Promise<boolean> {
   tableLoading.value = true;
   try {
     const response = await api.listAccounts(searchKeyword.value.trim());
     accounts.value = response.items;
     const available = new Set(response.items.map((item) => item.id));
     checkedRowKeys.value = checkedRowKeys.value.filter((id) => available.has(id));
+    return true;
   } catch (error) {
     handleApiError(error);
+    return false;
   } finally {
     tableLoading.value = false;
   }
@@ -664,11 +666,27 @@ async function consumeMicrosoftOauthResult(
     if (account) {
       searchKeyword.value = account;
     }
-    try {
-      await loadAccounts();
-    } catch {
+
+    const loaded = await loadAccounts();
+    if (!loaded) {
       message.warning('OAuth 已完成，但列表刷新失败，请手动刷新一次');
+      return;
     }
+
+    if (account) {
+      const matched = accounts.value.some(
+        (item) => item.account.trim().toLowerCase() === account.toLowerCase()
+      );
+      if (!matched) {
+        searchKeyword.value = '';
+        const fallbackLoaded = await loadAccounts();
+        if (!fallbackLoaded) {
+          message.warning('OAuth 已完成，但列表刷新失败，请手动刷新一次');
+          return;
+        }
+      }
+    }
+
     message.success(account ? `OAuth 登录成功：${account}` : 'OAuth 登录成功');
     return;
   }
