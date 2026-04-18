@@ -664,7 +664,11 @@ async function consumeMicrosoftOauthResult(
     if (account) {
       searchKeyword.value = account;
     }
-    await loadAccounts();
+    try {
+      await loadAccounts();
+    } catch {
+      message.warning('OAuth 已完成，但列表刷新失败，请手动刷新一次');
+    }
     message.success(account ? `OAuth 登录成功：${account}` : 'OAuth 登录成功');
     return;
   }

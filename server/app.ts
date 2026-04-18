@@ -376,7 +376,21 @@ app.get('/auth/microsoft/callback', async (c) => {
     ? await verifyMicrosoftOauthState(state, getSessionSecret(c.env))
     : null;
 
+  logMicrosoftOauth('callback_received', {
+    hasCode: Boolean(code),
+    hasState: Boolean(state),
+    remoteError,
+    verifiedUser: verified?.username,
+    verifiedMode: verified?.mode
+  });
+
   if (remoteError) {
+    logMicrosoftOauth('callback_remote_error', {
+      remoteError,
+      remoteErrorDescription,
+      verifiedUser: verified?.username,
+      verifiedMode: verified?.mode
+    });
     return redirectMicrosoftOauthResult(
       c,
       {
@@ -388,6 +402,10 @@ app.get('/auth/microsoft/callback', async (c) => {
   }
 
   if (!code || !state) {
+    logMicrosoftOauth('callback_missing_code_or_state', {
+      hasCode: Boolean(code),
+      hasState: Boolean(state)
+    });
     return redirectMicrosoftOauthResult(c, {
       ok: false,
       message: '微软授权回调缺少 code 或 state'
@@ -395,6 +413,7 @@ app.get('/auth/microsoft/callback', async (c) => {
   }
 
   if (!verified) {
+    logMicrosoftOauth('callback_invalid_state', {});
     return redirectMicrosoftOauthResult(c, {
       ok: false,
       message: '微软授权状态已失效，请重新发起 OAuth 登录'
@@ -403,6 +422,11 @@ app.get('/auth/microsoft/callback', async (c) => {
 
   const currentUser = await authenticateRequest(c);
   if (!currentUser || currentUser !== verified.username) {
+    logMicrosoftOauth('callback_auth_mismatch', {
+      currentUser,
+      verifiedUser: verified.username,
+      verifiedMode: verified.mode
+    });
     return redirectMicrosoftOauthResult(
       c,
       {
@@ -415,19 +439,41 @@ app.get('/auth/microsoft/callback', async (c) => {
 
   const exchanged = await exchangeMicrosoftAuthorizationCode(c.env, code);
   if (!exchanged.ok) {
+    logMicrosoftOauth('token_exchange_failed', {
+      verifiedUser: verified.username,
+      verifiedMode: verified.mode,
+      error: exchanged.error
+    });
     return redirectMicrosoftOauthResult(c, {
       ok: false,
       message: exchanged.error
     }, verified);
   }
 
+  logMicrosoftOauth('token_exchange_succeeded', {
+    verifiedUser: verified.username,
+    verifiedMode: verified.mode,
+    hasRefreshToken: Boolean(exchanged.result.refreshToken)
+  });
+
   const me = await readMicrosoftMe(exchanged.result.accessToken);
   if (!me.ok) {
+    logMicrosoftOauth('graph_me_failed', {
+      verifiedUser: verified.username,
+      verifiedMode: verified.mode,
+      error: me.error
+    });
     return redirectMicrosoftOauthResult(c, {
       ok: false,
       message: me.error
     }, verified);
   }
+
+  logMicrosoftOauth('graph_me_succeeded', {
+    verifiedUser: verified.username,
+    verifiedMode: verified.mode,
+    account: me.result.account
+  });
 
   try {
     await upsertMicrosoftOauthAccount(c.env.DB, {
@@ -436,17 +482,30 @@ app.get('/auth/microsoft/callback', async (c) => {
       refreshToken: exchanged.result.refreshToken
     });
   } catch (error) {
+    const message = error instanceof Error ? error.message : 'OAuth 账号写入失败';
+    logMicrosoftOauth('account_upsert_failed', {
+      verifiedUser: verified.username,
+      verifiedMode: verified.mode,
+      account: me.result.account,
+      error: message
+    });
     return redirectMicrosoftOauthResult(c, {
       ok: false,
-      message: error instanceof Error ? error.message : 'OAuth 账号写入失败'
+      message
     }, verified);
   }
 
+  logMicrosoftOauth('callback_success', {
+    verifiedUser: verified.username,
+    verifiedMode: verified.mode,
+    account: me.result.account
+  });
   return redirectMicrosoftOauthResult(c, {
     ok: true,
     account: me.result.account
   }, verified);
 });
+
 
 app.get('/api/auth/me', (c) => {
   return c.json({ username: c.get('authUser') });
@@ -3894,6 +3953,10 @@ async function verifyMicrosoftOauthState(token: string, secret: string): Promise
   };
 }
 
+function logMicrosoftOauth(event: string, payload: Record<string, unknown>): void {
+  console.log(`[microsoft-oauth] ${event}`, JSON.stringify(payload));
+}
+
 function buildMicrosoftOauthResultUrl(params: { ok: boolean; message?: string; account?: string }): string {
   const url = new URL(MICROSOFT_OAUTH_REDIRECT_TARGET, 'https://local.invalid');
   url.searchParams.set('oauth', params.ok ? 'success' : 'error');
@@ -3936,15 +3999,28 @@ function buildMicrosoftOauthPopupHtml(c: Context<{ Bindings: Bindings; Variables
         var payload = ${payload};
         var targetOrigin = ${targetOrigin};
         var fallbackUrl = ${fallbackUrl};
+        var delivered = false;
         try {
           if (window.opener && !window.opener.closed) {
             window.opener.postMessage(payload, targetOrigin);
-            window.close();
-            return;
+            delivered = true;
           }
         } catch (error) {
         }
-        window.location.replace(fallbackUrl);
+
+        setTimeout(function () {
+          if (!delivered) {
+            window.location.replace(fallbackUrl);
+            return;
+          }
+          try {
+            window.close();
+          } catch (error) {
+          }
+          if (!window.closed) {
+            window.location.replace(fallbackUrl);
+          }
+        }, 150);
       })();
     </script>
   </body>
