@@ -16,12 +16,21 @@ const { message } = createDiscreteApi(['message']);
 const ADMIN_MAIL_FETCH_MODE: MailFetchMode = 'auto';
 const ACCOUNT_SEARCH_STORAGE_KEY = 'mail-console-account-search';
 const MICROSOFT_OAUTH_LOGIN_PATH = '/auth/microsoft';
+const MICROSOFT_OAUTH_POPUP_NAME = 'microsoft-oauth-login';
+const MICROSOFT_OAUTH_POPUP_FEATURES = 'popup=yes,width=560,height=760,left=120,top=80,resizable=yes,scrollbars=yes';
 
 interface AccountFormState {
   account: string;
   password: string;
   clientId: string;
   refreshToken: string;
+}
+
+interface MicrosoftOauthResultPayload {
+  source?: string;
+  ok?: boolean;
+  message?: string;
+  account?: string;
 }
 
 const authChecked = ref(false);
@@ -32,6 +41,7 @@ const logoutLoading = ref(false);
 const isAuthenticated = ref(false);
 const currentUser = ref('');
 const siteOrigin = ref(typeof window === 'undefined' ? '' : window.location.origin);
+const oauthPopupLoading = ref(false);
 
 const accounts = ref<AccountItem[]>([]);
 const searchKeyword = ref(readPersistedSearchKeyword());
@@ -163,6 +173,7 @@ function clearSessionState(): void {
   initialDataLoaded.value = false;
   isAuthenticated.value = false;
   currentUser.value = '';
+  oauthPopupLoading.value = false;
   accounts.value = [];
   checkedRowKeys.value = [];
   createVisible.value = false;
@@ -607,35 +618,74 @@ async function saveIngestConfig(): Promise<void> {
 }
 
 function beginMicrosoftOauthLogin(): void {
-  if (typeof window === 'undefined') {
+  if (typeof window === 'undefined' || oauthPopupLoading.value) {
     return;
   }
 
+  oauthPopupLoading.value = true;
+  const popup = window.open(
+    `${MICROSOFT_OAUTH_LOGIN_PATH}?mode=popup`,
+    MICROSOFT_OAUTH_POPUP_NAME,
+    MICROSOFT_OAUTH_POPUP_FEATURES
+  );
+
+  if (popup) {
+    popup.focus();
+    return;
+  }
+
+  oauthPopupLoading.value = false;
   window.location.assign(MICROSOFT_OAUTH_LOGIN_PATH);
 }
 
-async function consumeMicrosoftOauthResult(query: Record<string, unknown>): Promise<void> {
+async function consumeMicrosoftOauthResult(
+  payload: Record<string, unknown> | MicrosoftOauthResultPayload
+): Promise<void> {
   if (typeof window === 'undefined') {
     return;
   }
 
-  const oauth = typeof query.oauth === 'string' ? query.oauth.trim() : '';
+  oauthPopupLoading.value = false;
+  const isPopupMessage = payload.source === 'microsoft-oauth';
+  const queryOauth = typeof (payload as Record<string, unknown>).oauth === 'string'
+    ? ((payload as Record<string, unknown>).oauth as string).trim()
+    : '';
+  const oauth = isPopupMessage
+    ? (payload.ok ? 'success' : 'error')
+    : queryOauth;
   if (!oauth) {
     return;
   }
 
-  const account = typeof query.account === 'string' ? query.account.trim() : '';
-  const rawMessage = typeof query.message === 'string' ? query.message.trim() : '';
+  const account = typeof payload.account === 'string' ? payload.account.trim() : '';
+  const rawMessage = typeof payload.message === 'string' ? payload.message.trim() : '';
 
   if (oauth === 'success') {
-    await loadAccounts();
     if (account) {
       searchKeyword.value = account;
     }
+    await loadAccounts();
     message.success(account ? `OAuth 登录成功：${account}` : 'OAuth 登录成功');
-  } else {
-    message.error(rawMessage || 'OAuth 登录失败');
+    return;
   }
+
+  message.error(rawMessage || 'OAuth 登录失败');
+}
+
+function handleMicrosoftOauthMessage(event: MessageEvent<MicrosoftOauthResultPayload>): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  if (event.origin !== window.location.origin) {
+    return;
+  }
+
+  if (!event.data || event.data.source !== 'microsoft-oauth') {
+    return;
+  }
+
+  void consumeMicrosoftOauthResult(event.data);
 }
 
 function resolveTokenStatusLabel(row: AccountItem): string {
@@ -717,6 +767,7 @@ export function useAdminConsole() {
     isAuthenticated,
     currentUser,
     siteOrigin,
+    oauthPopupLoading,
     accounts,
     searchKeyword,
     checkedRowKeys,
@@ -770,6 +821,7 @@ export function useAdminConsole() {
     saveIngestConfig,
     beginMicrosoftOauthLogin,
     consumeMicrosoftOauthResult,
+    handleMicrosoftOauthMessage,
     resolveTokenStatusLabel,
     resolveTokenStatusTone,
     resolveCountdownLabel,

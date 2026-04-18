@@ -67,6 +67,7 @@
             <n-button
               size="small"
               class="toolbar-button toolbar-button-oauth"
+              :loading="oauthPopupLoading"
               @click="beginMicrosoftOauthLogin"
             >
               OAuth 登录
@@ -263,7 +264,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, ref, watch } from 'vue';
+import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
   NButton,
@@ -349,6 +350,7 @@ const {
   refreshMailInbox,
   beginMicrosoftOauthLogin,
   consumeMicrosoftOauthResult,
+  handleMicrosoftOauthMessage,
   resolveTokenStatusLabel,
   resolveTokenStatusTone,
   resolveCountdownLabel,
@@ -356,7 +358,8 @@ const {
   formatMailDate,
   markMailAsRead,
   isAuthenticated,
-  initialDataLoaded
+  initialDataLoaded,
+  oauthPopupLoading
 } = admin;
 
 const txtFileInputRef = ref<HTMLInputElement | null>(null);
@@ -604,6 +607,8 @@ function handleMailVisibleChange(value: boolean): void {
 }
 
 onMounted(async () => {
+  window.addEventListener('message', handleMicrosoftOauthMessage);
+
   if (!initialDataLoaded.value && isAuthenticated.value) {
     await loadInitialData();
   }
@@ -612,6 +617,10 @@ onMounted(async () => {
   if (route.query.oauth) {
     await router.replace({ path: route.path, query: {} });
   }
+});
+
+onUnmounted(() => {
+  window.removeEventListener('message', handleMicrosoftOauthMessage);
 });
 </script>
 

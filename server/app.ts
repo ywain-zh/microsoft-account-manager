@@ -153,6 +153,7 @@ interface Sub2ApiDeleteAccountDetail {
 interface MicrosoftOauthStatePayload {
   username: string;
   exp: number;
+  mode: 'popup' | 'redirect';
 }
 
 interface SessionPayload {
@@ -222,7 +223,7 @@ const INGEST_TOKEN_HEADER = 'x-ingest-token';
 const MAIL_API_TOKEN_HEADER = 'x-mail-api-token';
 const INGEST_PATH = '/api/upload/ingest';
 const OPEN_MESSAGES_PATH = '/api/open/messages';
-const MICROSOFT_TOKEN_URL = 'https://login.microsoftonline.com/consumers/oauth2/v2.0/token';
+const MICROSOFT_TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token';
 const GRAPH_MAIL_FOLDERS_URL = 'https://graph.microsoft.com/v1.0/me/mailFolders';
 const OUTLOOK_MAIL_FOLDERS_URL = 'https://outlook.office.com/api/v2.0/me/mailFolders';
 const GRAPH_SCOPE = 'https://graph.microsoft.com/.default';
@@ -345,6 +346,7 @@ app.post('/api/auth/login', async (c) => {
 
 app.get('/auth/microsoft', async (c) => {
   const authUser = await authenticateRequest(c);
+  const oauthMode = c.req.query('mode') === 'popup' ? 'popup' : 'redirect';
   if (!authUser) {
     const loginUrl = new URL('/login', c.req.url);
     loginUrl.searchParams.set('redirect', MICROSOFT_OAUTH_REDIRECT_TARGET);
@@ -354,7 +356,7 @@ app.get('/auth/microsoft', async (c) => {
   const clientId = getMicrosoftClientId(c.env);
   const tenantId = getMicrosoftTenantId(c.env);
   const redirectUri = getMicrosoftRedirectUri(c.env);
-  const state = await createMicrosoftOauthState(authUser, getSessionSecret(c.env));
+  const state = await createMicrosoftOauthState(authUser, getSessionSecret(c.env), oauthMode);
   const authorizeUrl = buildMicrosoftAuthorizeUrl({
     clientId,
     tenantId,
@@ -370,12 +372,19 @@ app.get('/auth/microsoft/callback', async (c) => {
   const state = asText(c.req.query('state')).trim();
   const remoteError = asText(c.req.query('error')).trim();
   const remoteErrorDescription = asText(c.req.query('error_description')).trim();
+  const verified = state
+    ? await verifyMicrosoftOauthState(state, getSessionSecret(c.env))
+    : null;
 
   if (remoteError) {
-    return redirectMicrosoftOauthResult(c, {
-      ok: false,
-      message: remoteErrorDescription || remoteError
-    });
+    return redirectMicrosoftOauthResult(
+      c,
+      {
+        ok: false,
+        message: remoteErrorDescription || remoteError
+      },
+      verified
+    );
   }
 
   if (!code || !state) {
@@ -385,7 +394,6 @@ app.get('/auth/microsoft/callback', async (c) => {
     });
   }
 
-  const verified = await verifyMicrosoftOauthState(state, getSessionSecret(c.env));
   if (!verified) {
     return redirectMicrosoftOauthResult(c, {
       ok: false,
@@ -395,10 +403,14 @@ app.get('/auth/microsoft/callback', async (c) => {
 
   const currentUser = await authenticateRequest(c);
   if (!currentUser || currentUser !== verified.username) {
-    return redirectMicrosoftOauthResult(c, {
-      ok: false,
-      message: '当前登录状态已失效，请重新登录后再执行 OAuth 登录'
-    });
+    return redirectMicrosoftOauthResult(
+      c,
+      {
+        ok: false,
+        message: '当前登录状态已失效，请重新登录后再执行 OAuth 登录'
+      },
+      verified
+    );
   }
 
   const exchanged = await exchangeMicrosoftAuthorizationCode(c.env, code);
@@ -406,7 +418,7 @@ app.get('/auth/microsoft/callback', async (c) => {
     return redirectMicrosoftOauthResult(c, {
       ok: false,
       message: exchanged.error
-    });
+    }, verified);
   }
 
   const me = await readMicrosoftMe(exchanged.result.accessToken);
@@ -414,7 +426,7 @@ app.get('/auth/microsoft/callback', async (c) => {
     return redirectMicrosoftOauthResult(c, {
       ok: false,
       message: me.error
-    });
+    }, verified);
   }
 
   try {
@@ -427,14 +439,15 @@ app.get('/auth/microsoft/callback', async (c) => {
     return redirectMicrosoftOauthResult(c, {
       ok: false,
       message: error instanceof Error ? error.message : 'OAuth 账号写入失败'
-    });
+    }, verified);
   }
 
   return redirectMicrosoftOauthResult(c, {
     ok: true,
     account: me.result.account
-  });
+  }, verified);
 });
+
 app.get('/api/auth/me', (c) => {
   return c.json({ username: c.get('authUser') });
 });
@@ -3502,11 +3515,23 @@ function getFolderLabel(folderKind: 'inbox' | 'junk'): string {
   return folderKind === 'junk' ? '垃圾邮件' : '收件箱';
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
 function extractMicrosoftError(payload: unknown, status: number): string {
   if (payload && typeof payload === 'object') {
     const asRecord = payload as Record<string, unknown>;
     const direct = asText(asRecord.error_description || asRecord.error).trim();
     if (direct) {
+      if (direct.includes('AADSTS7000012')) {
+        return `请求失败(${status}): ${direct}。这通常表示授权和换 token 使用了不同的租户入口，请确认都已切换为 common。`;
+      }
       return `请求失败(${status}): ${direct}`;
     }
 
@@ -3515,6 +3540,9 @@ function extractMicrosoftError(payload: unknown, status: number): string {
       const nestedRecord = nested as Record<string, unknown>;
       const message = asText(nestedRecord.message).trim();
       if (message) {
+        if (message.includes('AADSTS7000012')) {
+          return `请求失败(${status}): ${message}。这通常表示授权和换 token 使用了不同的租户入口，请确认都已切换为 common。`;
+        }
         return `请求失败(${status}): ${message}`;
       }
     }
@@ -3784,8 +3812,8 @@ function getMicrosoftClientSecret(env: Bindings): string {
   return clientSecret;
 }
 
-function getMicrosoftTenantId(env: Bindings): string {
-  return asText(env.MS_TENANT_ID).trim() || 'consumers';
+function getMicrosoftTenantId(_env: Bindings): string {
+  return 'common';
 }
 
 function getMicrosoftRedirectUri(env: Bindings): string {
@@ -3813,10 +3841,15 @@ function buildMicrosoftAuthorizeUrl(params: {
   return url.toString();
 }
 
-async function createMicrosoftOauthState(username: string, secret: string): Promise<string> {
+async function createMicrosoftOauthState(
+  username: string,
+  secret: string,
+  mode: 'popup' | 'redirect'
+): Promise<string> {
   const payload: MicrosoftOauthStatePayload = {
     username,
-    exp: Math.floor(Date.now() / 1000) + MICROSOFT_OAUTH_STATE_MAX_AGE_SECONDS
+    exp: Math.floor(Date.now() / 1000) + MICROSOFT_OAUTH_STATE_MAX_AGE_SECONDS,
+    mode
   };
 
   const encodedPayload = encodeBase64UrlText(JSON.stringify(payload));
@@ -3842,7 +3875,11 @@ async function verifyMicrosoftOauthState(token: string, secret: string): Promise
     return null;
   }
 
-  if (typeof payload.username !== 'string' || typeof payload.exp !== 'number') {
+  if (
+    typeof payload.username !== 'string'
+    || typeof payload.exp !== 'number'
+    || (payload.mode !== 'popup' && payload.mode !== 'redirect')
+  ) {
     return null;
   }
 
@@ -3852,7 +3889,8 @@ async function verifyMicrosoftOauthState(token: string, secret: string): Promise
 
   return {
     username: payload.username,
-    exp: payload.exp
+    exp: payload.exp,
+    mode: payload.mode
   };
 }
 
@@ -3868,10 +3906,60 @@ function buildMicrosoftOauthResultUrl(params: { ok: boolean; message?: string; a
   return `${url.pathname}${url.search}`;
 }
 
+function buildMicrosoftOauthPopupHtml(c: Context<{ Bindings: Bindings; Variables: Variables }>, params: {
+  ok: boolean;
+  message?: string;
+  account?: string;
+}): string {
+  const payload = JSON.stringify({
+    source: 'microsoft-oauth',
+    ok: params.ok,
+    message: params.message ?? '',
+    account: params.account ?? ''
+  });
+  const fallbackUrl = JSON.stringify(new URL(buildMicrosoftOauthResultUrl(params), c.req.url).toString());
+  const targetOrigin = JSON.stringify(new URL(c.req.url).origin);
+  const title = params.ok ? 'OAuth 登录成功' : 'OAuth 登录失败';
+  const detail = params.ok ? '授权结果已回传，窗口即将关闭。' : (params.message || '授权失败，请返回原页面查看。');
+
+  return `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${escapeHtml(title)}</title>
+  </head>
+  <body>
+    <p>${escapeHtml(detail)}</p>
+    <script>
+      (function () {
+        var payload = ${payload};
+        var targetOrigin = ${targetOrigin};
+        var fallbackUrl = ${fallbackUrl};
+        try {
+          if (window.opener && !window.opener.closed) {
+            window.opener.postMessage(payload, targetOrigin);
+            window.close();
+            return;
+          }
+        } catch (error) {
+        }
+        window.location.replace(fallbackUrl);
+      })();
+    </script>
+  </body>
+</html>`;
+}
+
 function redirectMicrosoftOauthResult(
   c: Context<{ Bindings: Bindings; Variables: Variables }>,
-  params: { ok: boolean; message?: string; account?: string }
+  params: { ok: boolean; message?: string; account?: string },
+  verified?: MicrosoftOauthStatePayload | null
 ): Response {
+  if (verified?.mode === 'popup') {
+    return c.html(buildMicrosoftOauthPopupHtml(c, params));
+  }
+
   const target = new URL(buildMicrosoftOauthResultUrl(params), c.req.url);
   return c.redirect(target.toString(), 302);
 }
