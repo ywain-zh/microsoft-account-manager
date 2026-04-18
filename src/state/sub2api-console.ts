@@ -14,6 +14,7 @@ import type {
 const { message } = createDiscreteApi(['message']);
 const SUB2API_MODEL_ID = 'gpt-5.4';
 const MAX_LOG_ITEMS = 1200;
+const ABNORMAL_ACCOUNTS_PAGE_SIZE = 10;
 
 function createDefaultConfig(): Sub2ApiConfig {
   return {
@@ -50,6 +51,9 @@ const configLoaded = ref(false);
 const configSaving = ref(false);
 const runLoading = ref(false);
 const deleteLoading = ref(false);
+const showAbnormalAccountsModal = ref(false);
+const abnormalAccountsPage = ref(1);
+const abnormalDeletingAccountIds = ref<number[]>([]);
 
 const storedConfig = reactive<Sub2ApiConfig>(createDefaultConfig());
 const configForm = reactive<Sub2ApiConfig>(createDefaultConfig());
@@ -65,6 +69,23 @@ const hasConfiguredSub2Api = computed(() => {
 
 const hasUnauthorizedCandidates = computed(() => {
   return unauthorizedCandidates.value.length > 0;
+});
+
+const hasAbnormalCandidates = computed(() => {
+  return abnormalCandidates.value.length > 0;
+});
+
+const abnormalCandidatesTotal = computed(() => {
+  return abnormalCandidates.value.length;
+});
+
+const abnormalAccountsTotalPages = computed(() => {
+  return Math.max(1, Math.ceil(abnormalCandidatesTotal.value / ABNORMAL_ACCOUNTS_PAGE_SIZE));
+});
+
+const pagedAbnormalCandidates = computed(() => {
+  const start = (abnormalAccountsPage.value - 1) * ABNORMAL_ACCOUNTS_PAGE_SIZE;
+  return abnormalCandidates.value.slice(start, start + ABNORMAL_ACCOUNTS_PAGE_SIZE);
 });
 
 let initialLoadPromise: Promise<void> | null = null;
@@ -134,6 +155,8 @@ function clearLogs(): void {
 function resetDetectedIssues(): void {
   unauthorizedCandidates.value = [];
   abnormalCandidates.value = [];
+  closeAbnormalAccountsModal();
+  abnormalDeletingAccountIds.value = [];
 }
 
 function appendLog(payload: Partial<Sub2ApiDetectionLogItem>): void {
@@ -210,6 +233,133 @@ function trimIssueReason(messageText: string, prefix: string): string {
 
 function resolveIssueLabel(item: Pick<Sub2ApiDetectedIssueItem, 'accountId' | 'accountName'>): string {
   return item.accountName?.trim() || `账号 ID ${item.accountId}`;
+}
+
+function openAbnormalAccountsModal(): void {
+  if (!hasAbnormalCandidates.value) {
+    return;
+  }
+
+  abnormalAccountsPage.value = 1;
+  showAbnormalAccountsModal.value = true;
+}
+
+function closeAbnormalAccountsModal(): void {
+  showAbnormalAccountsModal.value = false;
+  abnormalAccountsPage.value = 1;
+}
+
+function setAbnormalAccountsPage(page: number): void {
+  abnormalAccountsPage.value = Math.min(Math.max(1, page), abnormalAccountsTotalPages.value);
+}
+
+function ensureAbnormalAccountsPageInRange(): void {
+  abnormalAccountsPage.value = Math.min(abnormalAccountsPage.value, abnormalAccountsTotalPages.value);
+}
+
+function removeDetectedIssues(target: { value: Sub2ApiDetectedIssueItem[] }, accountIds: number[]): void {
+  if (accountIds.length === 0) {
+    return;
+  }
+
+  const deletedIds = new Set(accountIds);
+  target.value = target.value.filter((item) => !deletedIds.has(item.accountId));
+}
+
+function syncSummaryAfterDelete(deletedCount: number, category: 'unauthorized' | 'abnormal'): void {
+  if (deletedCount <= 0) {
+    return;
+  }
+
+  summary.totalAccounts = Math.max(0, summary.totalAccounts - deletedCount);
+  summary.processedAccounts = Math.min(summary.processedAccounts, summary.totalAccounts);
+  progress.totalAccounts = summary.totalAccounts;
+  progress.processedAccounts = Math.min(progress.processedAccounts, progress.totalAccounts);
+
+  if (category === 'unauthorized') {
+    summary.unauthorizedAccounts = Math.max(0, summary.unauthorizedAccounts - deletedCount);
+    return;
+  }
+
+  summary.abnormalAccounts = Math.max(0, summary.abnormalAccounts - deletedCount);
+}
+
+async function deleteDetectedAccountsByIds(
+  accountIds: number[],
+  options: {
+    source: 'unauthorized' | 'abnormal';
+    candidates: Sub2ApiDetectedIssueItem[];
+    startMessage: string;
+    completeMessage: string;
+    successMessage: string;
+    emptyMessage: string;
+    skippedMessage: string;
+  }
+): Promise<Sub2ApiDeleteAccountsResponse | null> {
+  const candidates = options.candidates.filter((item) => accountIds.includes(item.accountId) && item.accountId > 0);
+  if (candidates.length === 0) {
+    message.warning(options.emptyMessage);
+    return null;
+  }
+
+  appendLog({
+    level: 'warning',
+    message: options.startMessage
+  });
+
+  const result = await api.deleteSub2ApiAccounts({
+    accountIds: candidates.map((item) => item.accountId)
+  });
+
+  const candidateMap = new Map<number, Sub2ApiDetectedIssueItem>(
+    candidates.map((item) => [item.accountId, item])
+  );
+  const deletedIds = new Set<number>();
+
+  for (const detail of result.details) {
+    const candidate = candidateMap.get(detail.accountId);
+    const label = resolveIssueLabel({
+      accountId: detail.accountId,
+      accountName: candidate?.accountName ?? null
+    });
+
+    appendLog({
+      level: detail.ok ? 'success' : 'warning',
+      message: detail.ok
+        ? `[${label}] 删除完成：${detail.message}`
+        : `[${label}] 删除失败：${detail.message}`,
+      accountId: detail.accountId,
+      accountName: candidate?.accountName ?? null
+    });
+
+    if (detail.ok) {
+      deletedIds.add(detail.accountId);
+    }
+  }
+
+  if (deletedIds.size > 0) {
+    const deletedIdList = Array.from(deletedIds);
+    removeDetectedIssues(unauthorizedCandidates, deletedIdList);
+    removeDetectedIssues(abnormalCandidates, deletedIdList);
+    syncSummaryAfterDelete(deletedIds.size, options.source);
+    ensureAbnormalAccountsPageInRange();
+  }
+
+  appendLog({
+    level: result.skipped > 0 ? 'warning' : 'success',
+    message:
+      result.skipped > 0
+        ? `${options.completeMessage}：成功删除 ${result.deleted}/${result.total} 个，剩余 ${result.skipped} 个未删除`
+        : `${options.completeMessage}：成功删除 ${result.deleted}/${result.total} 个`
+  });
+
+  if (result.deleted > 0) {
+    message.success(options.successMessage.replace('{deleted}', String(result.deleted)).replace('{total}', String(result.total)));
+  } else {
+    message.warning(options.skippedMessage);
+  }
+
+  return result;
 }
 
 async function loadConfig(): Promise<void> {
@@ -321,23 +471,18 @@ async function clearUnauthorizedAccounts(): Promise<void> {
 
   deleteLoading.value = true;
   try {
-    appendLog({
-      level: 'warning',
-      message: `开始清除 ${candidates.length} 个 401 账号`
-    });
-
-    const result = await api.deleteSub2ApiAccounts({
-      accountIds: candidates.map((item) => item.accountId)
-    });
-
-    applyUnauthorizedDeleteResult(result, candidates);
-
-    if (result.deleted > 0) {
-      message.success(`401 账号清理完成：成功删除 ${result.deleted}/${result.total} 个`);
-      return;
-    }
-
-    message.warning('没有 401 账号被删除');
+    await deleteDetectedAccountsByIds(
+      candidates.map((item) => item.accountId),
+      {
+        source: 'unauthorized',
+        candidates,
+        startMessage: `开始清除 ${candidates.length} 个 401 账号`,
+        completeMessage: '401 清理完成',
+        successMessage: '401 账号清理完成：成功删除 {deleted}/{total} 个',
+        emptyMessage: '当前没有可清除的 401 账号',
+        skippedMessage: '没有 401 账号被删除'
+      }
+    );
   } catch (error) {
     handleApiError(error);
   } finally {
@@ -345,54 +490,44 @@ async function clearUnauthorizedAccounts(): Promise<void> {
   }
 }
 
-function applyUnauthorizedDeleteResult(
-  result: Sub2ApiDeleteAccountsResponse,
-  candidates: Sub2ApiDetectedIssueItem[]
-): void {
-  const candidateMap = new Map<number, Sub2ApiDetectedIssueItem>(
-    candidates.map((item) => [item.accountId, item])
+async function deleteAbnormalAccount(item: Sub2ApiDetectedIssueItem): Promise<void> {
+  if (item.accountId <= 0) {
+    message.warning('异常账号信息不完整，无法删除');
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `确认删除异常账号 ${resolveIssueLabel(item)}？此操作会直接从 Sub2API 账户管理中删除，且不可恢复！`
   );
-  const deletedIds = new Set<number>();
-
-  for (const detail of result.details) {
-    const candidate = candidateMap.get(detail.accountId);
-    const label = resolveIssueLabel({
-      accountId: detail.accountId,
-      accountName: candidate?.accountName ?? null
-    });
-
-    appendLog({
-      level: detail.ok ? 'success' : 'warning',
-      message: detail.ok
-        ? `[${label}] 删除完成：${detail.message}`
-        : `[${label}] 删除失败：${detail.message}`,
-      accountId: detail.accountId,
-      accountName: candidate?.accountName ?? null
-    });
-
-    if (detail.ok) {
-      deletedIds.add(detail.accountId);
-    }
+  if (!confirmed) {
+    return;
   }
 
-  if (deletedIds.size > 0) {
-    unauthorizedCandidates.value = unauthorizedCandidates.value.filter(
-      (item) => !deletedIds.has(item.accountId)
-    );
-    summary.totalAccounts = Math.max(0, summary.totalAccounts - deletedIds.size);
-    summary.processedAccounts = Math.min(summary.processedAccounts, summary.totalAccounts);
-    summary.unauthorizedAccounts = Math.max(0, summary.unauthorizedAccounts - deletedIds.size);
-    progress.totalAccounts = summary.totalAccounts;
-    progress.processedAccounts = Math.min(progress.processedAccounts, progress.totalAccounts);
+  if (abnormalDeletingAccountIds.value.includes(item.accountId)) {
+    return;
   }
 
-  appendLog({
-    level: result.skipped > 0 ? 'warning' : 'success',
-    message:
-      result.skipped > 0
-        ? `401 清理完成：成功删除 ${result.deleted}/${result.total} 个，剩余 ${result.skipped} 个未删除`
-        : `401 清理完成：成功删除 ${result.deleted}/${result.total} 个`
-  });
+  abnormalDeletingAccountIds.value = [...abnormalDeletingAccountIds.value, item.accountId];
+
+  try {
+    await deleteDetectedAccountsByIds([item.accountId], {
+      source: 'abnormal',
+      candidates: abnormalCandidates.value,
+      startMessage: `开始删除异常账号 ${resolveIssueLabel(item)}`,
+      completeMessage: '异常账号清理完成',
+      successMessage: '异常账号删除完成：成功删除 {deleted}/{total} 个',
+      emptyMessage: '当前没有可删除的异常账号',
+      skippedMessage: '异常账号未删除'
+    });
+  } catch (error) {
+    handleApiError(error);
+  } finally {
+    abnormalDeletingAccountIds.value = abnormalDeletingAccountIds.value.filter((id) => id !== item.accountId);
+  }
+}
+
+function isDeletingAbnormalAccount(accountId: number): boolean {
+  return abnormalDeletingAccountIds.value.includes(accountId);
 }
 
 async function consumeEventStream(response: Response): Promise<void> {
@@ -530,6 +665,9 @@ export function useSub2ApiConsole() {
     configSaving,
     runLoading,
     deleteLoading,
+    showAbnormalAccountsModal,
+    abnormalAccountsPage,
+    abnormalAccountsPageSize: ABNORMAL_ACCOUNTS_PAGE_SIZE,
     storedConfig,
     configForm,
     summary,
@@ -537,15 +675,24 @@ export function useSub2ApiConsole() {
     logs,
     unauthorizedCandidates,
     abnormalCandidates,
+    pagedAbnormalCandidates,
+    abnormalCandidatesTotal,
+    abnormalAccountsTotalPages,
     modelId: SUB2API_MODEL_ID,
     hasConfiguredSub2Api,
     hasUnauthorizedCandidates,
+    hasAbnormalCandidates,
     loadConfig,
     loadInitialData,
     saveConfig,
     clearLogs,
+    openAbnormalAccountsModal,
+    closeAbnormalAccountsModal,
+    setAbnormalAccountsPage,
     startDetection,
     clearUnauthorizedAccounts,
+    deleteAbnormalAccount,
+    isDeletingAbnormalAccount,
     stopDetection
   };
 }

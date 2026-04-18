@@ -247,9 +247,9 @@
       :loading="mailLoading"
       :selected-mail-id="selectedMailId"
       :format-date="formatMailDate"
+      :on-copy="copyMailAccount"
       @update:show="handleMailVisibleChange"
       @select="selectMail"
-      @copy="copyMailAccount"
       @refresh="refreshMailInbox"
     />
   </div>

@@ -61,9 +61,18 @@
       </div>
 
       <div class="stats-grid">
-        <div v-for="item in summaryCards" :key="item.key" class="stat-card" :class="`c-${item.tone}`">
+        <div v-for="item in summaryCards" :key="item.key" class="stat-card" :class="[`c-${item.tone}`, item.clickable ? 'is-clickable' : '']">
           <div class="stat-title">{{ item.label }}</div>
-          <div class="stat-value">{{ item.value }}</div>
+          <button
+            v-if="item.clickable"
+            class="stat-value stat-value-button"
+            type="button"
+            :disabled="!item.enabled"
+            @click="item.onClick?.()"
+          >
+            {{ item.value }}
+          </button>
+          <div v-else class="stat-value">{{ item.value }}</div>
         </div>
       </div>
 
@@ -131,14 +140,71 @@
         </div>
       </template>
     </n-modal>
+
+    <n-modal
+      v-model:show="showAbnormalAccountsModal"
+      preset="card"
+      title="异常账号列表"
+      style="width: min(920px, 94vw); border-radius: 12px;"
+    >
+      <div class="abnormal-modal-body">
+        <div class="abnormal-modal-summary">
+          共 {{ abnormalCandidatesTotal }} 个异常账号，默认每页 {{ abnormalAccountsPageSize }} 条。
+        </div>
+
+        <div v-if="pagedAbnormalCandidates.length === 0" class="abnormal-empty">
+          当前没有异常账号。
+        </div>
+
+        <div v-else class="abnormal-table-wrap">
+          <table class="abnormal-table">
+            <thead>
+              <tr>
+                <th>账号</th>
+                <th>报错信息</th>
+                <th class="actions">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="item in pagedAbnormalCandidates" :key="item.accountId">
+                <td class="account-cell">{{ resolveIssueLabel(item) }}</td>
+                <td class="reason-cell">{{ item.reason }}</td>
+                <td class="actions">
+                  <n-button
+                    type="error"
+                    text
+                    :loading="isDeletingAbnormalAccount(item.accountId)"
+                    :disabled="deleteLoading"
+                    @click="deleteAbnormalAccount(item)"
+                  >
+                    删除
+                  </n-button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <template #footer>
+        <div class="abnormal-modal-footer">
+          <n-pagination
+            v-if="abnormalCandidatesTotal > abnormalAccountsPageSize"
+            :page="abnormalAccountsPage"
+            :page-count="abnormalAccountsTotalPages"
+            @update:page="setAbnormalAccountsPage"
+          />
+          <n-button @click="closeAbnormalAccountsModal">关闭</n-button>
+        </div>
+      </template>
+    </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { NButton, NCard, NForm, NFormItem, NInput, NModal } from 'naive-ui';
+import { NButton, NCard, NForm, NFormItem, NInput, NModal, NPagination } from 'naive-ui';
 import { useSub2ApiConsole } from '../state/sub2api-console';
-import type { Sub2ApiLogLevel } from '../types';
+import type { Sub2ApiDetectedIssueItem, Sub2ApiLogLevel } from '../types';
 
 const sub2api = useSub2ApiConsole();
 const {
@@ -151,14 +217,26 @@ const {
   progress,
   logs,
   unauthorizedCandidates,
+  pagedAbnormalCandidates,
+  abnormalCandidatesTotal,
+  abnormalAccountsTotalPages,
+  abnormalAccountsPage,
+  abnormalAccountsPageSize,
   modelId,
   hasConfiguredSub2Api,
   hasUnauthorizedCandidates,
+  hasAbnormalCandidates,
+  showAbnormalAccountsModal,
   loadInitialData,
   saveConfig,
   clearLogs,
+  openAbnormalAccountsModal,
+  closeAbnormalAccountsModal,
+  setAbnormalAccountsPage,
   startDetection,
   clearUnauthorizedAccounts,
+  deleteAbnormalAccount,
+  isDeletingAbnormalAccount,
   stopDetection
 } = sub2api;
 
@@ -230,7 +308,10 @@ const summaryCards = computed(() => {
       key: 'abnormalAccounts',
       label: '异常账号数',
       value: summary.abnormalAccounts,
-      tone: 'red'
+      tone: 'red',
+      clickable: true,
+      enabled: hasAbnormalCandidates.value,
+      onClick: openAbnormalAccountsModal
     }
   ];
 });
@@ -266,6 +347,10 @@ function resolveLevelBadgeTone(level: Sub2ApiLogLevel): 'ok' | 'warn' | 'info' {
   }
 
   return 'info';
+}
+
+function resolveIssueLabel(item: Pick<Sub2ApiDetectedIssueItem, 'accountId' | 'accountName'>): string {
+  return item.accountName?.trim() || `账号 ID ${item.accountId}`;
 }
 
 async function handleSaveConfig(): Promise<void> {
@@ -466,6 +551,10 @@ onBeforeUnmount(() => {
   background-color: #ef4444;
 }
 
+.stat-card.is-clickable {
+  border-color: #dbeafe;
+}
+
 .stat-title {
   font-size: 12px;
   color: #475569;
@@ -479,6 +568,24 @@ onBeforeUnmount(() => {
   font-weight: 600;
   color: #1e293b;
   font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.stat-value-button {
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  color: #2563eb;
+  transition: color 0.2s ease;
+}
+
+.stat-value-button:hover:not(:disabled) {
+  color: #1d4ed8;
+}
+
+.stat-value-button:disabled {
+  color: #94a3b8;
+  cursor: not-allowed;
 }
 
 .log-section {
@@ -608,6 +715,82 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
+.abnormal-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.abnormal-modal-summary {
+  font-size: 13px;
+  color: #64748b;
+}
+
+.abnormal-empty {
+  border: 1px dashed #dbe3f0;
+  border-radius: 10px;
+  padding: 32px 16px;
+  text-align: center;
+  color: #94a3b8;
+  background: #f8fafc;
+}
+
+.abnormal-table-wrap {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.abnormal-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  background: #fff;
+}
+
+.abnormal-table th,
+.abnormal-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid #eef2f7;
+  text-align: left;
+  vertical-align: top;
+}
+
+.abnormal-table th {
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+  background: #f8fafc;
+}
+
+.abnormal-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.abnormal-table .account-cell {
+  width: 220px;
+  color: #0f172a;
+  word-break: break-all;
+}
+
+.abnormal-table .reason-cell {
+  color: #334155;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.abnormal-table .actions {
+  width: 96px;
+  text-align: right;
+}
+
+.abnormal-modal-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
 @media (max-width: 1440px) {
   .stats-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -622,6 +805,11 @@ onBeforeUnmount(() => {
   .log-section-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .abnormal-modal-footer {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 
@@ -643,6 +831,30 @@ onBeforeUnmount(() => {
     display: block;
     margin-left: 0;
     margin-top: 6px;
+  }
+
+  .abnormal-table,
+  .abnormal-table thead,
+  .abnormal-table tbody,
+  .abnormal-table tr,
+  .abnormal-table th,
+  .abnormal-table td {
+    display: block;
+  }
+
+  .abnormal-table thead {
+    display: none;
+  }
+
+  .abnormal-table td {
+    width: 100%;
+    text-align: left;
+    padding: 12px 14px;
+  }
+
+  .abnormal-table .actions {
+    width: 100%;
+    text-align: left;
   }
 }
 </style>

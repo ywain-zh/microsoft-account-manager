@@ -470,37 +470,39 @@ function handleCheckedRowKeysUpdate(keys: Array<string | number>): void {
     .filter((value) => Number.isInteger(value) && value > 0);
 }
 
-async function copyText(value: string, successMessage: string): Promise<void> {
+async function copyText(value: string, successMessage: string): Promise<boolean> {
   const text = value.trim();
   if (!text) {
     message.warning('当前没有可复制的内容');
-    return;
+    return false;
   }
 
   try {
     const copied = await copyToClipboard(text);
     if (!copied) {
       message.error('复制失败，请检查浏览器权限');
-      return;
+      return false;
     }
 
     message.success(successMessage);
+    return true;
   } catch {
     message.error('复制失败，请检查浏览器权限');
+    return false;
   }
 }
 
-async function copyEmail(email: string): Promise<void> {
-  await copyText(email, '邮箱已复制');
+async function copyEmail(email: string): Promise<boolean> {
+  return copyText(email, '邮箱已复制');
 }
 
-async function copyMailAccount(): Promise<void> {
+async function copyMailAccount(): Promise<boolean> {
   if (!mailAccount.value.trim()) {
     message.warning('请先打开一个邮箱收件箱');
-    return;
+    return false;
   }
 
-  await copyText(mailAccount.value, '邮箱已复制');
+  return copyText(mailAccount.value, '邮箱已复制');
 }
 
 async function loadMailMessages(email: string, openModal = true): Promise<void> {

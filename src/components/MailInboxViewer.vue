@@ -20,7 +20,7 @@
               type="button"
               title="复制邮箱"
               aria-label="复制邮箱"
-              :disabled="!account"
+              :disabled="!account || copyLoading"
               :class="{ 'btn-small-action-success': copyFeedbackVisible }"
               @click="handleCopy"
             >
@@ -185,6 +185,7 @@ interface MailInboxViewerProps {
   loading: boolean;
   selectedMailId: string;
   formatDate: (value: string) => string;
+  onCopy?: () => boolean | Promise<boolean>;
 }
 
 const props = defineProps<MailInboxViewerProps>();
@@ -192,7 +193,6 @@ const props = defineProps<MailInboxViewerProps>();
 const emit = defineEmits<{
   (event: 'update:show', value: boolean): void;
   (event: 'select', id: string): void;
-  (event: 'copy'): void;
   (event: 'refresh'): void;
 }>();
 
@@ -202,6 +202,7 @@ const selectedMail = computed(() => {
 
 const renderedMail = computed(() => buildMailPreview(selectedMail.value));
 const copyFeedbackVisible = ref(false);
+const copyLoading = ref(false);
 let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
 
 watch(
@@ -221,20 +222,36 @@ function handleShowUpdate(value: boolean): void {
   emit('update:show', value);
 }
 
-function handleCopy(): void {
-  emit('copy');
-  copyFeedbackVisible.value = true;
-  if (copyFeedbackTimer) {
-    clearTimeout(copyFeedbackTimer);
+async function handleCopy(): Promise<void> {
+  if (copyLoading.value || !props.onCopy) {
+    return;
   }
-  copyFeedbackTimer = setTimeout(() => {
-    copyFeedbackVisible.value = false;
-    copyFeedbackTimer = null;
-  }, 2000);
+
+  copyLoading.value = true;
+
+  try {
+    const copied = await props.onCopy();
+    if (!copied) {
+      resetCopyFeedback();
+      return;
+    }
+
+    copyFeedbackVisible.value = true;
+    if (copyFeedbackTimer) {
+      clearTimeout(copyFeedbackTimer);
+    }
+    copyFeedbackTimer = setTimeout(() => {
+      copyFeedbackVisible.value = false;
+      copyFeedbackTimer = null;
+    }, 2000);
+  } finally {
+    copyLoading.value = false;
+  }
 }
 
 function resetCopyFeedback(): void {
   copyFeedbackVisible.value = false;
+  copyLoading.value = false;
   if (copyFeedbackTimer) {
     clearTimeout(copyFeedbackTimer);
     copyFeedbackTimer = null;

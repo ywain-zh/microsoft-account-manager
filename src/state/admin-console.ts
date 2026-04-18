@@ -557,18 +557,18 @@ async function copyText(value: string, successMessage: string): Promise<boolean>
   }
 }
 
-async function copyAccountValue(account: string): Promise<void> {
-  await copyText(account, '邮箱已复制');
+async function copyAccountValue(account: string): Promise<boolean> {
+  return copyText(account, '邮箱已复制');
 }
 
-async function copyMailAccount(): Promise<void> {
+async function copyMailAccount(): Promise<boolean> {
   const account = mailAccount.value.trim();
   if (!account) {
     message.warning('当前没有可复制的邮箱');
-    return;
+    return false;
   }
 
-  await copyText(account, '邮箱已复制');
+  return copyText(account, '邮箱已复制');
 }
 
 async function refreshMailInbox(): Promise<void> {

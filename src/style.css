@@ -2935,13 +2935,16 @@ body {
 
 .console-shell-flat {
   display: flex;
+  height: 100vh;
   min-height: 100vh;
   background: #f4f6f8;
+  overflow: hidden;
 }
 
 .console-sidebar-flat {
   width: 240px;
   flex: none;
+  height: 100vh;
   display: flex;
   flex-direction: column;
   background: #ffffff;
@@ -3027,6 +3030,9 @@ body {
 .console-main-flat {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  height: 100vh;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
@@ -3084,18 +3090,35 @@ body {
 .console-content-flat {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 24px;
 }
 
 @media (max-width: 960px) {
   .console-shell-flat {
     display: block;
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
   }
 
   .console-sidebar-flat {
     width: 100%;
+    height: auto;
     box-shadow: none;
     border-bottom: 1px solid #f1f5f9;
+  }
+
+  .console-main-flat {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .console-content-flat {
+    overflow: visible;
   }
 
   .console-nav-flat {
