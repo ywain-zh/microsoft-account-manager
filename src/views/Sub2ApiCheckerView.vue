@@ -85,6 +85,9 @@
               <template v-if="progress.currentAccountName">
                 ，当前账号 {{ progress.currentAccountName }}
               </template>
+              <template v-if="runLoading && progress.outcome === 'timeout'">
+                ，上一账号检测超时，已继续后续检测
+              </template>
             </span>
           </div>
           <span class="run-status" :class="runLoading ? 'is-running' : 'is-idle'">

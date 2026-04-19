@@ -202,6 +202,15 @@ function captureDetectionIssue(item: Sub2ApiDetectionLogItem): void {
     return;
   }
 
+  if (messageText.startsWith('检测超时：')) {
+    upsertDetectedIssue(abnormalCandidates, {
+      accountId: item.accountId,
+      accountName: item.accountName ?? null,
+      reason: trimIssueReason(messageText, '检测超时：')
+    });
+    return;
+  }
+
   if (messageText.startsWith('检测异常：')) {
     upsertDetectedIssue(abnormalCandidates, {
       accountId: item.accountId,

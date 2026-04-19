@@ -98,7 +98,7 @@ interface Sub2ApiConfig {
 }
 
 type Sub2ApiPlanType = 'free' | 'plus' | 'team' | '';
-type Sub2ApiDetectionOutcome = 'success' | 'quota' | 'unauthorized' | 'abnormal';
+type Sub2ApiDetectionOutcome = 'success' | 'quota' | 'unauthorized' | 'timeout' | 'abnormal';
 type Sub2ApiLogLevel = 'info' | 'success' | 'warning' | 'error';
 
 interface Sub2ApiAccountItem {
@@ -149,6 +149,8 @@ interface Sub2ApiDeleteAccountDetail {
   ok: boolean;
   message: string;
 }
+
+const SUB2API_ACCOUNT_TEST_TIMEOUT_MS = 45000;
 
 interface MicrosoftOauthStatePayload {
   username: string;
@@ -1773,7 +1775,10 @@ async function fetchSub2Api(
       ...init,
       headers
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new HTTPException(504, { message: 'Sub2API 请求超时，请稍后重试' });
+    }
     throw new HTTPException(502, { message: 'Sub2API 服务连接失败，请检查地址' });
   }
 }
@@ -2074,28 +2079,47 @@ async function testSub2ApiAccount(
   account: Sub2ApiAccountItem,
   onLog: (level: Sub2ApiLogLevel, message: string) => void
 ): Promise<Sub2ApiTestResult> {
-  const response = await fetchSub2Api(config, `/api/v1/admin/accounts/${account.id}/test`, {
-    method: 'POST',
-    body: JSON.stringify({
-      model_id: SUB2API_TEST_MODEL
-    })
-  });
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => {
+    abortController.abort();
+  }, SUB2API_ACCOUNT_TEST_TIMEOUT_MS);
 
-  if (!response.ok) {
-    const rawText = await response.text();
-    const reason = resolveSub2ApiErrorMessage(response.status, rawText);
+  try {
+    const response = await fetchSub2Api(config, `/api/v1/admin/accounts/${account.id}/test`, {
+      method: 'POST',
+      body: JSON.stringify({
+        model_id: SUB2API_TEST_MODEL
+      }),
+      signal: abortController.signal
+    });
+
+    if (!response.ok) {
+      const rawText = await response.text();
+      const reason = resolveSub2ApiErrorMessage(response.status, rawText);
+      return {
+        outcome: classifySub2ApiFailure(reason),
+        reason,
+        planType: account.planType
+      };
+    }
+
+    const result = await consumeSub2ApiTestStream(response, onLog);
     return {
-      outcome: classifySub2ApiFailure(reason),
-      reason,
+      ...result,
       planType: account.planType
     };
+  } catch (error) {
+    if (error instanceof HTTPException && error.status === 504) {
+      return {
+        outcome: 'timeout',
+        reason: `单账号检测超时（>${Math.floor(SUB2API_ACCOUNT_TEST_TIMEOUT_MS / 1000)} 秒）`,
+        planType: account.planType
+      };
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const result = await consumeSub2ApiTestStream(response, onLog);
-  return {
-    ...result,
-    planType: account.planType
-  };
 }
 
 async function consumeSub2ApiTestStream(
@@ -2184,12 +2208,21 @@ async function consumeSub2ApiTestStream(
       if (payloadText) {
         handleEventPayload(payloadText);
       }
+
+      if (failureReason || sawCompletion) {
+        await reader.cancel();
+        break;
+      }
+    }
+
+    if (failureReason || sawCompletion) {
+      break;
     }
   }
 
   buffer += decoder.decode();
   const tailPayload = extractSub2ApiEventData(buffer);
-  if (tailPayload) {
+  if (tailPayload && !failureReason && !sawCompletion) {
     handleEventPayload(tailPayload);
   }
 
@@ -2312,6 +2345,14 @@ function classifySub2ApiFailure(reason: string): Sub2ApiDetectionOutcome {
   }
 
   if (
+    normalized.includes('timeout') ||
+    normalized.includes('timed out') ||
+    normalized.includes('超时')
+  ) {
+    return 'timeout';
+  }
+
+  if (
     normalized.includes('429') ||
     normalized.includes('quota') ||
     normalized.includes('rate limit') ||
@@ -2382,6 +2423,10 @@ function formatSub2ApiResultMessage(result: Sub2ApiTestResult): string {
 
   if (result.outcome === 'unauthorized') {
     return `检测命中 401：${result.reason}`;
+  }
+
+  if (result.outcome === 'timeout') {
+    return `检测超时：${result.reason}`;
   }
 
   return `检测异常：${result.reason}`;

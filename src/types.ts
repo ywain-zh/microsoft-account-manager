@@ -77,7 +77,7 @@ export interface Sub2ApiConfig {
 }
 
 export type Sub2ApiPlanType = 'free' | 'plus' | 'team' | '';
-export type Sub2ApiDetectionOutcome = 'success' | 'quota' | 'unauthorized' | 'abnormal';
+export type Sub2ApiDetectionOutcome = 'success' | 'quota' | 'unauthorized' | 'timeout' | 'abnormal';
 export type Sub2ApiLogLevel = 'info' | 'success' | 'warning' | 'error';
 
 export interface Sub2ApiDetectionSummary {
