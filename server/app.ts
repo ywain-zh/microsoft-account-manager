@@ -3395,10 +3395,11 @@ async function refreshSeven79Card(db: D1Database, id: number): Promise<Seven79Ca
 
   try {
     const result = await fetchSeven79CardDetails(existing.cardKey);
+    const cardValidUntil = resolveSeven79CardValidUntil(result.check.expiryTime);
     await db
       .prepare(
         `UPDATE seven79_cards
-         SET status = ?, category = ?, check_expiry_time = ?, check_remaining_time_ms = ?, card_number = ?, expiry_date = ?, cvv = ?, phone = ?, sms_api = ?, holder_name = ?, address = ?, card_valid_until = DATETIME(CURRENT_TIMESTAMP, '+6 hours'), expires_at = ?, raw_check_json = ?, raw_verify_json = ?, error_message = NULL, last_checked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+         SET status = ?, category = ?, check_expiry_time = ?, check_remaining_time_ms = ?, card_number = ?, expiry_date = ?, cvv = ?, phone = ?, sms_api = ?, holder_name = ?, address = ?, card_valid_until = ?, expires_at = ?, raw_check_json = ?, raw_verify_json = ?, error_message = NULL, last_checked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`
       )
       .bind(
@@ -3413,6 +3414,7 @@ async function refreshSeven79Card(db: D1Database, id: number): Promise<Seven79Ca
         result.verify.smsApi,
         result.verify.holderName,
         result.verify.address,
+        cardValidUntil,
         result.verify.expiresAt,
         JSON.stringify(result.rawCheck),
         JSON.stringify(result.rawVerify),
@@ -3618,6 +3620,25 @@ function normalizeSeven79Verify(payload: unknown): Seven79VerifyResult {
     address: toNullableText(content.address),
     expiresAt: toNullableText(card.expires_at)
   };
+}
+
+function resolveSeven79CardValidUntil(expiryTime: string | null): string | null {
+  const text = toNullableText(expiryTime);
+  if (!text) {
+    return null;
+  }
+
+  const timestamp = Date.parse(text);
+  if (Number.isNaN(timestamp)) {
+    return null;
+  }
+
+  return formatSqliteDateTime(new Date(timestamp + 5 * 60 * 60 * 1000));
+}
+
+function formatSqliteDateTime(value: Date): string {
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())} ${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}`;
 }
 
 function extractRemoteErrorMessage(payload: unknown, status: number, fallback: string): string {

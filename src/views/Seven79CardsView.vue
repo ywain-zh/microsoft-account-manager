@@ -500,7 +500,7 @@ const ppImportVisible = ref(false);
 const importText = ref('');
 const ppImportText = ref('');
 const searchKeyword = ref('');
-const quickCheckKey = ref('A387E6EC0E1E4F76');
+const quickCheckKey = ref('');
 const quickCheckResult = ref<Seven79CheckResponse | null>(null);
 
 const items = ref<Seven79CardItem[]>([]);
