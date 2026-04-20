@@ -2937,83 +2937,87 @@ body {
   display: flex;
   height: 100vh;
   min-height: 100vh;
-  background: #f4f6f8;
+  background: #f8fafc;
   overflow: hidden;
 }
 
 .console-sidebar-flat {
-  width: 240px;
+  width: 220px;
   flex: none;
   height: 100vh;
   display: flex;
   flex-direction: column;
+  border-right: 1px solid #e2e8f0;
   background: #ffffff;
-  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.04);
 }
 
 .console-brand-flat {
   display: flex;
   align-items: center;
-  gap: 12px;
-  height: 58px;
-  padding: 0 12px;
-  border-bottom: 1px solid #f1f5f9;
+  gap: 8px;
+  min-height: 56px;
+  padding: 0 16px;
+  border-bottom: 1px solid #e2e8f0;
 }
 
 .console-brand-mark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  background: #409eff;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: #4f46e5;
   color: #ffffff;
-  font-size: 16px;
+  font-size: 11px;
   font-weight: 700;
+  box-shadow: none;
 }
 
 .console-brand-name {
-  color: #1e293b;
-  font-size: 16px;
-  font-weight: 600;
+  color: #4f46e5;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
 }
 
 .console-nav-flat {
   display: grid;
   gap: 4px;
-  padding: 16px 12px;
+  padding: 12px 8px;
 }
 
 .console-nav-link-flat {
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-height: 44px;
-  padding: 0 16px;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 12px;
   border-radius: 8px;
-  color: #1e293b;
+  color: #64748b;
   text-decoration: none;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 .console-nav-link-flat:hover {
-  color: #409eff;
-  background: #f8fafc;
+  color: #0f172a;
+  background: #f1f5f9;
+  transform: none;
 }
 
 .console-nav-link-flat-active {
-  color: #409eff;
-  background: #ecf5ff;
+  color: #4f46e5;
+  background: #eef2ff;
 }
 
 .console-nav-link-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   color: #94a3b8;
 }
 
@@ -3023,8 +3027,8 @@ body {
 }
 
 .console-nav-link-icon svg {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
 }
 
 .console-main-flat {
@@ -3041,50 +3045,39 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 58px;
-  padding: 0 24px;
+  gap: 16px;
+  min-height: 30px;
+  padding: 0 22px;
   background: #ffffff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.02);
+  border-bottom: 1px solid #e2e8f0;
 }
 
-.console-topbar-spacer {
-  flex: 1;
+.console-topbar-title {
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .console-topbar-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
-}
-
-.console-user-flat {
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
-  color: #1e293b;
-  font-size: 14px;
+  gap: 10px;
+  color: #64748b;
+  font-size: 12px;
   font-weight: 500;
 }
 
-.console-user-avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: #409eff;
-  color: #ffffff;
-  font-size: 14px;
-  font-weight: 700;
+.console-user-copy {
+  white-space: nowrap;
 }
 
 .header-logout-button-flat.n-button {
   --n-text-color: #94a3b8 !important;
-  --n-text-color-hover: #409eff !important;
-  --n-text-color-pressed: #409eff !important;
-  --n-text-color-focus: #409eff !important;
-  font-size: 13px;
+  --n-text-color-hover: #64748b !important;
+  --n-text-color-pressed: #64748b !important;
+  --n-text-color-focus: #64748b !important;
+  font-size: 12px;
 }
 
 .console-content-flat {
@@ -3093,7 +3086,7 @@ body {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 24px;
+  padding: 28px 30px;
 }
 
 @media (max-width: 960px) {
@@ -3107,8 +3100,8 @@ body {
   .console-sidebar-flat {
     width: 100%;
     height: auto;
-    box-shadow: none;
-    border-bottom: 1px solid #f1f5f9;
+    border-bottom: 1px solid #e2e8f0;
+    border-right: 0;
   }
 
   .console-main-flat {

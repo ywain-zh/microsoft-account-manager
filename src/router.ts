@@ -27,6 +27,16 @@ const router = createRouter({
       },
       children: [
         {
+          path: 'services/779/cards',
+          name: '779-cards',
+          component: () => import('./views/Seven79CardsView.vue'),
+          meta: {
+            requiresAuth: true,
+            title: '779验卡',
+            description: '导入 779 卡密，批量校验并提取卡片信息。'
+          }
+        },
+        {
           path: 'services/cloud-mail/accounts',
           name: 'cloud-mail-accounts',
           component: () => import('./views/CloudMailAccountsView.vue'),

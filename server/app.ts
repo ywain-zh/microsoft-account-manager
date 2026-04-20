@@ -45,6 +45,79 @@ interface AccountRow {
   tokenCheckedAt: string | null;
 }
 
+type Seven79CardStatus = 'pending' | 'checked' | 'expired' | 'failed';
+
+interface Seven79CardRow {
+  id: number;
+  cardKey: string;
+  status: Seven79CardStatus;
+  category: string | null;
+  checkExpiryTime: string | null;
+  checkRemainingTimeMs: number | null;
+  cardNumber: string | null;
+  expiryDate: string | null;
+  cvv: string | null;
+  phone: string | null;
+  smsApi: string | null;
+  holderName: string | null;
+  address: string | null;
+  cardValidUntil: string | null;
+  expiresAt: string | null;
+  errorMessage: string | null;
+  lastCheckedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface Seven79CheckResult {
+  category: string | null;
+  expiryTime: string | null;
+  remainingTimeMs: number | null;
+}
+
+interface Seven79VerifyResult {
+  cardNumber: string | null;
+  expiryDate: string | null;
+  cvv: string | null;
+  phone: string | null;
+  smsApi: string | null;
+  holderName: string | null;
+  address: string | null;
+  expiresAt: string | null;
+}
+
+type PpSmsStatus = 'active' | 'expired' | 'failed';
+
+interface PpSmsItemRow {
+  id: number;
+  fullPhone: string;
+  countryCode: string | null;
+  phoneNumber: string;
+  smsApi: string;
+  status: PpSmsStatus;
+  expiresAt: string | null;
+  lastCode: string | null;
+  lastMessage: string | null;
+  lastCheckedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface PpSmsParseResult {
+  fullPhone: string;
+  countryCode: string | null;
+  phoneNumber: string;
+  smsApi: string;
+}
+
+interface PpSmsFetchResult {
+  status: PpSmsStatus;
+  expiresAt: string | null;
+  code: string | null;
+  message: string;
+  raw: string;
+}
+
 interface AccountPayload {
   account: string;
   password: string;
@@ -285,6 +358,49 @@ const ACCOUNT_SELECT_SQL = `
     token_checked_at AS tokenCheckedAt
   FROM accounts
 `;
+
+const SEVEN79_CARD_SELECT_SQL = `
+  SELECT
+    id,
+    card_key AS cardKey,
+    status,
+    category,
+    check_expiry_time AS checkExpiryTime,
+    check_remaining_time_ms AS checkRemainingTimeMs,
+    card_number AS cardNumber,
+    expiry_date AS expiryDate,
+    cvv,
+    phone,
+    sms_api AS smsApi,
+    holder_name AS holderName,
+    address,
+    card_valid_until AS cardValidUntil,
+    expires_at AS expiresAt,
+    error_message AS errorMessage,
+    last_checked_at AS lastCheckedAt,
+    created_at AS createdAt,
+    updated_at AS updatedAt
+  FROM seven79_cards
+`;
+
+const PP_SMS_ITEM_SELECT_SQL = `
+  SELECT
+    id,
+    full_phone AS fullPhone,
+    country_code AS countryCode,
+    phone_number AS phoneNumber,
+    sms_api AS smsApi,
+    status,
+    expires_at AS expiresAt,
+    last_code AS lastCode,
+    last_message AS lastMessage,
+    last_checked_at AS lastCheckedAt,
+    created_at AS createdAt,
+    updated_at AS updatedAt
+  FROM pp_sms_items
+`;
+
+const SEVEN79_BASE_URL = 'https://card.779.chat';
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -728,6 +844,212 @@ app.post('/api/accounts/import', async (c) => {
   }
 
   return c.json({ inserted, skipped, errors });
+});
+
+app.get('/api/779/cards', async (c) => {
+  const keyword = asText(c.req.query('keyword')).trim();
+  const items = await querySeven79Cards(c.env.DB, keyword);
+  return c.json({ items });
+});
+
+app.post('/api/779/cards/import', async (c) => {
+  const body = await readJson<{ text?: string }>(c);
+  const text = asText(body.text).trim();
+  if (!text) {
+    throw new HTTPException(400, { message: '导入内容不能为空' });
+  }
+
+  const lines = text.split(/\r?\n/);
+  let inserted = 0;
+  let skipped = 0;
+  const errors: ParseErrorItem[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const raw = lines[index].trim();
+    if (!raw) {
+      continue;
+    }
+
+    try {
+      const result = await c.env.DB
+        .prepare(
+          `INSERT OR IGNORE INTO seven79_cards (card_key, status, created_at, updated_at)
+           VALUES (?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+        )
+        .bind(raw)
+        .run();
+
+      if ((result.meta.changes ?? 0) > 0) {
+        inserted += 1;
+      } else {
+        skipped += 1;
+      }
+    } catch (error) {
+      errors.push({
+        line: index + 1,
+        raw,
+        reason: error instanceof Error ? error.message : '数据库写入失败'
+      });
+    }
+  }
+
+  return c.json({ inserted, skipped, errors });
+});
+
+app.post('/api/779/cards/check', async (c) => {
+  const body = await readJson<{ key?: string }>(c);
+  const key = asText(body.key).trim();
+  if (!key) {
+    throw new HTTPException(400, { message: '卡密不能为空' });
+  }
+
+  const item = await ensureSeven79CardRefreshedByKey(c.env.DB, key);
+  const latest = await fetchSeven79CardDetails(key);
+
+  return c.json({
+    item,
+    check: latest.check,
+    verify: latest.verify
+  });
+});
+
+app.post('/api/779/cards/:id/extract', async (c) => {
+  const id = parseNumericId(c.req.param('id'));
+  const item = await refreshSeven79Card(c.env.DB, id);
+  return c.json({ item });
+});
+
+app.post('/api/779/cards/:id/fetch-code', async (c) => {
+  const id = parseNumericId(c.req.param('id'));
+  const { item, code, message } = await refreshSeven79CardSmsCode(c.env.DB, id);
+  return c.json({ item, code, message });
+});
+
+app.post('/api/779/cards/extract-all', async (c) => {
+  const body = await readJson<{ ids?: unknown }>(c);
+  const ids = Array.isArray(body.ids)
+    ? body.ids.map((value) => Number.parseInt(asText(value), 10)).filter((value) => Number.isInteger(value) && value > 0)
+    : [];
+
+  const targets = ids.length > 0 ? await querySeven79CardsByIds(c.env.DB, ids) : await querySeven79Cards(c.env.DB, '');
+  const items: Seven79CardRow[] = [];
+  let success = 0;
+  let failure = 0;
+
+  for (const target of targets) {
+    try {
+      const item = await refreshSeven79Card(c.env.DB, target.id);
+      items.push(item);
+      success += 1;
+    } catch {
+      const latest = await fetchSeven79CardById(c.env.DB, target.id);
+      if (latest) {
+        items.push(latest);
+      }
+      failure += 1;
+    }
+  }
+
+  return c.json({
+    total: targets.length,
+    success,
+    failure,
+    items
+  });
+});
+
+app.delete('/api/779/cards/:id', async (c) => {
+  const id = parseNumericId(c.req.param('id'));
+  const result = await c.env.DB.prepare('DELETE FROM seven79_cards WHERE id = ?').bind(id).run();
+
+  if ((result.meta.changes ?? 0) === 0) {
+    throw new HTTPException(404, { message: '卡密记录不存在' });
+  }
+
+  return c.json({ ok: true as const });
+});
+
+app.get('/api/779/pp-sms', async (c) => {
+  const items = await queryPpSmsItems(c.env.DB);
+  return c.json({ items });
+});
+
+app.post('/api/779/pp-sms/import', async (c) => {
+  const body = await readJson<{ text?: string }>(c);
+  const text = asText(body.text).trim();
+  if (!text) {
+    throw new HTTPException(400, { message: '导入内容不能为空' });
+  }
+
+  const lines = text.split(/\r?\n/);
+  let inserted = 0;
+  let skipped = 0;
+  const errors: ParseErrorItem[] = [];
+  const touchedIds: number[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const raw = lines[index].trim();
+    if (!raw) {
+      continue;
+    }
+
+    try {
+      const parsed = parsePpSmsImportLine(raw);
+      const existing = await c.env.DB
+        .prepare('SELECT id FROM pp_sms_items WHERE full_phone = ? OR sms_api = ? LIMIT 1')
+        .bind(parsed.fullPhone, parsed.smsApi)
+        .first<{ id: number }>();
+
+      if (existing) {
+        skipped += 1;
+        touchedIds.push(existing.id);
+        continue;
+      }
+
+      const result = await c.env.DB
+        .prepare(
+          `INSERT INTO pp_sms_items (full_phone, country_code, phone_number, sms_api, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+        )
+        .bind(parsed.fullPhone, parsed.countryCode, parsed.phoneNumber, parsed.smsApi)
+        .run();
+
+      const newId = Number(result.meta.last_row_id ?? 0);
+      if (newId > 0) {
+        inserted += 1;
+        touchedIds.push(newId);
+        await refreshPpSmsItem(c.env.DB, newId);
+      } else {
+        skipped += 1;
+      }
+    } catch (error) {
+      errors.push({
+        line: index + 1,
+        raw,
+        reason: getErrorMessage(error)
+      });
+    }
+  }
+
+  const items = touchedIds.length > 0 ? await queryPpSmsItemsByIds(c.env.DB, touchedIds) : [];
+  return c.json({ inserted, skipped, errors, items });
+});
+
+app.post('/api/779/pp-sms/:id/fetch-code', async (c) => {
+  const id = parseNumericId(c.req.param('id'));
+  const { item, code, message } = await refreshPpSmsItem(c.env.DB, id);
+  return c.json({ item, code, message });
+});
+
+app.delete('/api/779/pp-sms/:id', async (c) => {
+  const id = parseNumericId(c.req.param('id'));
+  const result = await c.env.DB.prepare('DELETE FROM pp_sms_items WHERE id = ?').bind(id).run();
+
+  if ((result.meta.changes ?? 0) === 0) {
+    throw new HTTPException(404, { message: 'PP 接码记录不存在' });
+  }
+
+  return c.json({ ok: true as const });
 });
 
 app.post('/api/accounts/refresh', async (c) => {
@@ -1255,6 +1577,10 @@ function asText(value: unknown): string {
   return String(value);
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof HTTPException) {
     return error.message;
@@ -1270,6 +1596,15 @@ function getErrorMessage(error: unknown): string {
 function toNullableText(value: unknown): string | null {
   const text = asText(value).trim();
   return text ? text : null;
+}
+
+function toNullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
 }
 
 function isUniqueConstraintError(error: unknown): boolean {
@@ -2938,6 +3273,21 @@ function serializeAccountRow(row: AccountRow): AccountRow & {
   };
 }
 
+function serializeSeven79CardRow(row: Seven79CardRow): Seven79CardRow {
+  if (row.status === 'failed' && isSeven79ExpiredMessage(row.errorMessage || '')) {
+    return {
+      ...row,
+      status: 'expired'
+    };
+  }
+
+  return row;
+}
+
+function serializePpSmsItemRow(row: PpSmsItemRow): PpSmsItemRow {
+  return row;
+}
+
 function calculateTokenCountdownDays(tokenBaseAt: string | null): number | null {
   if (!tokenBaseAt) {
     return null;
@@ -2950,6 +3300,507 @@ function calculateTokenCountdownDays(tokenBaseAt: string | null): number | null 
 
   const elapsedDays = Math.max(0, Math.floor((Date.now() - baseAt.getTime()) / (24 * 60 * 60 * 1000)));
   return Math.max(0, TOKEN_LIFETIME_DAYS - elapsedDays);
+}
+
+async function querySeven79Cards(db: D1Database, keyword: string): Promise<Seven79CardRow[]> {
+  let statement: D1PreparedStatement;
+
+  if (keyword) {
+    const like = `%${keyword}%`;
+    statement = db
+      .prepare(`${SEVEN79_CARD_SELECT_SQL} WHERE card_key LIKE ? OR IFNULL(card_number, '') LIKE ? OR IFNULL(phone, '') LIKE ? ORDER BY id DESC`)
+      .bind(like, like, like);
+  } else {
+    statement = db.prepare(`${SEVEN79_CARD_SELECT_SQL} ORDER BY id DESC`);
+  }
+
+  const result = await statement.all<Seven79CardRow>();
+  return result.results.map(serializeSeven79CardRow);
+}
+
+async function querySeven79CardsByIds(db: D1Database, ids: number[]): Promise<Seven79CardRow[]> {
+  if (ids.length === 0) {
+    return [];
+  }
+
+  const placeholders = ids.map(() => '?').join(',');
+  const result = await db
+    .prepare(`${SEVEN79_CARD_SELECT_SQL} WHERE id IN (${placeholders}) ORDER BY id DESC`)
+    .bind(...ids)
+    .all<Seven79CardRow>();
+
+  return result.results.map(serializeSeven79CardRow);
+}
+
+async function fetchSeven79CardById(db: D1Database, id: number): Promise<Seven79CardRow | null> {
+  const row = await db.prepare(`${SEVEN79_CARD_SELECT_SQL} WHERE id = ?`).bind(id).first<Seven79CardRow>();
+  return row ? serializeSeven79CardRow(row) : null;
+}
+
+async function fetchSeven79CardByKey(db: D1Database, key: string): Promise<Seven79CardRow | null> {
+  const row = await db.prepare(`${SEVEN79_CARD_SELECT_SQL} WHERE card_key = ? LIMIT 1`).bind(key).first<Seven79CardRow>();
+  return row ? serializeSeven79CardRow(row) : null;
+}
+
+async function ensureSeven79CardRefreshedByKey(db: D1Database, key: string): Promise<Seven79CardRow> {
+  let existing = await fetchSeven79CardByKey(db, key);
+
+  if (!existing) {
+    await db
+      .prepare(
+        `INSERT OR IGNORE INTO seven79_cards (card_key, status, created_at, updated_at)
+         VALUES (?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+      )
+      .bind(key)
+      .run();
+
+    existing = await fetchSeven79CardByKey(db, key);
+  }
+
+  if (!existing) {
+    throw new HTTPException(500, { message: '卡密记录读取失败' });
+  }
+
+  return refreshSeven79Card(db, existing.id);
+}
+
+async function queryPpSmsItems(db: D1Database): Promise<PpSmsItemRow[]> {
+  const result = await db.prepare(`${PP_SMS_ITEM_SELECT_SQL} ORDER BY id DESC`).all<PpSmsItemRow>();
+  return result.results.map(serializePpSmsItemRow);
+}
+
+async function queryPpSmsItemsByIds(db: D1Database, ids: number[]): Promise<PpSmsItemRow[]> {
+  if (ids.length === 0) {
+    return [];
+  }
+
+  const placeholders = ids.map(() => '?').join(',');
+  const result = await db
+    .prepare(`${PP_SMS_ITEM_SELECT_SQL} WHERE id IN (${placeholders}) ORDER BY id DESC`)
+    .bind(...ids)
+    .all<PpSmsItemRow>();
+  return result.results.map(serializePpSmsItemRow);
+}
+
+async function fetchPpSmsItemById(db: D1Database, id: number): Promise<PpSmsItemRow | null> {
+  const row = await db.prepare(`${PP_SMS_ITEM_SELECT_SQL} WHERE id = ?`).bind(id).first<PpSmsItemRow>();
+  return row ? serializePpSmsItemRow(row) : null;
+}
+
+async function refreshSeven79Card(db: D1Database, id: number): Promise<Seven79CardRow> {
+  const existing = await fetchSeven79CardById(db, id);
+  if (!existing) {
+    throw new HTTPException(404, { message: '卡密记录不存在' });
+  }
+
+  try {
+    const result = await fetchSeven79CardDetails(existing.cardKey);
+    await db
+      .prepare(
+        `UPDATE seven79_cards
+         SET status = ?, category = ?, check_expiry_time = ?, check_remaining_time_ms = ?, card_number = ?, expiry_date = ?, cvv = ?, phone = ?, sms_api = ?, holder_name = ?, address = ?, card_valid_until = DATETIME(CURRENT_TIMESTAMP, '+6 hours'), expires_at = ?, raw_check_json = ?, raw_verify_json = ?, error_message = NULL, last_checked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`
+      )
+      .bind(
+        'checked',
+        result.check.category,
+        result.check.expiryTime,
+        result.check.remainingTimeMs,
+        result.verify.cardNumber,
+        result.verify.expiryDate,
+        result.verify.cvv,
+        result.verify.phone,
+        result.verify.smsApi,
+        result.verify.holderName,
+        result.verify.address,
+        result.verify.expiresAt,
+        JSON.stringify(result.rawCheck),
+        JSON.stringify(result.rawVerify),
+        id
+      )
+      .run();
+  } catch (error) {
+    const message = getErrorMessage(error);
+    const status = error instanceof HTTPException ? error.status : 502;
+    const nextStatus: Seven79CardStatus = isSeven79ExpiredMessage(message) ? 'expired' : 'failed';
+    await db
+      .prepare(
+        `UPDATE seven79_cards
+         SET status = ?, error_message = ?, last_checked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`
+      )
+      .bind(nextStatus, message, id)
+      .run();
+
+    throw new HTTPException(status, { message });
+  }
+
+  const latest = await fetchSeven79CardById(db, id);
+  if (!latest) {
+    throw new HTTPException(500, { message: '提取完成，但读取结果失败' });
+  }
+
+  return latest;
+}
+
+async function refreshPpSmsItem(db: D1Database, id: number): Promise<{
+  item: PpSmsItemRow;
+  code: string | null;
+  message: string;
+}> {
+  const existing = await fetchPpSmsItemById(db, id);
+  if (!existing) {
+    throw new HTTPException(404, { message: 'PP 接码记录不存在' });
+  }
+
+  try {
+    const result = await fetchPpSmsCode(existing.smsApi);
+    await db
+      .prepare(
+        `UPDATE pp_sms_items
+         SET status = ?, expires_at = ?, last_code = ?, last_message = ?, last_checked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`
+      )
+      .bind(result.status, result.expiresAt, result.code, result.message, id)
+      .run();
+
+    const latest = await fetchPpSmsItemById(db, id);
+    if (!latest) {
+      throw new HTTPException(500, { message: 'PP 接码刷新完成，但读取结果失败' });
+    }
+
+    return {
+      item: latest,
+      code: result.code,
+      message: result.message
+    };
+  } catch (error) {
+    const message = getErrorMessage(error);
+    await db
+      .prepare(
+        `UPDATE pp_sms_items
+         SET status = ?, last_message = ?, last_checked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`
+      )
+      .bind('failed', message, id)
+      .run();
+
+    throw new HTTPException(error instanceof HTTPException ? error.status : 502, { message });
+  }
+}
+
+async function refreshSeven79CardSmsCode(db: D1Database, id: number): Promise<{
+  item: Seven79CardRow;
+  code: string | null;
+  message: string;
+}> {
+  const existing = await fetchSeven79CardById(db, id);
+  if (!existing) {
+    throw new HTTPException(404, { message: '卡密记录不存在' });
+  }
+
+  if (!existing.smsApi) {
+    throw new HTTPException(400, { message: '当前卡密没有可用的接码接口' });
+  }
+
+  try {
+    const result = await fetchPpSmsCode(existing.smsApi);
+    await db
+      .prepare(
+        `UPDATE seven79_cards
+         SET expires_at = COALESCE(?, expires_at), last_checked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`
+      )
+      .bind(result.expiresAt, id)
+      .run();
+
+    const latest = await fetchSeven79CardById(db, id);
+    if (!latest) {
+      throw new HTTPException(500, { message: '验证码刷新完成，但读取卡密结果失败' });
+    }
+
+    return {
+      item: latest,
+      code: result.code,
+      message: result.message
+    };
+  } catch (error) {
+    throw new HTTPException(error instanceof HTTPException ? error.status : 502, {
+      message: getErrorMessage(error)
+    });
+  }
+}
+
+async function fetchSeven79CardDetails(key: string): Promise<{
+  check: Seven79CheckResult;
+  verify: Seven79VerifyResult;
+  rawCheck: unknown;
+  rawVerify: unknown;
+}> {
+  const rawCheck = await callSeven79Check(key);
+  const rawVerify = await callSeven79Verify(key);
+  return {
+    check: normalizeSeven79Check(rawCheck),
+    verify: normalizeSeven79Verify(rawVerify),
+    rawCheck,
+    rawVerify
+  };
+}
+
+async function callSeven79Check(key: string): Promise<unknown> {
+  let response: Response;
+  try {
+    response = await fetch(`${SEVEN79_BASE_URL}/api/exchange/check/${encodeURIComponent(key)}`);
+  } catch (error) {
+    throw new HTTPException(502, {
+      message: `779 验卡请求失败: ${error instanceof Error ? error.message : 'unknown error'}`
+    });
+  }
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throwSeven79RemoteError(payload, response.status, '779 验卡失败');
+  }
+
+  const businessError = resolveSeven79BusinessError(payload);
+  if (businessError) {
+    throw new HTTPException(400, { message: businessError });
+  }
+
+  return payload;
+}
+
+async function callSeven79Verify(key: string): Promise<unknown> {
+  let response: Response;
+  try {
+    response = await fetch(`${SEVEN79_BASE_URL}/api/exchange/verify`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ key })
+    });
+  } catch (error) {
+    throw new HTTPException(502, {
+      message: `779 提取请求失败: ${error instanceof Error ? error.message : 'unknown error'}`
+    });
+  }
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throwSeven79RemoteError(payload, response.status, '779 提取失败');
+  }
+
+  return payload;
+}
+
+function normalizeSeven79Check(payload: unknown): Seven79CheckResult {
+  const record = asRecord(payload);
+  return {
+    category: toNullableText(record.category),
+    expiryTime: toNullableText(record.expiry_time),
+    remainingTimeMs: toNullableNumber(record.remaining_time)
+  };
+}
+
+function normalizeSeven79Verify(payload: unknown): Seven79VerifyResult {
+  const record = asRecord(payload);
+  const content = asRecord(record.content);
+  const card = asRecord(record.card);
+
+  return {
+    cardNumber: toNullableText(content.card_number),
+    expiryDate: toNullableText(content.expiry_date),
+    cvv: toNullableText(content.cvv),
+    phone: toNullableText(content.phone),
+    smsApi: toNullableText(content.sms_api),
+    holderName: toNullableText(content.name),
+    address: toNullableText(content.address),
+    expiresAt: toNullableText(card.expires_at)
+  };
+}
+
+function extractRemoteErrorMessage(payload: unknown, status: number, fallback: string): string {
+  const record = asRecord(payload);
+  return (
+    toNullableText(record.message)
+    || toNullableText(record.error)
+    || `${fallback} (${status})`
+  );
+}
+
+function resolveSeven79BusinessError(payload: unknown): string | null {
+  const record = asRecord(payload);
+  const status = toNullableText(record.status);
+  const rawMessage = toNullableText(record.message) || toNullableText(record.error);
+  const valid = typeof record.valid === 'boolean' ? record.valid : null;
+
+  if (status === 'expired' || (rawMessage && /card has expired/i.test(rawMessage))) {
+    return '卡密已过期';
+  }
+
+  if (valid === false) {
+    return rawMessage || '卡密校验失败';
+  }
+
+  return null;
+}
+
+function throwSeven79RemoteError(payload: unknown, status: number, fallback: string): never {
+  const message = resolveSeven79BusinessError(payload) || extractRemoteErrorMessage(payload, status, fallback);
+  const isBusinessError = status >= 400 && status < 500;
+  throw new HTTPException(isBusinessError ? 400 : 502, { message });
+}
+
+function isSeven79ExpiredMessage(message: string): boolean {
+  return /卡密已过期|card has expired/i.test(message);
+}
+
+function parsePpSmsImportLine(raw: string): PpSmsParseResult {
+  const parts = raw.split('------------');
+  if (parts.length < 2) {
+    throw new HTTPException(400, { message: '格式不正确，应为 手机号------------接码API' });
+  }
+
+  const phone = parts[0].trim();
+  const smsApi = parts.slice(1).join('------------').trim();
+  if (!phone || !smsApi) {
+    throw new HTTPException(400, { message: '手机号或接码 API 不能为空' });
+  }
+
+  if (!/^https?:\/\//i.test(smsApi)) {
+    throw new HTTPException(400, { message: '接码 API 必须以 http:// 或 https:// 开头' });
+  }
+
+  const phoneParts = splitPhoneNumber(phone);
+  return {
+    fullPhone: phoneParts.fullPhone,
+    countryCode: phoneParts.countryCode,
+    phoneNumber: phoneParts.phoneNumber,
+    smsApi
+  };
+}
+
+function splitPhoneNumber(value: string): {
+  fullPhone: string;
+  countryCode: string | null;
+  phoneNumber: string;
+} {
+  const trimmed = value.trim();
+  const normalized = trimmed.replace(/\s+/g, '');
+  if (!normalized) {
+    throw new HTTPException(400, { message: '手机号不能为空' });
+  }
+
+  if (normalized.startsWith('+1') && normalized.length > 2) {
+    return {
+      fullPhone: normalized,
+      countryCode: '+1',
+      phoneNumber: normalized.slice(2)
+    };
+  }
+
+  return {
+    fullPhone: normalized,
+    countryCode: normalized.startsWith('+') ? null : null,
+    phoneNumber: normalized.startsWith('+') ? normalized.slice(1) : normalized
+  };
+}
+
+async function fetchPpSmsCode(smsApi: string): Promise<PpSmsFetchResult> {
+  let response: Response;
+  try {
+    response = await fetch(smsApi);
+  } catch (error) {
+    throw new HTTPException(502, {
+      message: `PP 接码请求失败: ${error instanceof Error ? error.message : 'unknown error'}`
+    });
+  }
+
+  const raw = (await response.text()).trim();
+  if (!response.ok) {
+    throw new HTTPException(502, { message: raw || `PP 接码请求失败 (${response.status})` });
+  }
+
+  return parsePpSmsResponse(raw);
+}
+
+function parsePpSmsResponse(raw: string): PpSmsFetchResult {
+  const normalized = raw.trim();
+  const expiryMatch = normalized.match(/到期时间[:：]\s*([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})/);
+  const expiresAt = expiryMatch ? expiryMatch[1] : null;
+  const expired = normalized.includes('过期') || isExpiredAt(expiresAt);
+  const parts = normalized
+    .split('|')
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  const maybeCode = extractSmsCode(parts, normalized);
+  if (expired) {
+    return {
+      status: 'expired',
+      expiresAt,
+      code: maybeCode,
+      message: maybeCode || '已过期',
+      raw: normalized
+    };
+  }
+
+  if (maybeCode) {
+    return {
+      status: 'active',
+      expiresAt,
+      code: maybeCode,
+      message: maybeCode,
+      raw: normalized
+    };
+  }
+
+  if (normalized.includes('暂无验证码') || normalized.startsWith('no|')) {
+    return {
+      status: 'active',
+      expiresAt,
+      code: null,
+      message: '暂无验证码',
+      raw: normalized
+    };
+  }
+
+  return {
+    status: 'active',
+    expiresAt,
+    code: null,
+    message: normalized || '暂无验证码',
+    raw: normalized
+  };
+}
+
+function extractSmsCode(parts: string[], raw: string): string | null {
+  for (const part of parts) {
+    if (part.startsWith('到期时间')) {
+      continue;
+    }
+    if (/^\d{4,8}$/.test(part)) {
+      return part;
+    }
+  }
+
+  const withoutExpiry = raw.replace(/到期时间[:：]\s*[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}/g, '');
+  const match = withoutExpiry.match(/\b(\d{4,8})\b/);
+  return match ? match[1] : null;
+}
+
+function isExpiredAt(value: string | null): boolean {
+  if (!value) {
+    return false;
+  }
+
+  const parsed = Date.parse(value.replace(' ', 'T'));
+  if (Number.isNaN(parsed)) {
+    return false;
+  }
+
+  return parsed <= Date.now();
 }
 
 async function queryAccounts(db: D1Database, keyword: string): Promise<AccountRow[]> {

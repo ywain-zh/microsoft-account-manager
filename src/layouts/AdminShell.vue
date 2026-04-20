@@ -3,7 +3,7 @@
     <aside class="console-sidebar-flat">
       <div class="console-brand-flat">
         <span class="console-brand-mark" aria-hidden="true">M</span>
-        <span class="console-brand-name">邮箱管理平台</span>
+        <span class="console-brand-name">Cloud Mail</span>
       </div>
 
       <nav class="console-nav-flat" aria-label="主导航">
@@ -55,6 +55,29 @@
                 stroke-width="1.7"
               />
             </svg>
+            <svg v-else-if="item.key === '779-cards'" viewBox="0 0 24 24" fill="none">
+              <rect
+                x="3.75"
+                y="6.25"
+                width="16.5"
+                height="11.5"
+                rx="2.25"
+                stroke="currentColor"
+                stroke-width="1.7"
+              />
+              <path
+                d="M3.75 10.25h16.5"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-width="1.7"
+              />
+              <path
+                d="M7.25 14.25h3.5"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-width="1.7"
+              />
+            </svg>
             <svg v-else viewBox="0 0 24 24" fill="none">
               <path
                 d="M6.75 7.75h10.5v8.5H6.75z"
@@ -89,14 +112,11 @@
 
     <main class="console-main-flat">
       <header class="console-topbar-flat">
-        <div class="console-topbar-spacer"></div>
+        <div class="console-topbar-title">Mail Management Console</div>
         <div class="console-topbar-actions">
-          <div class="console-user-flat">
-            <span>当前登录: <strong>{{ currentUser }}</strong></span>
-            <span class="console-user-avatar" aria-hidden="true">{{ userAvatarLabel }}</span>
-          </div>
+          <span class="console-user-copy">{{ currentUser }}</span>
           <n-button text class="header-logout-button-flat" :loading="logoutLoading" @click="handleLogout">
-            退出
+            退出登录
           </n-button>
         </div>
       </header>
@@ -109,7 +129,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue';
+import { watch } from 'vue';
 import { NButton } from 'naive-ui';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 import { consoleNavigation, defaultConsoleRoute } from '../config/navigation';
@@ -120,11 +140,6 @@ const { currentUser, isAuthenticated, logoutLoading } = admin;
 const route = useRoute();
 const router = useRouter();
 const navigation = consoleNavigation;
-
-const userAvatarLabel = computed(() => {
-  const normalized = currentUser.value.trim();
-  return normalized ? normalized.slice(0, 1).toUpperCase() : 'A';
-});
 
 async function handleLogout(): Promise<void> {
   await admin.logout();

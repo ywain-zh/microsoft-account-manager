@@ -178,3 +178,88 @@ export interface CloudMailMessagesResponse {
 export interface AuthUser {
   username: string;
 }
+
+export type Seven79CardStatus = 'pending' | 'checked' | 'expired' | 'failed';
+
+export interface Seven79CardItem {
+  id: number;
+  cardKey: string;
+  status: Seven79CardStatus;
+  category: string | null;
+  checkExpiryTime: string | null;
+  checkRemainingTimeMs: number | null;
+  cardNumber: string | null;
+  expiryDate: string | null;
+  cvv: string | null;
+  phone: string | null;
+  smsApi: string | null;
+  holderName: string | null;
+  address: string | null;
+  cardValidUntil: string | null;
+  expiresAt: string | null;
+  errorMessage: string | null;
+  lastCheckedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Seven79ImportResult {
+  inserted: number;
+  skipped: number;
+  errors: Array<{ line: number; raw: string; reason: string }>;
+}
+
+export type PpSmsStatus = 'active' | 'expired' | 'failed';
+
+export interface PpSmsItem {
+  id: number;
+  fullPhone: string;
+  countryCode: string | null;
+  phoneNumber: string;
+  smsApi: string;
+  status: PpSmsStatus;
+  expiresAt: string | null;
+  lastCode: string | null;
+  lastMessage: string | null;
+  lastCheckedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PpSmsImportResult {
+  inserted: number;
+  skipped: number;
+  errors: Array<{ line: number; raw: string; reason: string }>;
+  items: PpSmsItem[];
+}
+
+export interface PpSmsFetchCodeResponse {
+  item: PpSmsItem;
+  code: string | null;
+  message: string;
+}
+
+export interface Seven79CardSmsCodeResponse {
+  item: Seven79CardItem;
+  code: string | null;
+  message: string;
+}
+
+export interface Seven79CheckResponse {
+  item: Seven79CardItem;
+  check: {
+    category: string | null;
+    expiryTime: string | null;
+    remainingTimeMs: number | null;
+  };
+  verify: {
+    cardNumber: string | null;
+    expiryDate: string | null;
+    cvv: string | null;
+    phone: string | null;
+    smsApi: string | null;
+    holderName: string | null;
+    address: string | null;
+    expiresAt: string | null;
+  };
+}
