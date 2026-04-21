@@ -3623,7 +3623,18 @@ function normalizeSeven79Verify(payload: unknown): Seven79VerifyResult {
 }
 
 function normalizeSeven79CheckExpiryTime(record: Record<string, unknown>): string | null {
-  return normalizeSeven79DateTime(toNullableText(record.expiry_time) || toNullableText(record.expires_at));
+  const rawExpiryTime = toNullableText(record.expiry_time);
+  if (rawExpiryTime) {
+    return normalizeSeven79DateTime(rawExpiryTime);
+  }
+
+  const rawExpiresAt = toNullableText(record.expires_at);
+  if (!rawExpiresAt) {
+    return null;
+  }
+
+  const parsedExpiresAt = parseSeven79DateTime(rawExpiresAt);
+  return parsedExpiresAt ? formatSqliteDateTime(new Date(parsedExpiresAt.getTime() + 8 * 60 * 60 * 1000)) : rawExpiresAt;
 }
 
 function resolveSeven79CardValidUntil(expiryTime: string | null): string | null {
@@ -3785,8 +3796,7 @@ async function fetchPpSmsCode(smsApi: string): Promise<PpSmsFetchResult> {
 
 function parsePpSmsResponse(raw: string): PpSmsFetchResult {
   const normalized = normalizeSmsResponseText(raw);
-  const expiryMatch = normalized.match(/到期时间[:：]\s*([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})/);
-  const expiresAt = expiryMatch ? expiryMatch[1] : null;
+  const expiresAt = extractPpSmsExpiresAt(normalized);
   const expired = normalized.includes('过期') || isExpiredAt(expiresAt);
   const parts = normalized
     .split('|')
@@ -3823,6 +3833,33 @@ function parsePpSmsResponse(raw: string): PpSmsFetchResult {
   };
 }
 
+function extractPpSmsExpiresAt(value: string): string | null {
+  const text = toNullableText(value);
+  if (!text) {
+    return null;
+  }
+
+  const labelledMatch = text.match(
+    /(?:到期时间|有效期|过期时间|expires?\s+at)\s*[:：]?\s*([0-9]{4}[/-][0-9]{1,2}[/-][0-9]{1,2}(?:[ T][0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?)?)/i
+  );
+  if (labelledMatch?.[1]) {
+    return normalizePpSmsDateTime(labelledMatch[1]);
+  }
+
+  const plainMatch = text.match(/\b([0-9]{4}[/-][0-9]{1,2}[/-][0-9]{1,2}(?:[ T][0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?)?)\b/);
+  if (plainMatch?.[1]) {
+    return normalizePpSmsDateTime(plainMatch[1]);
+  }
+
+  return null;
+}
+
+function normalizePpSmsDateTime(value: string | null): string | null {
+  const parsed = parseSeven79DateTime(value);
+  return parsed ? formatSqliteDateTime(parsed) : toNullableText(value);
+}
+
+
 function extractSmsCode(parts: string[], raw: string): string | null {
   const candidates = [raw, ...parts]
     .map((part) => stripSmsExpiryMetadata(part))
@@ -3853,8 +3890,8 @@ function isExpiredAt(value: string | null): boolean {
 
 function stripSmsExpiryMetadata(value: string): string {
   return value
-    .replace(/到期时间[:：]\s*[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}/g, ' ')
-    .replace(/\b[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\b/g, ' ')
+    .replace(/(?:到期时间|有效期|过期时间|expires?\s+at)\s*[:：]?\s*[0-9]{4}[/-][0-9]{1,2}[/-][0-9]{1,2}(?:[ T][0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?)?/gi, ' ')
+    .replace(/\b[0-9]{4}[/-][0-9]{1,2}[/-][0-9]{1,2}(?:[ T][0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?)?\b/g, ' ')
     .trim();
 }
 

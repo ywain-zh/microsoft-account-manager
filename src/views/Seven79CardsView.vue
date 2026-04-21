@@ -22,6 +22,9 @@
           <n-button class="action-button-secondary" :disabled="!canCopySelectedCardBundle" @click="handleCopySelectedCardBundle">
             复制整卡
           </n-button>
+          <n-button class="action-button-secondary" :loading="sessionFetchLoading" @click="handleFetchSession">
+            获取session
+          </n-button>
           <a
             class="subscription-link-button"
             href="https://payurl.779.chat/"
@@ -52,14 +55,9 @@
             <h2>虚拟卡</h2>
             <span class="work-card-inline-meta">剩余时间 {{ selectedCardRemainingText }}</span>
           </div>
-          <div class="work-card-header-main">
-            <div class="work-card-key" :title="selectedItem ? displayValue(selectedItem.cardKey) : '-'">
-              卡密 {{ selectedItem ? displayValue(selectedItem.cardKey) : '-' }}
-            </div>
-            <div class="status-badge" :class="statusBadgeClass">
-              <span class="status-dot" aria-hidden="true"></span>
-              {{ selectedCardStatusText }}
-            </div>
+          <div class="status-badge" :class="statusBadgeClass">
+            <span class="status-dot" aria-hidden="true"></span>
+            {{ selectedCardStatusText }}
           </div>
         </header>
 
@@ -239,7 +237,7 @@
                 </button>
               </div>
 
-              <div class="pp-select-wrap pp-select-wrap-hidden">
+              <div class="pp-select-wrap">
                 <n-select
                   v-model:value="selectedPpSmsId"
                   :options="ppSmsOptions"
@@ -497,6 +495,7 @@ const rowActionLoadingId = ref<number | null>(null);
 const ppRowActionLoadingId = ref<number | null>(null);
 const cardCodeLoading = ref(false);
 const ppCodeLoading = ref(false);
+const sessionFetchLoading = ref(false);
 
 const activeListTab = ref<'cards' | 'pp'>('cards');
 const listModalVisible = ref(false);
@@ -790,10 +789,59 @@ async function copyValue(value: string | number | null | undefined, label: strin
   }
 }
 
+
 async function handleCopySelectedCardBundle(): Promise<void> {
   await copyValue(selectedCardBundle.value, '整卡信息');
 }
 
+function isChatGptSessionPayload(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return Boolean(record.user || record.accessToken || record.expires || record.expiresAt);
+}
+
+async function handleFetchSession(): Promise<void> {
+  sessionFetchLoading.value = true;
+  try {
+    const response = await fetch('https://chatgpt.com/api/auth/session', {
+      method: 'GET',
+      credentials: 'include',
+      mode: 'cors',
+      cache: 'no-store',
+      headers: {
+        Accept: 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      message.warning(response.status === 401 ? '账号未登录' : '无法从当前站点读取 ChatGPT session，请确认已在本浏览器登录 chatgpt.com 后重试');
+      return;
+    }
+
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      message.warning('无法从当前站点读取 ChatGPT session，请确认已在本浏览器登录 chatgpt.com 后重试');
+      return;
+    }
+
+    if (!isChatGptSessionPayload(payload)) {
+      message.warning('账号未登录');
+      return;
+    }
+
+    await writeClipboard(JSON.stringify(payload, null, 2));
+    message.success('session 已复制');
+  } catch {
+    message.warning('无法从当前站点读取 ChatGPT session，请确认已在本浏览器登录 chatgpt.com 后重试');
+  } finally {
+    sessionFetchLoading.value = false;
+  }
+}
 async function writeClipboard(text: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -857,17 +905,41 @@ function renderPpStatusType(status: PpSmsStatus): 'success' | 'error' | 'warning
   return 'success';
 }
 
+function parseDateTimeValue(value: string | null): Date | null {
+  const text = normalizeCopyValue(value);
+  if (!text) {
+    return null;
+  }
+
+  const direct = Date.parse(text);
+  if (!Number.isNaN(direct)) {
+    return new Date(direct);
+  }
+
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+
+  const [, year, month, day, hour, minute, second] = match;
+  const parsed = new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second)
+  );
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function getCardValidityRemainingMs(value: string | null): number | null {
-  if (!value) {
+  const parsed = parseDateTimeValue(value);
+  if (!parsed) {
     return null;
   }
 
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) {
-    return null;
-  }
-
-  return Math.max(0, timestamp - Date.now());
+  return Math.max(0, parsed.getTime() - Date.now());
 }
 
 function isCardStillValid(value: string | null): boolean {
@@ -1636,31 +1708,6 @@ onMounted(async () => {
   min-width: 0;
 }
 
-.work-card-header-main {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  min-width: 0;
-  flex: 1;
-}
-
-.work-card-key {
-  min-width: 0;
-  max-width: 260px;
-  padding: 5px 10px;
-  border: 1px solid rgba(99, 102, 241, 0.2);
-  border-radius: 10px;
-  background: rgba(99, 102, 241, 0.06);
-  color: #4338ca;
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1.2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .work-card-inline-meta {
   color: #ef4444;
   font-size: 11px;
@@ -2035,10 +2082,20 @@ onMounted(async () => {
 
 .pp-select-wrap {
   position: relative;
+  margin-top: 8px;
 }
 
-.pp-select-wrap-hidden {
-  display: none;
+:deep(.pp-select-wrap .n-base-selection) {
+  border-radius: 12px;
+}
+
+:deep(.pp-select-wrap .n-base-selection-label) {
+  min-height: 36px;
+}
+
+:deep(.pp-select-wrap .n-base-selection-input) {
+  font-family: var(--seven79-mono);
+  font-size: 12px;
 }
 
 .sms-block-expiry {
