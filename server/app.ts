@@ -3600,7 +3600,7 @@ function normalizeSeven79Check(payload: unknown): Seven79CheckResult {
   const record = asRecord(payload);
   return {
     category: toNullableText(record.category),
-    expiryTime: toNullableText(record.expiry_time),
+    expiryTime: normalizeSeven79CheckExpiryTime(record),
     remainingTimeMs: toNullableNumber(record.remaining_time)
   };
 }
@@ -3622,18 +3622,55 @@ function normalizeSeven79Verify(payload: unknown): Seven79VerifyResult {
   };
 }
 
+function normalizeSeven79CheckExpiryTime(record: Record<string, unknown>): string | null {
+  return normalizeSeven79DateTime(toNullableText(record.expiry_time) || toNullableText(record.expires_at));
+}
+
 function resolveSeven79CardValidUntil(expiryTime: string | null): string | null {
-  const text = toNullableText(expiryTime);
+  const parsed = parseSeven79DateTime(expiryTime);
+  if (!parsed) {
+    return null;
+  }
+
+  return formatSqliteDateTime(new Date(parsed.getTime() + 5 * 60 * 60 * 1000));
+}
+
+function normalizeSeven79DateTime(value: string | null): string | null {
+  const text = toNullableText(value);
+  if (!text) {
+    return null;
+  }
+
+  const parsed = parseSeven79DateTime(text);
+  return parsed ? formatSqliteDateTime(parsed) : text;
+}
+
+function parseSeven79DateTime(value: string | null): Date | null {
+  const text = toNullableText(value);
   if (!text) {
     return null;
   }
 
   const timestamp = Date.parse(text);
-  if (Number.isNaN(timestamp)) {
+  if (!Number.isNaN(timestamp)) {
+    return new Date(timestamp);
+  }
+
+  const match = text.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (!match) {
     return null;
   }
 
-  return formatSqliteDateTime(new Date(timestamp + 5 * 60 * 60 * 1000));
+  const [, year, month, day, hour = '0', minute = '0', second = '0'] = match;
+  const parsed = new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second)
+  );
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 function formatSqliteDateTime(value: Date): string {
