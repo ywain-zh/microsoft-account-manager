@@ -118,6 +118,13 @@ docker manifest inspect ghcr.io/ywain-zh/microsoft-account-manager:2026.04.16-1
 - 如果 release 文档未写完，或 tag 镜像尚未发布成功，立即停止，不允许部署。
 - 服务器侧仍然只允许执行 `docker compose pull` 和 `docker compose up -d` 一类运行命令。
 
+## 镜像未就绪时的持续等待规则
+- 前提：release 文档已完成、用户已明确审核通过并批准部署、固定 tag 已 push。
+- 如果 GHCR 固定 tag 镜像检查仍返回 `manifest unknown`、`not found` 或其他“镜像未就绪”结果，不允许把部署流程视为结束，也不允许中途停下等待用户再次催促。
+- 必须继续按固定间隔重复检查镜像是否可用，推荐每 2 分钟检查一次；检查命令固定为 `docker manifest inspect ghcr.io/ywain-zh/microsoft-account-manager:<tag>` 或等价的远端 manifest 检查方式。
+- 一旦镜像可用，必须立即继续执行服务器侧标准部署命令：检查部署目录、备份 `.env`、更新 `APP_IMAGE`、执行 `docker compose pull`、`docker compose up -d`、状态检查、日志检查、资源检查与健康检查。
+- 只有在以下情况之一出现时，才允许结束本次部署流程：部署成功；出现明确失败且需要用户做额外决策；用户主动取消本次部署。
+
 ## 环境变量准备步骤
 1. 在服务器部署目录中复制 `.env.example` 为 `.env`。
 2. 修改 `APP_IMAGE` 为已审核通过的固定 tag。

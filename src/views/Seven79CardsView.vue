@@ -22,7 +22,7 @@
           <n-button class="action-button-secondary" :disabled="!canCopySelectedCardBundle" @click="handleCopySelectedCardBundle">
             复制整卡
           </n-button>
-          <n-button class="action-button-secondary" :loading="sessionFetchLoading" @click="handleFetchSession">
+          <n-button class="action-button-secondary" @click="handleFetchSession">
             获取session
           </n-button>
           <a
@@ -495,7 +495,6 @@ const rowActionLoadingId = ref<number | null>(null);
 const ppRowActionLoadingId = ref<number | null>(null);
 const cardCodeLoading = ref(false);
 const ppCodeLoading = ref(false);
-const sessionFetchLoading = ref(false);
 
 const activeListTab = ref<'cards' | 'pp'>('cards');
 const listModalVisible = ref(false);
@@ -794,53 +793,8 @@ async function handleCopySelectedCardBundle(): Promise<void> {
   await copyValue(selectedCardBundle.value, '整卡信息');
 }
 
-function isChatGptSessionPayload(value: unknown): value is Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return false;
-  }
-
-  const record = value as Record<string, unknown>;
-  return Boolean(record.user || record.accessToken || record.expires || record.expiresAt);
-}
-
-async function handleFetchSession(): Promise<void> {
-  sessionFetchLoading.value = true;
-  try {
-    const response = await fetch('https://chatgpt.com/api/auth/session', {
-      method: 'GET',
-      credentials: 'include',
-      mode: 'cors',
-      cache: 'no-store',
-      headers: {
-        Accept: 'application/json'
-      }
-    });
-
-    if (!response.ok) {
-      message.warning(response.status === 401 ? '账号未登录' : '无法从当前站点读取 ChatGPT session，请确认已在本浏览器登录 chatgpt.com 后重试');
-      return;
-    }
-
-    let payload: unknown;
-    try {
-      payload = await response.json();
-    } catch {
-      message.warning('无法从当前站点读取 ChatGPT session，请确认已在本浏览器登录 chatgpt.com 后重试');
-      return;
-    }
-
-    if (!isChatGptSessionPayload(payload)) {
-      message.warning('账号未登录');
-      return;
-    }
-
-    await writeClipboard(JSON.stringify(payload, null, 2));
-    message.success('session 已复制');
-  } catch {
-    message.warning('无法从当前站点读取 ChatGPT session，请确认已在本浏览器登录 chatgpt.com 后重试');
-  } finally {
-    sessionFetchLoading.value = false;
-  }
+function handleFetchSession(): void {
+  window.open('https://chatgpt.com/api/auth/session', '_blank', 'noopener,noreferrer');
 }
 async function writeClipboard(text: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
