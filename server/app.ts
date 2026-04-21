@@ -3738,7 +3738,7 @@ async function fetchPpSmsCode(smsApi: string): Promise<PpSmsFetchResult> {
     });
   }
 
-  const raw = (await response.text()).trim();
+  const raw = (await readSmsResponseText(response)).trim();
   if (!response.ok) {
     throw new HTTPException(502, { message: raw || `PP 接码请求失败 (${response.status})` });
   }
@@ -3747,7 +3747,7 @@ async function fetchPpSmsCode(smsApi: string): Promise<PpSmsFetchResult> {
 }
 
 function parsePpSmsResponse(raw: string): PpSmsFetchResult {
-  const normalized = raw.trim();
+  const normalized = normalizeSmsResponseText(raw);
   const expiryMatch = normalized.match(/到期时间[:：]\s*([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})/);
   const expiresAt = expiryMatch ? expiryMatch[1] : null;
   const expired = normalized.includes('过期') || isExpiredAt(expiresAt);
@@ -3777,38 +3777,28 @@ function parsePpSmsResponse(raw: string): PpSmsFetchResult {
     };
   }
 
-  if (normalized.includes('暂无验证码') || normalized.startsWith('no|')) {
-    return {
-      status: 'active',
-      expiresAt,
-      code: null,
-      message: '暂无验证码',
-      raw: normalized
-    };
-  }
-
   return {
     status: 'active',
     expiresAt,
     code: null,
-    message: normalized || '暂无验证码',
+    message: '暂无验证码',
     raw: normalized
   };
 }
 
 function extractSmsCode(parts: string[], raw: string): string | null {
-  for (const part of parts) {
-    if (part.startsWith('到期时间')) {
-      continue;
-    }
-    if (/^\d{4,8}$/.test(part)) {
-      return part;
+  const candidates = [raw, ...parts]
+    .map((part) => stripSmsExpiryMetadata(part))
+    .filter(Boolean);
+
+  for (const candidate of candidates) {
+    const code = findSmsCodeInText(candidate);
+    if (code) {
+      return code;
     }
   }
 
-  const withoutExpiry = raw.replace(/到期时间[:：]\s*[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}/g, '');
-  const match = withoutExpiry.match(/\b(\d{4,8})\b/);
-  return match ? match[1] : null;
+  return null;
 }
 
 function isExpiredAt(value: string | null): boolean {
@@ -3822,6 +3812,138 @@ function isExpiredAt(value: string | null): boolean {
   }
 
   return parsed <= Date.now();
+}
+
+function stripSmsExpiryMetadata(value: string): string {
+  return value
+    .replace(/到期时间[:：]\s*[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}/g, ' ')
+    .replace(/\b[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\b/g, ' ')
+    .trim();
+}
+
+function normalizeSmsCodeCandidateText(value: string): string {
+  return decodeBasicHtmlEntities(value)
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/https?:\/\/\S+/gi, ' ')
+    .replace(/[|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function decodeBasicHtmlEntities(value: string): string {
+  return value
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+}
+
+function scoreSmsCodeCandidate(code: string, context: string): number {
+  let score = 0;
+
+  if (/your\s+chatgpt\s+code\s+is/i.test(context)) {
+    score += 10;
+  }
+  if (/(temporary\s+verification\s+code|verification\s+code|one-time\s+passcode|passcode|security\s+code|验证码|校验码|动态码|动态验证码|短信码|短信验证码|\botp\b|\bcode\b)/i.test(context)) {
+    score += 6;
+  }
+  if (/(openai|chatgpt|paypal)/i.test(context)) {
+    score += 3;
+  }
+  if (/(到期时间|expires?\s+at|有效期|过期)/i.test(context)) {
+    score -= 4;
+  }
+  if (/^\d{6}$/.test(code)) {
+    score += 2;
+  } else if (/^\d{4}$/.test(code)) {
+    score += 1;
+  }
+
+  return score;
+}
+
+function findSmsCodeInText(value: string): string | null {
+  const sanitized = normalizeSmsCodeCandidateText(value);
+  const matches = [...sanitized.matchAll(/(?<!\d)(\d{4,8})(?!\d)/g)]
+    .map((match) => {
+      const code = match[1];
+      const index = match.index ?? -1;
+      const context = sanitized.slice(Math.max(0, index - 80), Math.min(sanitized.length, index + code.length + 80));
+      return {
+        code,
+        index,
+        score: /^20\d{2}$/.test(code) ? Number.NEGATIVE_INFINITY : scoreSmsCodeCandidate(code, context)
+      };
+    })
+    .filter((match) => Number.isFinite(match.score));
+
+  if (matches.length === 0) {
+    return null;
+  }
+
+  const preferred = matches
+    .filter((match) => match.score > 0)
+    .sort((left, right) => left.score - right.score || left.index - right.index)
+    .at(-1);
+  if (preferred) {
+    return preferred.code;
+  }
+
+  return matches.at(-1)?.code ?? null;
+}
+
+async function readSmsResponseText(response: Response): Promise<string> {
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.length === 0) {
+    return '';
+  }
+
+  const utf8Text = decodeSmsResponse(bytes, 'utf-8');
+  const gbText = decodeSmsResponse(bytes, 'gb18030');
+  return pickPreferredSmsResponseText(utf8Text, gbText);
+}
+
+function decodeSmsResponse(bytes: Uint8Array, encoding: string): string {
+  try {
+    return new TextDecoder(encoding).decode(bytes);
+  } catch {
+    return '';
+  }
+}
+
+function pickPreferredSmsResponseText(primary: string, fallback: string): string {
+  if (!fallback || fallback === primary) {
+    return primary;
+  }
+  if (!primary) {
+    return fallback;
+  }
+
+  return scoreSmsResponseText(fallback) > scoreSmsResponseText(primary) ? fallback : primary;
+}
+
+function scoreSmsResponseText(value: string): number {
+  const text = normalizeSmsResponseText(value);
+  if (!text) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  let score = 0;
+  if (/(yes\||no\||paypal|验证码|到期时间|有效期|验证|手机)/i.test(text)) {
+    score += 6;
+  }
+  score += (text.match(/[\u4e00-\u9fff]/g) ?? []).length;
+  score -= (text.match(/�/g) ?? []).length * 4;
+  score -= (text.match(/[ÃÂâæåçð¤¥©]/g) ?? []).length * 2;
+  return score;
+}
+
+function normalizeSmsResponseText(value: string): string {
+  return value.replace(/\u0000/g, '').replace(/\r\n/g, '\n').trim();
 }
 
 async function queryAccounts(db: D1Database, keyword: string): Promise<AccountRow[]> {

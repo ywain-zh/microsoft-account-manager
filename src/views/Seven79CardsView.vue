@@ -52,9 +52,14 @@
             <h2>虚拟卡</h2>
             <span class="work-card-inline-meta">剩余时间 {{ selectedCardRemainingText }}</span>
           </div>
-          <div class="status-badge" :class="statusBadgeClass">
-            <span class="status-dot" aria-hidden="true"></span>
-            {{ selectedCardStatusText }}
+          <div class="work-card-header-main">
+            <div class="work-card-key" :title="selectedItem ? displayValue(selectedItem.cardKey) : '-'">
+              卡密 {{ selectedItem ? displayValue(selectedItem.cardKey) : '-' }}
+            </div>
+            <div class="status-badge" :class="statusBadgeClass">
+              <span class="status-dot" aria-hidden="true"></span>
+              {{ selectedCardStatusText }}
+            </div>
           </div>
         </header>
 
@@ -83,12 +88,12 @@
               <div class="virtual-meta-block">
                 <span class="meta-label meta-label-dark">Expires</span>
                 <div class="inline-copy-value">
-                  <strong class="mono-text">{{ displayValue(selectedItem.expiryDate) }}</strong>
+                  <strong class="mono-text">{{ formatCardExpiryDisplay(selectedItem.expiryDate) }}</strong>
                   <button
                     type="button"
                     class="copy-icon-button copy-icon-button-dark"
-                    :disabled="!isCopyableValue(selectedItem.expiryDate)"
-                    @click="copyValue(selectedItem.expiryDate, '日期')"
+                    :disabled="!isCopyableValue(formatCardExpiryDisplay(selectedItem.expiryDate))"
+                    @click="copyValue(formatCardExpiryDisplay(selectedItem.expiryDate), '日期')"
                   >
                     <CopyIcon />
                   </button>
@@ -152,7 +157,7 @@
 
         <footer class="work-card-footer">
           <span>卡片有效期:</span>
-          <strong>{{ selectedItem?.cardValidUntil || '-' }}</strong>
+          <strong>{{ displayValue(selectedItem?.cardValidUntil) }}</strong>
         </footer>
       </article>
 
@@ -548,6 +553,7 @@ const quickCheckFields = computed<InfoField[]>(() => {
 
   return [
     { label: '分类', value: displayValue(result.check.category) },
+    { label: '卡密有效期', value: displayValue(result.check.expiryTime) },
     { label: '剩余', value: formatRemaining(result.check.remainingTimeMs) },
     { label: '卡号', value: displayValue(result.verify.cardNumber) },
     { label: '日期/CVV', value: formatExpiryCvv(result.verify.expiryDate, result.verify.cvv) },
@@ -602,7 +608,7 @@ const selectedCardBundle = computed(() => {
   const lines = [
     `卡密: ${displayValue(item.cardKey)}`,
     `卡号: ${displayValue(item.cardNumber)}`,
-    `日期: ${displayValue(item.expiryDate)}`,
+      `日期: ${formatCardExpiryDisplay(item.expiryDate)}`,
     `CVV: ${displayValue(item.cvv)}`,
     `姓名: ${displayValue(item.holderName)}`,
     `地址: ${displayValue(item.address)}`,
@@ -631,7 +637,7 @@ watch(
       ppCodeInput.value = '暂无验证码';
       return;
     }
-    ppCodeInput.value = item.lastCode || item.lastMessage || '暂无验证码';
+    ppCodeInput.value = resolveCodeDisplay(item.lastCode, item.lastMessage, item.status);
   },
   { immediate: true }
 );
@@ -661,11 +667,112 @@ function isCopyableValue(value: string | number | null | undefined): boolean {
   if (!text) {
     return false;
   }
-  return !['-', '暂无验证码', '无接码接口'].includes(text);
+  return !['-', '暂无验证码', '无接码接口', '已过期', '获取失败'].includes(text);
 }
 
 function isPendingCode(value: string): boolean {
   return !/^\d+(\s+\d+)*$/.test(value.trim());
+}
+
+function extractNumericCode(value: string | number | null | undefined): string | null {
+  const text = normalizeCopyValue(value);
+  if (!text) {
+    return null;
+  }
+
+  const sanitized = normalizeCodeCandidateText(text);
+  const matches = [...sanitized.matchAll(/(?<!\d)(\d{4,8})(?!\d)/g)]
+    .map((match) => {
+      const code = match[1];
+      const index = match.index ?? -1;
+      const context = sanitized.slice(Math.max(0, index - 80), Math.min(sanitized.length, index + code.length + 80));
+      return {
+        code,
+        index,
+        score: /^20\d{2}$/.test(code) ? Number.NEGATIVE_INFINITY : scoreCodeCandidate(code, context)
+      };
+    })
+    .filter((match) => Number.isFinite(match.score));
+  if (matches.length === 0) {
+    return null;
+  }
+
+  const preferred = matches
+    .filter((match) => match.score > 0)
+    .sort((left, right) => left.score - right.score || left.index - right.index)
+    .at(-1);
+  if (preferred) {
+    return preferred.code;
+  }
+
+  return matches.at(-1)?.code ?? null;
+}
+
+function normalizeCodeCandidateText(value: string): string {
+  return decodeBasicHtmlEntities(value)
+    .replace(/到期时间[:：]\s*[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}/g, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/https?:\/\/\S+/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function decodeBasicHtmlEntities(value: string): string {
+  return value
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+}
+
+function scoreCodeCandidate(code: string, context: string): number {
+  let score = 0;
+
+  if (/your\s+chatgpt\s+code\s+is/i.test(context)) {
+    score += 10;
+  }
+  if (/(temporary\s+verification\s+code|verification\s+code|one-time\s+passcode|passcode|security\s+code|验证码|校验码|动态码|动态验证码|短信码|短信验证码|\botp\b|\bcode\b)/i.test(context)) {
+    score += 6;
+  }
+  if (/(openai|chatgpt|paypal)/i.test(context)) {
+    score += 3;
+  }
+  if (/(到期时间|expires?\s+at|有效期|过期)/i.test(context)) {
+    score -= 4;
+  }
+  if (/^\d{6}$/.test(code)) {
+    score += 2;
+  } else if (/^\d{4}$/.test(code)) {
+    score += 1;
+  }
+
+  return score;
+}
+
+
+function resolveCodeDisplay(
+  code: string | null | undefined,
+  messageText: string | null | undefined,
+  status?: PpSmsStatus | Seven79CardStatus
+): string {
+  const matchedCode = extractNumericCode(code) || extractNumericCode(messageText);
+  if (matchedCode) {
+    return matchedCode;
+  }
+
+  const normalizedMessage = normalizeCopyValue(messageText);
+  if (status === 'expired' || normalizedMessage.includes('已过期')) {
+    return '已过期';
+  }
+  if (status === 'failed' || normalizedMessage.includes('失败')) {
+    return '获取失败';
+  }
+
+  return '暂无验证码';
 }
 
 async function copyValue(value: string | number | null | undefined, label: string): Promise<void> {
@@ -804,7 +911,38 @@ function formatRemaining(value: number | null): string {
 }
 
 function formatExpiryCvv(expiryDate: string | null, cvv: string | null): string {
-  return `${expiryDate || '-'} / ${cvv || '-'}`;
+  return `${formatCardExpiryDisplay(expiryDate)} / ${cvv || '-'}`;
+}
+
+function formatCardExpiryDisplay(expiryDate: string | null | undefined): string {
+  if (!expiryDate) {
+    return '-';
+  }
+
+  const text = String(expiryDate).trim();
+  if (!text) {
+    return '-';
+  }
+
+  const slashMatch = text.match(/^(\d{2})\/(\d{2,4})$/);
+  if (slashMatch) {
+    const [, month, year] = slashMatch;
+    return `${month}/${year.slice(-2)}`;
+  }
+
+  const reverseSlashMatch = text.match(/^(\d{4})\/(\d{1,2})$/);
+  if (reverseSlashMatch) {
+    const [, year, month] = reverseSlashMatch;
+    return `${month.padStart(2, '0')}/${year.slice(-2)}`;
+  }
+
+  const dashMatch = text.match(/^(\d{4})-(\d{1,2})$/);
+  if (dashMatch) {
+    const [, year, month] = dashMatch;
+    return `${month.padStart(2, '0')}/${year.slice(-2)}`;
+  }
+
+  return text;
 }
 
 async function loadItems(): Promise<void> {
@@ -954,11 +1092,12 @@ async function handleFetchSelectedCardCode(): Promise<void> {
   try {
     const result = await api.fetchSeven79CardCode(selectedItem.value.id);
     patchItem(result.item);
-    cardCodeInput.value = result.code || result.message || '暂无验证码';
-    if (result.code) {
-      message.success(`已获取虚拟卡验证码：${result.code}`);
+    const code = extractNumericCode(result.code) || extractNumericCode(result.message);
+    cardCodeInput.value = resolveCodeDisplay(result.code, result.message);
+    if (code) {
+      message.success(`已获取虚拟卡验证码：${code}`);
     } else {
-      message.warning(result.message || '暂无验证码');
+      message.warning(cardCodeInput.value);
     }
   } catch (error) {
     message.error(error instanceof Error ? error.message : '虚拟卡验证码刷新失败');
@@ -1011,13 +1150,15 @@ async function handleFetchPpCode(row: PpSmsItem): Promise<void> {
   try {
     const result = await api.fetchPpSmsCode(row.id);
     patchPpSmsItem(result.item);
+    const code = extractNumericCode(result.code) || extractNumericCode(result.message);
+    const codeDisplay = resolveCodeDisplay(result.code, result.message, result.item.status);
     if (selectedPpSmsId.value === row.id) {
-      ppCodeInput.value = result.code || result.message || '暂无验证码';
+      ppCodeInput.value = codeDisplay;
     }
-    if (result.code) {
-      message.success(`已获取验证码：${result.code}`);
+    if (code) {
+      message.success(`已获取验证码：${code}`);
     } else {
-      message.warning(result.message || '暂无验证码');
+      message.warning(codeDisplay);
     }
   } catch (error) {
     message.error(error instanceof Error ? error.message : '刷新验证码失败');
@@ -1493,6 +1634,31 @@ onMounted(async () => {
   align-items: center;
   gap: 10px;
   min-width: 0;
+}
+
+.work-card-header-main {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.work-card-key {
+  min-width: 0;
+  max-width: 260px;
+  padding: 5px 10px;
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: 10px;
+  background: rgba(99, 102, 241, 0.06);
+  color: #4338ca;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .work-card-inline-meta {
@@ -2231,4 +2397,3 @@ onMounted(async () => {
   }
 }
 </style>
-
