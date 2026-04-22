@@ -62,59 +62,6 @@
         </header>
 
         <div v-if="selectedItem" class="work-card-body payment-card-body">
-          <div class="virtual-card-panel">
-            <div class="virtual-card-top">
-              <div>
-                <div class="meta-label meta-label-dark">Virtual Card</div>
-              </div>
-              <div class="virtual-card-chip" aria-hidden="true"></div>
-            </div>
-
-            <div class="card-number-row">
-              <div class="card-number mono-text">{{ displayValue(selectedItem.cardNumber) }}</div>
-              <button
-                type="button"
-                class="copy-icon-button copy-icon-button-dark"
-                :disabled="!isCopyableValue(selectedItem.cardNumber)"
-                @click="copyValue(selectedItem.cardNumber, '卡号')"
-              >
-                <CopyIcon />
-              </button>
-            </div>
-
-            <div class="virtual-card-meta-grid">
-              <div class="virtual-meta-block">
-                <span class="meta-label meta-label-dark">Expires</span>
-                <div class="inline-copy-value">
-                  <strong class="mono-text">{{ formatCardExpiryDisplay(selectedItem.expiryDate) }}</strong>
-                  <button
-                    type="button"
-                    class="copy-icon-button copy-icon-button-dark"
-                    :disabled="!isCopyableValue(formatCardExpiryDisplay(selectedItem.expiryDate))"
-                    @click="copyValue(formatCardExpiryDisplay(selectedItem.expiryDate), '日期')"
-                  >
-                    <CopyIcon />
-                  </button>
-                </div>
-              </div>
-
-              <div class="virtual-meta-block">
-                <span class="meta-label meta-label-dark">CVV / CVC</span>
-                <div class="inline-copy-value">
-                  <strong class="mono-text">{{ displayValue(selectedItem.cvv) }}</strong>
-                  <button
-                    type="button"
-                    class="copy-icon-button copy-icon-button-dark"
-                    :disabled="!isCopyableValue(selectedItem.cvv)"
-                    @click="copyValue(selectedItem.cvv, 'CVV')"
-                  >
-                    <CopyIcon />
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
           <section class="info-panel">
             <div class="virtual-detail-stack">
               <div class="virtual-detail-row virtual-detail-row-full">
@@ -617,22 +564,8 @@ const selectedAddressFields = computed<AddressField[]>(() => {
     { label: '街道', value: address.street, copyLabel: '街道地址' },
     { label: '城市', value: address.city, copyLabel: '城市' },
     { label: '州', value: address.state, copyLabel: '州' },
-    { label: '邮编 / 国家', value: formatAddressPostalCountry(address), copyLabel: '邮编和国家', mono: true }
-  ];
-});
-
-
-const cardSummaryFields = computed<InfoField[]>(() => {
-  const item = selectedItem.value;
-  if (!item) {
-    return [];
-  }
-
-  return [
-    { label: '状态', value: renderStatusLabel(item.status), tone: item.errorMessage ? 'error' : undefined },
-    { label: '分类', value: displayValue(item.category) },
-    { label: '校验到期', value: displayValue(item.checkExpiryTime) },
-    { label: '剩余时间', value: formatRemaining(item.checkRemainingTimeMs) }
+    { label: '邮编', value: address.postalCode, copyLabel: '邮编', mono: true },
+    { label: '国家', value: address.country, copyLabel: '国家' }
   ];
 });
 
@@ -1029,21 +962,6 @@ function formatRemaining(value: number | null): string {
   return `${minutes}分 ${seconds}秒`;
 }
 
-function formatAddressPostalCountry(address: ParsedAddress): string | null {
-  const postalCode = normalizeCopyValue(address.postalCode);
-  const country = normalizeCopyValue(address.country);
-  if (postalCode && country) {
-    return `${postalCode} / ${country}`;
-  }
-  if (postalCode) {
-    return postalCode;
-  }
-  if (country) {
-    return country;
-  }
-  return null;
-}
-
 function parseSelectedCardAddress(value: string | null | undefined): ParsedAddress {
   const fullAddress = normalizeCopyValue(value);
   if (!fullAddress) {
@@ -1075,7 +993,7 @@ function parseCommaSeparatedAddress(fullAddress: string, parts: string[]): Parse
   const cityStatePostalPart = parts.at(-2) ?? '';
   const streetParts = parts.slice(0, Math.max(0, parts.length - 2));
   const street = streetParts.join(', ').trim() || null;
-  const location = parseCityStatePostal(cityStatePostalPart);
+  const location = parseCityStatePostal(cityStatePostalPart) ?? parseCityPostal(cityStatePostalPart);
   if (!location) {
     return null;
   }
@@ -1123,6 +1041,31 @@ function parseCityStatePostal(value: string): { city: string | null; state: stri
   return {
     city: city.replace(/,$/, '').trim() || null,
     state: state.toUpperCase(),
+    postalCode
+  };
+}
+
+function parseCityPostal(value: string): { city: string | null; state: string | null; postalCode: string | null } | null {
+  const normalized = normalizeCopyValue(value);
+  if (!normalized) {
+    return null;
+  }
+
+  const compact = normalized.replace(/\s+/g, ' ').trim();
+  const match = compact.match(/^(.*?)(?:\s+|,\s*)(\d{5}(?:-\d{4})?)$/);
+  if (!match) {
+    return null;
+  }
+
+  const [, city, postalCode] = match;
+  const parsedCity = city.replace(/,$/, '').trim() || null;
+  if (!parsedCity) {
+    return null;
+  }
+
+  return {
+    city: parsedCity,
+    state: null,
     postalCode
   };
 }
@@ -1801,19 +1744,11 @@ onMounted(async () => {
   gap: 10px;
 }
 
-.quick-check-item,
-.fact-card {
-  border: 1px solid rgba(226, 232, 240, 0.95);
-  border-radius: 12px;
-  background: #ffffff;
-}
-
 .quick-check-item {
   padding: 10px 12px;
 }
 
-.quick-check-item span,
-.fact-card span {
+.quick-check-item span {
   display: block;
   margin-bottom: 4px;
   color: var(--seven79-text-faint);
@@ -1823,8 +1758,7 @@ onMounted(async () => {
   text-transform: uppercase;
 }
 
-.quick-check-item strong,
-.fact-card strong {
+.quick-check-item strong {
   display: block;
   color: var(--seven79-text);
   font-size: 12px;
@@ -1837,7 +1771,7 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
-  align-items: stretch;
+  align-items: start;
 }
 
 .work-card {
@@ -1862,7 +1796,6 @@ onMounted(async () => {
 }
 
 .work-card-header h2,
-.info-panel-header h3,
 .section-head h2 {
   margin: 0;
   color: var(--seven79-text);
@@ -1904,50 +1837,6 @@ onMounted(async () => {
   padding-top: 14px;
 }
 
-.virtual-card-panel {
-  position: relative;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 20px;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 12px 28px rgba(15, 23, 42, 0.14);
-}
-
-.virtual-card-panel::after {
-  content: '';
-  position: absolute;
-  top: -48px;
-  right: -16px;
-  width: 136px;
-  height: 136px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0) 72%);
-}
-
-.virtual-card-top,
-.card-number-row,
-.inline-copy-value,
-.info-value,
-.code-line,
-.phone-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.virtual-card-chip {
-  width: 28px;
-  height: 20px;
-  border-radius: 6px;
-  background: linear-gradient(135deg, rgba(255,255,255,0.65), rgba(255,255,255,0.18)), linear-gradient(135deg, #fde68a, #f59e0b);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
-  flex-shrink: 0;
-}
-
 .meta-label {
   color: var(--seven79-text-faint);
   font-size: 9px;
@@ -1956,54 +1845,9 @@ onMounted(async () => {
   text-transform: uppercase;
 }
 
-.meta-label-dark {
-  color: rgba(148, 163, 184, 0.92);
-}
-
 .mono-text {
   font-family: var(--seven79-mono);
   font-variant-numeric: tabular-nums;
-}
-
-.card-number {
-  position: relative;
-  z-index: 1;
-  color: #ffffff;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  line-height: 1.45;
-  word-break: break-word;
-}
-
-.virtual-card-meta-grid,
-.facts-grid {
-  display: grid;
-  gap: 10px;
-}
-
-.virtual-card-meta-grid {
-  position: relative;
-  z-index: 1;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.virtual-meta-block {
-  min-width: 0;
-}
-
-.virtual-meta-block strong {
-  color: #ffffff;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.facts-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.fact-card {
-  padding: 10px 12px;
 }
 
 .info-panel {
@@ -2015,87 +1859,6 @@ onMounted(async () => {
   border-radius: 0;
   background: transparent;
 }
-
-.info-panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.info-panel-header span,
-.sms-block-header span,
-.section-head span {
-  margin: 0;
-  color: var(--seven79-text-faint);
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.info-list {
-  display: grid;
-  gap: 12px;
-}
-
-.info-list-stack {
-  gap: 14px;
-}
-
-.info-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.info-row-stack {
-  align-items: center;
-  gap: 12px;
-}
-
-.info-key {
-  display: block;
-  min-width: 0;
-  padding-top: 0;
-  color: #94a3b8;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.info-value {
-  flex: 1;
-  align-items: flex-start;
-  justify-content: space-between;
-  min-width: 0;
-}
-
-.info-copy-block {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-
-.info-copy-block-wide {
-  width: 100%;
-}
-
-.info-value strong,
-.info-copy-block strong {
-  color: var(--seven79-text);
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1.5;
-  text-align: left;
-  word-break: break-word;
-}
-
-.info-value-multiline {
-  align-items: flex-start;
-}
-
 
 .virtual-detail-stack {
   display: flex;
@@ -2238,21 +2001,14 @@ onMounted(async () => {
 
 .sms-stack {
   display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 12px;
+  flex: 0 0 auto;
+  gap: 10px;
 }
 
 .sms-block {
   display: flex;
-  flex: 1;
   flex-direction: column;
-  gap: 14px;
-  padding: 18px;
-  border: 1px solid rgba(226, 232, 240, 0.92);
-  border-radius: 14px;
-  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  gap: 10px;
 }
 
 .sms-block-header {
@@ -2277,11 +2033,10 @@ onMounted(async () => {
 
 .code-panel {
   display: grid;
-  gap: 10px;
-  flex: 1;
-  align-content: center;
-  min-height: 94px;
-  padding: 10px 0 4px;
+  gap: 12px;
+  align-content: start;
+  min-height: 120px;
+  padding: 8px 0 0;
 }
 
 .code-line-centered {
@@ -2421,17 +2176,9 @@ onMounted(async () => {
   opacity: 0.22;
 }
 
-.copy-icon-button-dark:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.1);
-}
-
 .copy-icon-button :deep(svg) {
   width: 13px;
   height: 13px;
-}
-
-.detail-error {
-  color: #dc2626 !important;
 }
 
 .list-modal {
@@ -2637,9 +2384,7 @@ onMounted(async () => {
   .list-toolbar,
   .section-head,
   .work-card-header,
-  .sms-block-header,
-  .info-panel-header,
-  .info-row {
+  .sms-block-header {
     flex-direction: column;
     align-items: flex-start;
   }
@@ -2650,19 +2395,12 @@ onMounted(async () => {
   }
 
   .quick-check-strip,
-  .facts-grid,
-  .virtual-card-meta-grid,
   .virtual-detail-meta-row {
     grid-template-columns: 1fr 1fr;
   }
 
   .virtual-detail-line-header,
-  .info-row-stack,
   .phone-row {
-    width: 100%;
-  }
-
-  .info-copy-block {
     width: 100%;
   }
 }
@@ -2673,9 +2411,6 @@ onMounted(async () => {
   }
 
   .quick-check-strip,
-  .facts-grid,
-  .virtual-card-meta-grid,
-  .virtual-detail-stack,
   .virtual-detail-meta-row {
     grid-template-columns: 1fr;
   }
