@@ -66,7 +66,10 @@
             <div class="virtual-detail-stack">
               <div class="virtual-detail-row virtual-detail-row-full">
                 <div class="virtual-detail-line-header">
-                  <span class="virtual-detail-line-label">卡号</span>
+                  <div class="virtual-detail-line-inline virtual-detail-line-inline-number">
+                    <span class="virtual-detail-line-label">卡号:</span>
+                    <strong class="virtual-detail-line-value mono-text">{{ formatCardNumberDisplay(selectedItem.cardNumber) }}</strong>
+                  </div>
                   <button
                     type="button"
                     class="virtual-line-copy-button"
@@ -76,13 +79,15 @@
                     复制
                   </button>
                 </div>
-                <strong class="virtual-detail-line-value mono-text">{{ displayValue(selectedItem.cardNumber) }}</strong>
               </div>
 
               <div class="virtual-detail-meta-row">
                 <div class="virtual-detail-row">
                   <div class="virtual-detail-line-header">
-                    <span class="virtual-detail-line-label">日期</span>
+                    <div class="virtual-detail-line-inline">
+                      <span class="virtual-detail-line-label">日期:</span>
+                      <strong class="virtual-detail-line-value mono-text">{{ formatCardExpiryDisplay(selectedItem.expiryDate) }}</strong>
+                    </div>
                     <button
                       type="button"
                       class="virtual-line-copy-button"
@@ -92,12 +97,14 @@
                       复制
                     </button>
                   </div>
-                  <strong class="virtual-detail-line-value mono-text">{{ formatCardExpiryDisplay(selectedItem.expiryDate) }}</strong>
                 </div>
 
                 <div class="virtual-detail-row">
                   <div class="virtual-detail-line-header">
-                    <span class="virtual-detail-line-label">CVV / 安全码</span>
+                    <div class="virtual-detail-line-inline">
+                      <span class="virtual-detail-line-label">CVV / 安全码:</span>
+                      <strong class="virtual-detail-line-value mono-text">{{ displayValue(selectedItem.cvv) }}</strong>
+                    </div>
                     <button
                       type="button"
                       class="virtual-line-copy-button"
@@ -107,13 +114,15 @@
                       复制
                     </button>
                   </div>
-                  <strong class="virtual-detail-line-value mono-text">{{ displayValue(selectedItem.cvv) }}</strong>
                 </div>
               </div>
 
               <div class="virtual-detail-row virtual-detail-row-full" v-if="isCopyableValue(selectedItem.holderName) || displayValue(selectedItem.holderName) !== '-'">
                 <div class="virtual-detail-line-header">
-                  <span class="virtual-detail-line-label">持卡人</span>
+                  <div class="virtual-detail-line-inline">
+                    <span class="virtual-detail-line-label">持卡人:</span>
+                    <strong class="virtual-detail-line-value">{{ displayValue(selectedItem.holderName) }}</strong>
+                  </div>
                   <button
                     type="button"
                     class="virtual-line-copy-button"
@@ -123,13 +132,15 @@
                     复制
                   </button>
                 </div>
-                <strong class="virtual-detail-line-value">{{ displayValue(selectedItem.holderName) }}</strong>
               </div>
 
               <div class="virtual-detail-address-stack">
                 <div class="virtual-detail-row virtual-detail-row-full">
                   <div class="virtual-detail-line-header">
-                    <span class="virtual-detail-line-label">地址信息</span>
+                    <div class="virtual-detail-line-inline">
+                      <span class="virtual-detail-line-label">地址信息:</span>
+                      <strong class="virtual-detail-line-value">{{ displayValue(selectedParsedAddress.fullAddress) }}</strong>
+                    </div>
                     <button
                       type="button"
                       class="virtual-line-copy-button"
@@ -139,12 +150,14 @@
                       复制
                     </button>
                   </div>
-                  <strong class="virtual-detail-line-value">{{ displayValue(selectedParsedAddress.fullAddress) }}</strong>
                 </div>
 
                 <div v-for="field in selectedAddressFields" :key="field.label" class="virtual-detail-row virtual-detail-row-full">
                   <div class="virtual-detail-line-header">
-                    <span class="virtual-detail-line-label">{{ field.label }}</span>
+                    <div class="virtual-detail-line-inline">
+                      <span class="virtual-detail-line-label">{{ field.label }}:</span>
+                      <strong class="virtual-detail-line-value" :class="{ 'mono-text': field.mono }">{{ displayValue(field.value) }}</strong>
+                    </div>
                     <button
                       type="button"
                       class="virtual-line-copy-button"
@@ -154,7 +167,6 @@
                       复制
                     </button>
                   </div>
-                  <strong class="virtual-detail-line-value" :class="{ 'mono-text': field.mono }">{{ displayValue(field.value) }}</strong>
                 </div>
               </div>
             </div>
@@ -1099,6 +1111,20 @@ function formatExpiryCvv(expiryDate: string | null, cvv: string | null): string 
   return `${formatCardExpiryDisplay(expiryDate)} / ${cvv || '-'}`;
 }
 
+function formatCardNumberDisplay(value: string | null | undefined): string {
+  const normalized = normalizeCopyValue(value).replace(/\s+/g, '');
+  if (!normalized) {
+    return '-';
+  }
+
+  const digitsOnly = normalized.replace(/\D/g, '');
+  if (digitsOnly.length >= 12) {
+    return digitsOnly.match(/.{1,4}/g)?.join(' ') ?? digitsOnly;
+  }
+
+  return normalized;
+}
+
 function formatCardExpiryDisplay(expiryDate: string | null | undefined): string {
   if (!expiryDate) {
     return '-';
@@ -1881,12 +1907,12 @@ onMounted(async () => {
 .virtual-detail-row {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px 14px;
-  border: 1.5px solid rgba(15, 23, 42, 0.82);
+  gap: 8px;
+  padding: 11px 14px;
+  border: 1px solid rgba(15, 23, 42, 0.72);
   border-radius: 14px;
   background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.1);
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08);
 }
 
 .virtual-detail-row-full {
@@ -1897,14 +1923,28 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
+}
+
+.virtual-detail-line-inline {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+  flex-wrap: wrap;
+}
+
+.virtual-detail-line-inline-number {
+  gap: 8px;
 }
 
 .virtual-detail-line-label {
-  color: #0f172a;
+  color: #64748b;
   font-size: 11px;
   font-weight: 700;
   line-height: 1.2;
+  flex-shrink: 0;
 }
 
 .virtual-detail-line-value {
@@ -1923,7 +1963,7 @@ onMounted(async () => {
   min-width: 54px;
   height: 28px;
   padding: 0 12px;
-  border: 1.5px solid rgba(15, 23, 42, 0.82);
+  border: 1px solid rgba(15, 23, 42, 0.72);
   border-radius: 999px;
   background: #ffffff;
   color: #0f172a;
@@ -2001,14 +2041,19 @@ onMounted(async () => {
 
 .sms-stack {
   display: flex;
-  flex: 0 0 auto;
-  gap: 10px;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .sms-block {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
 .sms-block-header {
@@ -2019,24 +2064,28 @@ onMounted(async () => {
 }
 
 .phone-row {
-  padding: 0 2px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0;
 }
 
 .phone-text {
   color: var(--seven79-text);
-  font-size: 22px;
+  font-size: 18px;
   font-weight: 700;
   letter-spacing: 0.01em;
-  line-height: 1.3;
+  line-height: 1.25;
   word-break: break-word;
 }
 
 .code-panel {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   align-content: start;
-  min-height: 120px;
-  padding: 8px 0 0;
+  min-height: 88px;
+  padding: 4px 0 0;
 }
 
 .code-line-centered {
@@ -2085,7 +2134,7 @@ onMounted(async () => {
 
 .pp-select-wrap {
   position: relative;
-  margin-top: 8px;
+  margin-top: 2px;
 }
 
 :deep(.pp-select-wrap .n-base-selection) {
@@ -2106,7 +2155,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: flex-end;
   gap: 5px;
-  margin-top: 4px;
+  margin-top: 2px;
   color: var(--seven79-text-faint);
   font-size: 10px;
   font-weight: 600;
