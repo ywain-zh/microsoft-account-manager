@@ -116,57 +116,98 @@
           </div>
 
           <section class="info-panel">
-            <div class="virtual-detail-grid">
-              <div class="virtual-detail-card">
-                <div class="virtual-detail-card-header">
-                  <div class="virtual-detail-card-content">
-                    <span class="info-key">持卡人</span>
-                    <strong>{{ displayValue(selectedItem.holderName) }}</strong>
-                  </div>
+            <div class="virtual-detail-stack">
+              <div class="virtual-detail-row virtual-detail-row-full">
+                <div class="virtual-detail-line-header">
+                  <span class="virtual-detail-line-label">卡号</span>
                   <button
                     type="button"
-                    class="copy-icon-button virtual-detail-copy-button"
-                    :disabled="!isCopyableValue(selectedItem.holderName)"
-                    @click="copyValue(selectedItem.holderName, '姓名')"
+                    class="virtual-line-copy-button"
+                    :disabled="!isCopyableValue(selectedItem.cardNumber)"
+                    @click="copyValue(selectedItem.cardNumber, '卡号')"
                   >
-                    <CopyIcon />
+                    复制
                   </button>
+                </div>
+                <strong class="virtual-detail-line-value mono-text">{{ displayValue(selectedItem.cardNumber) }}</strong>
+              </div>
+
+              <div class="virtual-detail-meta-row">
+                <div class="virtual-detail-row">
+                  <div class="virtual-detail-line-header">
+                    <span class="virtual-detail-line-label">日期</span>
+                    <button
+                      type="button"
+                      class="virtual-line-copy-button"
+                      :disabled="!isCopyableValue(formatCardExpiryDisplay(selectedItem.expiryDate))"
+                      @click="copyValue(formatCardExpiryDisplay(selectedItem.expiryDate), '日期')"
+                    >
+                      复制
+                    </button>
+                  </div>
+                  <strong class="virtual-detail-line-value mono-text">{{ formatCardExpiryDisplay(selectedItem.expiryDate) }}</strong>
+                </div>
+
+                <div class="virtual-detail-row">
+                  <div class="virtual-detail-line-header">
+                    <span class="virtual-detail-line-label">CVV / 安全码</span>
+                    <button
+                      type="button"
+                      class="virtual-line-copy-button"
+                      :disabled="!isCopyableValue(selectedItem.cvv)"
+                      @click="copyValue(selectedItem.cvv, 'CVV')"
+                    >
+                      复制
+                    </button>
+                  </div>
+                  <strong class="virtual-detail-line-value mono-text">{{ displayValue(selectedItem.cvv) }}</strong>
                 </div>
               </div>
 
-              <div class="virtual-detail-card virtual-detail-card-wide">
-                <div class="virtual-detail-card-header virtual-detail-card-header-top">
-                  <div class="virtual-detail-card-content virtual-detail-card-content-wide">
-                    <span class="info-key">地址信息</span>
-                    <strong>{{ displayValue(selectedParsedAddress.fullAddress) }}</strong>
-                  </div>
+              <div class="virtual-detail-row virtual-detail-row-full" v-if="isCopyableValue(selectedItem.holderName) || displayValue(selectedItem.holderName) !== '-'">
+                <div class="virtual-detail-line-header">
+                  <span class="virtual-detail-line-label">持卡人</span>
                   <button
                     type="button"
-                    class="copy-icon-button virtual-detail-copy-button"
-                    :disabled="!isCopyableValue(selectedParsedAddress.fullAddress)"
-                    @click="copyValue(selectedParsedAddress.fullAddress, '地址')"
+                    class="virtual-line-copy-button"
+                    :disabled="!isCopyableValue(selectedItem.holderName)"
+                    @click="copyValue(selectedItem.holderName, '姓名')"
                   >
-                    <CopyIcon />
+                    复制
                   </button>
                 </div>
+                <strong class="virtual-detail-line-value">{{ displayValue(selectedItem.holderName) }}</strong>
+              </div>
 
-                <div class="virtual-address-grid">
-                  <div v-for="field in selectedAddressFields" :key="field.label" class="virtual-address-card">
-                    <div class="virtual-detail-card-header">
-                      <div class="virtual-detail-card-content">
-                        <span class="info-key">{{ field.label }}</span>
-                        <strong :class="{ 'mono-text': field.mono }">{{ displayValue(field.value) }}</strong>
-                      </div>
-                      <button
-                        type="button"
-                        class="copy-icon-button virtual-detail-copy-button"
-                        :disabled="!isCopyableValue(field.value)"
-                        @click="copyValue(field.value, field.copyLabel)"
-                      >
-                        <CopyIcon />
-                      </button>
-                    </div>
+              <div class="virtual-detail-address-stack">
+                <div class="virtual-detail-row virtual-detail-row-full">
+                  <div class="virtual-detail-line-header">
+                    <span class="virtual-detail-line-label">地址信息</span>
+                    <button
+                      type="button"
+                      class="virtual-line-copy-button"
+                      :disabled="!isCopyableValue(selectedParsedAddress.fullAddress)"
+                      @click="copyValue(selectedParsedAddress.fullAddress, '地址')"
+                    >
+                      复制
+                    </button>
                   </div>
+                  <strong class="virtual-detail-line-value">{{ displayValue(selectedParsedAddress.fullAddress) }}</strong>
+                </div>
+
+                <div v-for="field in selectedAddressFields" :key="field.label" class="virtual-detail-row virtual-detail-row-full">
+                  <div class="virtual-detail-line-header">
+                    <span class="virtual-detail-line-label">{{ field.label }}</span>
+                    <button
+                      type="button"
+                      class="virtual-line-copy-button"
+                      :disabled="!isCopyableValue(field.value)"
+                      @click="copyValue(field.value, field.copyLabel)"
+                    >
+                      复制
+                    </button>
+                  </div>
+                  <strong class="virtual-detail-line-value" :class="{ 'mono-text': field.mono }">{{ displayValue(field.value) }}</strong>
                 </div>
               </div>
             </div>
@@ -573,13 +614,13 @@ const selectedParsedAddress = computed<ParsedAddress>(() => parseSelectedCardAdd
 const selectedAddressFields = computed<AddressField[]>(() => {
   const address = selectedParsedAddress.value;
   return [
-    { label: 'Street', value: address.street, copyLabel: '街道地址' },
-    { label: 'City', value: address.city, copyLabel: '城市' },
-    { label: 'State', value: address.state, copyLabel: '州' },
-    { label: 'Zip Code', value: address.postalCode, copyLabel: '邮编', mono: true },
-    { label: 'Country', value: address.country, copyLabel: '国家' }
+    { label: '街道', value: address.street, copyLabel: '街道地址' },
+    { label: '城市', value: address.city, copyLabel: '城市' },
+    { label: '州', value: address.state, copyLabel: '州' },
+    { label: '邮编 / 国家', value: formatAddressPostalCountry(address), copyLabel: '邮编和国家', mono: true }
   ];
 });
+
 
 const cardSummaryFields = computed<InfoField[]>(() => {
   const item = selectedItem.value;
@@ -988,6 +1029,21 @@ function formatRemaining(value: number | null): string {
   return `${minutes}分 ${seconds}秒`;
 }
 
+function formatAddressPostalCountry(address: ParsedAddress): string | null {
+  const postalCode = normalizeCopyValue(address.postalCode);
+  const country = normalizeCopyValue(address.country);
+  if (postalCode && country) {
+    return `${postalCode} / ${country}`;
+  }
+  if (postalCode) {
+    return postalCode;
+  }
+  if (country) {
+    return country;
+  }
+  return null;
+}
+
 function parseSelectedCardAddress(value: string | null | undefined): ParsedAddress {
   const fullAddress = normalizeCopyValue(value);
   if (!fullAddress) {
@@ -996,23 +1052,93 @@ function parseSelectedCardAddress(value: string | null | undefined): ParsedAddre
 
   const normalized = fullAddress.replace(/\s+/g, ' ').trim();
   const parts = normalized.split(',').map((part) => part.trim()).filter(Boolean);
-  if (parts.length >= 3) {
-    const [streetPart, cityStateZipPart, countryPart] = parts;
-    const cityStateZipMatch = cityStateZipPart.match(/^(.*?)(?:\s+([A-Z]{2})\s+(\d{5}(?:-\d{4})?))$/i);
-    if (cityStateZipMatch) {
-      const [, city, state, postalCode] = cityStateZipMatch;
-      return {
-        fullAddress: normalized,
-        street: streetPart || null,
-        city: city.trim() || null,
-        state: state?.toUpperCase() || null,
-        postalCode: postalCode || null,
-        country: countryPart || null
-      };
-    }
+
+  const parsedCommaAddress = parseCommaSeparatedAddress(normalized, parts);
+  if (parsedCommaAddress) {
+    return parsedCommaAddress;
+  }
+
+  const parsedTailAddress = parseAddressByTailPattern(normalized);
+  if (parsedTailAddress) {
+    return parsedTailAddress;
   }
 
   return createParsedAddress(normalized);
+}
+
+function parseCommaSeparatedAddress(fullAddress: string, parts: string[]): ParsedAddress | null {
+  if (parts.length < 2) {
+    return null;
+  }
+
+  const countryPart = resolveAddressCountry(parts.at(-1) ?? null);
+  const cityStatePostalPart = parts.at(-2) ?? '';
+  const streetParts = parts.slice(0, Math.max(0, parts.length - 2));
+  const street = streetParts.join(', ').trim() || null;
+  const location = parseCityStatePostal(cityStatePostalPart);
+  if (!location) {
+    return null;
+  }
+
+  return {
+    fullAddress,
+    street,
+    city: location.city,
+    state: location.state,
+    postalCode: location.postalCode,
+    country: countryPart || null
+  };
+}
+
+function parseAddressByTailPattern(fullAddress: string): ParsedAddress | null {
+  const tailMatch = fullAddress.match(/^(.*?)(?:,?\s+)([A-Za-z .'-]+?)\s+([A-Z]{2})\s+(\d{5}(?:-\d{4})?)(?:,?\s+([A-Za-z]{2,}|United States|USA))?$/i);
+  if (!tailMatch) {
+    return null;
+  }
+
+  const [, street, city, state, postalCode, country] = tailMatch;
+  return {
+    fullAddress,
+    street: street.trim() || null,
+    city: city.trim() || null,
+    state: state.toUpperCase(),
+    postalCode,
+    country: resolveAddressCountry(country)
+  };
+}
+
+function parseCityStatePostal(value: string): { city: string | null; state: string | null; postalCode: string | null } | null {
+  const normalized = normalizeCopyValue(value);
+  if (!normalized) {
+    return null;
+  }
+
+  const compact = normalized.replace(/\s+/g, ' ').trim();
+  const match = compact.match(/^(.*?)(?:\s+|,\s*)([A-Z]{2})(?:\s+|,\s*)(\d{5}(?:-\d{4})?)$/i);
+  if (!match) {
+    return null;
+  }
+
+  const [, city, state, postalCode] = match;
+  return {
+    city: city.replace(/,$/, '').trim() || null,
+    state: state.toUpperCase(),
+    postalCode
+  };
+}
+
+function resolveAddressCountry(value: string | null | undefined): string | null {
+  const normalized = normalizeCopyValue(value);
+  if (!normalized) {
+    return null;
+  }
+
+  const upper = normalized.toUpperCase();
+  if (upper === 'USA' || upper === 'UNITED STATES' || upper === 'UNITED STATES OF AMERICA') {
+    return 'US';
+  }
+
+  return normalized;
 }
 
 function createParsedAddress(fullAddress: string): ParsedAddress {
@@ -1971,72 +2097,90 @@ onMounted(async () => {
 }
 
 
-.virtual-detail-grid {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.6fr);
-}
-
-.virtual-detail-card {
+.virtual-detail-stack {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 14px 16px;
-  border: 1px solid rgba(226, 232, 240, 0.96);
-  border-radius: 14px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 250, 252, 0.96) 100%);
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
-}
-
-.virtual-detail-card-wide {
-  gap: 14px;
-}
-
-.virtual-detail-card-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
   gap: 10px;
 }
 
-.virtual-detail-card-header-top {
-  padding-bottom: 12px;
-  border-bottom: 1px solid rgba(226, 232, 240, 0.88);
-}
-
-.virtual-detail-card-content {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-
-.virtual-detail-card-content-wide {
-  flex: 1;
-}
-
-.virtual-detail-card-content strong {
-  color: var(--seven79-text);
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1.55;
-  word-break: break-word;
-}
-
-.virtual-detail-copy-button {
-  flex-shrink: 0;
-}
-
-.virtual-address-grid {
+.virtual-detail-meta-row {
   display: grid;
   gap: 10px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.virtual-address-card {
+.virtual-detail-address-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.virtual-detail-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   padding: 12px 14px;
-  border-radius: 12px;
-  background: #f8fafc;
-  border: 1px solid rgba(226, 232, 240, 0.9);
+  border: 1.5px solid rgba(15, 23, 42, 0.82);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.1);
+}
+
+.virtual-detail-row-full {
+  width: 100%;
+}
+
+.virtual-detail-line-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.virtual-detail-line-label {
+  color: #0f172a;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.virtual-detail-line-value {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.45;
+  text-align: left;
+  word-break: break-word;
+}
+
+.virtual-line-copy-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 54px;
+  height: 28px;
+  padding: 0 12px;
+  border: 1.5px solid rgba(15, 23, 42, 0.82);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
+  flex-shrink: 0;
+}
+
+.virtual-line-copy-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.12);
+}
+
+.virtual-line-copy-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  box-shadow: none;
 }
 
 
@@ -2044,6 +2188,7 @@ onMounted(async () => {
   background: #ecfdf5;
   color: #059669;
 }
+
 
 .status-badge-warning {
   background: #fffbeb;
@@ -2507,13 +2652,11 @@ onMounted(async () => {
   .quick-check-strip,
   .facts-grid,
   .virtual-card-meta-grid,
-  .virtual-detail-grid,
-  .virtual-address-grid {
+  .virtual-detail-meta-row {
     grid-template-columns: 1fr 1fr;
   }
 
-  .virtual-detail-card-header,
-  .virtual-detail-card-header-top,
+  .virtual-detail-line-header,
   .info-row-stack,
   .phone-row {
     width: 100%;
@@ -2532,8 +2675,8 @@ onMounted(async () => {
   .quick-check-strip,
   .facts-grid,
   .virtual-card-meta-grid,
-  .virtual-detail-grid,
-  .virtual-address-grid {
+  .virtual-detail-stack,
+  .virtual-detail-meta-row {
     grid-template-columns: 1fr;
   }
 
