@@ -203,12 +203,14 @@
               </div>
 
               <div class="phone-row">
-                <div class="phone-text mono-text">{{ displayValue(selectedItem?.phone) }}</div>
+                <div class="phone-text mono-text">
+                  {{ [selectedCardSmsPhone.prefix ? `(${selectedCardSmsPhone.prefix})` : null, selectedCardSmsPhone.number].filter(Boolean).join(' ') || '-' }}
+                </div>
                 <button
                   type="button"
                   class="copy-icon-button"
-                  :disabled="!isCopyableValue(selectedItem?.phone)"
-                  @click="copyValue(selectedItem?.phone, '虚拟卡手机号')"
+                  :disabled="!isCopyableValue(selectedCardSmsPhone.number)"
+                  @click="copyValue(selectedCardSmsPhone.number, '虚拟卡手机号')"
                 >
                   <CopyIcon />
                 </button>
@@ -572,6 +574,7 @@ const ppSmsOptions = computed(() =>
 );
 
 const selectedPpSmsPhone = computed(() => splitPhoneValue(selectedPpSmsItem.value?.fullPhone));
+const selectedCardSmsPhone = computed(() => splitPhoneValue(selectedItem.value?.phone));
 
 const selectedParsedAddress = computed<ParsedAddress>(() => parseSelectedCardAddress(selectedItem.value?.address));
 
@@ -2061,7 +2064,6 @@ onMounted(async () => {
   height: 6px;
   border-radius: 50%;
   background: currentColor;
-  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 18%, transparent);
   flex-shrink: 0;
 }
 
@@ -2115,7 +2117,7 @@ onMounted(async () => {
 
 .phone-text {
   color: var(--seven79-text);
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 700;
   letter-spacing: 0.01em;
   line-height: 1.25;
@@ -2187,8 +2189,8 @@ onMounted(async () => {
 .pp-select-wrap {
   position: relative;
   margin-top: 2px;
-  flex: 0 1 430px;
-  max-width: 430px;
+  flex: 0 1 360px;
+  max-width: 360px;
 }
 
 .pp-select-wrap-single {
