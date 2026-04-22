@@ -57,6 +57,7 @@ export interface CloudMailAccountItem {
   sendEmailCount: number;
   activeTime: string | null;
   createTime: string | null;
+  remark: string | null;
 }
 
 export interface CloudMailAccountListResponse {

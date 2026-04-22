@@ -41,6 +41,12 @@ interface CloudMailConfigFormState {
   availableDomainsText: string;
 }
 
+interface CloudMailRemarkFormState {
+  userId: number;
+  email: string;
+  remark: string;
+}
+
 function createDefaultCloudMailConfig(): CloudMailConfig {
   return {
     apiBaseUrl: '',
@@ -63,6 +69,14 @@ function createDefaultCreateForm(): CloudMailCreatePayload {
   return {
     localPart: '',
     domain: ''
+  };
+}
+
+function createDefaultRemarkForm(): CloudMailRemarkFormState {
+  return {
+    userId: 0,
+    email: '',
+    remark: ''
   };
 }
 
@@ -104,10 +118,12 @@ const configSaving = ref(false);
 const createLoading = ref(false);
 const deleteLoading = ref(false);
 const mailLoading = ref(false);
+const remarkSaving = ref(false);
 
 const configVisible = ref(false);
 const createVisible = ref(false);
 const mailVisible = ref(false);
+const remarkVisible = ref(false);
 const serviceErrorMessage = ref('');
 
 const searchKeyword = ref(readPersistedSearchKeyword());
@@ -123,6 +139,7 @@ const selectedMailId = ref('');
 const storedConfig = reactive<CloudMailConfig>(createDefaultCloudMailConfig());
 const configForm = reactive<CloudMailConfigFormState>(createDefaultConfigForm());
 const createForm = reactive<CloudMailCreatePayload>(createDefaultCreateForm());
+const remarkForm = reactive<CloudMailRemarkFormState>(createDefaultRemarkForm());
 
 const hasConfiguredCloudMail = computed(() => {
   return Boolean(storedConfig.apiBaseUrl && storedConfig.adminEmail && storedConfig.adminPassword);
@@ -204,6 +221,12 @@ function resetConfigForm(): void {
   configForm.adminEmail = '';
   configForm.adminPassword = '';
   configForm.availableDomainsText = '';
+}
+
+function resetRemarkForm(): void {
+  remarkForm.userId = 0;
+  remarkForm.email = '';
+  remarkForm.remark = '';
 }
 
 function resetCreateForm(): void {
@@ -448,6 +471,42 @@ async function refreshAccounts(): Promise<void> {
   await loadAccounts();
 }
 
+function openRemarkModal(row: CloudMailAccountItem): void {
+  remarkForm.userId = row.userId;
+  remarkForm.email = row.email;
+  remarkForm.remark = row.remark ?? '';
+  remarkVisible.value = true;
+}
+
+function closeRemarkModal(): void {
+  remarkVisible.value = false;
+  resetRemarkForm();
+}
+
+async function saveRemark(): Promise<void> {
+  if (!remarkForm.userId) {
+    message.warning('请先选择需要备注的邮箱');
+    return;
+  }
+
+  remarkSaving.value = true;
+  try {
+    const response = await api.updateCloudMailRemark(remarkForm.userId, remarkForm.remark);
+    accounts.value = accounts.value.map((item) =>
+      item.userId === response.item.userId ? response.item : item
+    );
+    remarkVisible.value = false;
+    resetRemarkForm();
+    clearCloudMailServiceError();
+    message.success('备注已保存');
+  } catch (error) {
+    rememberCloudMailServiceError(error);
+    handleApiError(error);
+  } finally {
+    remarkSaving.value = false;
+  }
+}
+
 async function handleSearch(): Promise<void> {
   tablePage.value = 1;
   await loadAccounts();
@@ -588,9 +647,11 @@ export function useCloudMailConsole() {
     createLoading,
     deleteLoading,
     mailLoading,
+    remarkSaving,
     configVisible,
     createVisible,
     mailVisible,
+    remarkVisible,
     serviceErrorMessage,
     searchKeyword,
     tablePage,
@@ -605,6 +666,7 @@ export function useCloudMailConsole() {
     storedConfig,
     configForm,
     createForm,
+    remarkForm,
     hasConfiguredCloudMail,
     availableDomains,
     loadConfig,
@@ -618,6 +680,9 @@ export function useCloudMailConsole() {
     deleteSelectedAccounts,
     deleteSingleAccount,
     refreshAccounts,
+    openRemarkModal,
+    closeRemarkModal,
+    saveRemark,
     handleSearch,
     handlePageChange,
     handlePageSizeChange,

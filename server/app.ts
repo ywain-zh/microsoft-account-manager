@@ -150,6 +150,13 @@ interface CloudMailAccountItem {
   sendEmailCount: number;
   activeTime: string | null;
   createTime: string | null;
+  remark: string | null;
+}
+
+interface CloudMailRemarkRow {
+  userId: number;
+  email: string;
+  remark: string | null;
 }
 
 interface CloudMailListResponse {
@@ -1396,7 +1403,7 @@ app.get('/api/cloud-mail/accounts', async (c) => {
   const pageSize = parsePageNumber(c.req.query('pageSize'), 20, 1, 100);
   const keyword = asText(c.req.query('keyword')).trim();
 
-  const result = await listCloudMailAccounts(config, {
+  const result = await listCloudMailAccounts(c.env.DB, config, {
     page,
     pageSize,
     keyword
@@ -1453,12 +1460,36 @@ app.post('/api/cloud-mail/accounts/batch-delete', async (c) => {
   }
 
   await deleteCloudMailAccounts(config, userIds);
+  await deleteCloudMailAccountRemarks(c.env.DB, userIds);
 
   return c.json({
     ok: true as const,
     total: userIds.length,
     deleted: userIds.length,
     skipped: 0
+  });
+});
+
+app.patch('/api/cloud-mail/accounts/:id/remark', async (c) => {
+  const config = await getCloudMailConfig(c.env.DB);
+  ensureCloudMailConfigured(config);
+
+  const userId = parseNumericId(c.req.param('id'));
+  const body = await readJson<{ remark?: unknown }>(c);
+  const remark = normalizeRemark(body.remark);
+
+  const remoteList = await fetchAllCloudMailAccounts(config, '');
+  const account = remoteList.find((item) => item.userId === userId) ?? null;
+
+  if (!account) {
+    throw new HTTPException(404, { message: 'Cloud Mail 邮箱不存在' });
+  }
+
+  const item = await upsertCloudMailAccountRemark(c.env.DB, account, remark);
+
+  return c.json({
+    ok: true as const,
+    item
   });
 });
 
@@ -2932,7 +2963,8 @@ function toCloudMailAccountItem(input: unknown): CloudMailAccountItem | null {
     activeTime: toNullableText(
       row.activeTime ?? row.updateTime ?? row.lastActiveTime ?? row.lastLoginTime ?? row.updatedAt
     ),
-    createTime: toNullableText(row.createTime ?? row.createdAt ?? row.createAt ?? row.insertTime)
+    createTime: toNullableText(row.createTime ?? row.createdAt ?? row.createAt ?? row.insertTime),
+    remark: null
   };
 }
 
@@ -2969,6 +3001,7 @@ function normalizeCloudMailListPayload(
 }
 
 async function listCloudMailAccounts(
+  db: D1Database,
   config: CloudMailConfig,
   options: { page: number; pageSize: number; keyword: string }
 ): Promise<CloudMailListResponse> {
@@ -2990,7 +3023,19 @@ async function listCloudMailAccounts(
     }
   });
 
-  return normalizeCloudMailListPayload(data, options.page, options.pageSize);
+  const result = normalizeCloudMailListPayload(data, options.page, options.pageSize);
+  const remarks = await queryCloudMailAccountRemarks(
+    db,
+    result.items.map((item) => item.userId)
+  );
+
+  return {
+    ...result,
+    items: result.items.map((item) => ({
+      ...item,
+      remark: remarks.get(item.userId) ?? null
+    }))
+  };
 }
 
 async function createCloudMailAccount(
@@ -4048,6 +4093,100 @@ async function fetchAllAccounts(db: D1Database): Promise<AccountRow[]> {
 async function fetchAccountById(db: D1Database, id: number): Promise<AccountRow | null> {
   const row = await db.prepare(`${ACCOUNT_SELECT_SQL} WHERE id = ?`).bind(id).first<AccountRow>();
   return row ?? null;
+}
+
+async function queryCloudMailAccountRemarks(db: D1Database, userIds: number[]): Promise<Map<number, string | null>> {
+  if (userIds.length === 0) {
+    return new Map();
+  }
+
+  const placeholders = userIds.map(() => '?').join(',');
+  const { results } = await db
+    .prepare(
+      `SELECT user_id AS userId, remark
+       FROM cloud_mail_account_remarks
+       WHERE user_id IN (${placeholders})`
+    )
+    .bind(...userIds)
+    .all<{ userId: number; remark: string | null }>();
+
+  return new Map((results ?? []).map((item) => [item.userId, item.remark ?? null]));
+}
+
+async function upsertCloudMailAccountRemark(
+  db: D1Database,
+  item: CloudMailAccountItem,
+  remark: string | null
+): Promise<CloudMailAccountItem> {
+  await db
+    .prepare(
+      `INSERT INTO cloud_mail_account_remarks (user_id, email, remark, updated_at)
+       VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(user_id)
+       DO UPDATE SET
+         email = excluded.email,
+         remark = excluded.remark,
+         updated_at = CURRENT_TIMESTAMP`
+    )
+    .bind(item.userId, item.email, remark)
+    .run();
+
+  return {
+    ...item,
+    remark
+  };
+}
+
+async function deleteCloudMailAccountRemarks(db: D1Database, userIds: number[]): Promise<void> {
+  if (userIds.length === 0) {
+    return;
+  }
+
+  const placeholders = userIds.map(() => '?').join(',');
+  await db
+    .prepare(`DELETE FROM cloud_mail_account_remarks WHERE user_id IN (${placeholders})`)
+    .bind(...userIds)
+    .run();
+}
+
+async function fetchAllCloudMailAccounts(
+  config: CloudMailConfig,
+  keyword: string
+): Promise<CloudMailAccountItem[]> {
+  const pageSize = 100;
+  let page = 1;
+  const items: CloudMailAccountItem[] = [];
+  let total = 0;
+
+  do {
+    const token = await getCloudMailAdminToken(config);
+    const params = new URLSearchParams({
+      num: String(page),
+      size: String(pageSize),
+      status: '-1',
+      isDel: '0'
+    });
+    if (keyword) {
+      params.set('email', keyword);
+    }
+
+    const data = await requestCloudMail<unknown>(config, `/api/user/list?${params.toString()}`, {
+      method: 'GET',
+      headers: {
+        Authorization: token
+      }
+    });
+
+    const result = normalizeCloudMailListPayload(data, page, pageSize);
+    items.push(...result.items);
+    total = result.total;
+    if (result.items.length < pageSize) {
+      break;
+    }
+    page += 1;
+  } while (items.length < total);
+
+  return items;
 }
 
 async function updateAccountRemark(db: D1Database, id: number, remark: string | null): Promise<AccountRow | null> {

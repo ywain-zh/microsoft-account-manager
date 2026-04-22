@@ -275,6 +275,38 @@
       </template>
     </n-modal>
 
+    <n-modal
+      v-model:show="remarkVisible"
+      preset="card"
+      :bordered="false"
+      class="console-modal cloud-mail-remark-modal"
+      title="编辑备注"
+    >
+      <n-form label-placement="top" autocomplete="off">
+        <n-form-item label="邮箱">
+          <n-input :value="remarkForm.email" readonly />
+        </n-form-item>
+        <n-form-item label="备注">
+          <n-input
+            v-model:value="remarkForm.remark"
+            type="textarea"
+            maxlength="500"
+            show-count
+            :autosize="{ minRows: 4, maxRows: 8 }"
+          />
+        </n-form-item>
+      </n-form>
+
+      <template #footer>
+        <n-space justify="end">
+          <n-button class="dialog-cancel-button" @click="closeRemarkModal">取消</n-button>
+          <n-button class="dialog-primary-button" type="primary" :loading="remarkSaving" @click="saveRemark">
+            保存备注
+          </n-button>
+        </n-space>
+      </template>
+    </n-modal>
+
     <MailInboxViewer
       :show="mailVisible"
       title="收件箱"
@@ -458,6 +490,26 @@ const SparkGlyph = () =>
     ]
   );
 
+const PencilGlyph = () =>
+  h(
+    'svg',
+    { viewBox: '0 0 20 20', fill: 'none' },
+    [
+      h('path', {
+        d: 'M4.75 13.75 4 16l2.25-.75 8-8a1.59 1.59 0 0 0-2.25-2.25l-8 8Z',
+        stroke: 'currentColor',
+        'stroke-width': '1.5',
+        'stroke-linejoin': 'round'
+      }),
+      h('path', {
+        d: 'm10.75 4.75 2.5 2.5',
+        stroke: 'currentColor',
+        'stroke-width': '1.5',
+        'stroke-linecap': 'round'
+      })
+    ]
+  );
+
 const CloudGlyph = () =>
   h(
     'svg',
@@ -481,9 +533,11 @@ const {
   createLoading,
   deleteLoading,
   mailLoading,
+  remarkSaving,
   configVisible,
   createVisible,
   mailVisible,
+  remarkVisible,
   serviceErrorMessage,
   searchKeyword,
   tablePage,
@@ -497,6 +551,7 @@ const {
   storedConfig,
   configForm,
   createForm,
+  remarkForm,
   hasConfiguredCloudMail,
   availableDomains,
   loadInitialData,
@@ -508,6 +563,9 @@ const {
   deleteSelectedAccounts,
   deleteSingleAccount,
   refreshAccounts,
+  openRemarkModal,
+  closeRemarkModal,
+  saveRemark,
   handleSearch,
   handlePageChange,
   handlePageSizeChange,
@@ -629,8 +687,24 @@ function renderEmailCell(row: CloudMailAccountItem): ReturnType<typeof h> {
   ]);
 }
 
-function renderCountCell(value: number): ReturnType<typeof h> {
-  return h('span', { class: 'code-chip cloud-mail-count-chip' }, String(value));
+function renderRemarkCell(row: CloudMailAccountItem): ReturnType<typeof h> {
+  return h('div', { class: 'cloud-mail-remark-cell' }, [
+    h('div', { class: 'cloud-mail-remark-text', title: row.remark?.trim() || '-' }, row.remark?.trim() || '-'),
+    h(
+      'button',
+      {
+        type: 'button',
+        class: 'cloud-mail-remark-edit-button',
+        title: `编辑 ${row.email} 的备注`,
+        'aria-label': `编辑 ${row.email} 的备注`,
+        onClick: (event: MouseEvent) => {
+          event.stopPropagation();
+          openRemarkModal(row);
+        }
+      },
+      [h(PencilGlyph)]
+    )
+  ]);
 }
 
 const columns: DataTableColumns<CloudMailAccountItem> = [
@@ -645,22 +719,10 @@ const columns: DataTableColumns<CloudMailAccountItem> = [
     render: (row) => renderEmailCell(row)
   },
   {
-    title: '收件数',
-    key: 'receiveEmailCount',
-    width: 72,
-    render: (row) => renderCountCell(row.receiveEmailCount)
-  },
-  {
-    title: '发件数',
-    key: 'sendEmailCount',
-    width: 72,
-    render: (row) => renderCountCell(row.sendEmailCount)
-  },
-  {
-    title: '最近活跃时间',
-    key: 'activeTime',
-    width: 148,
-    render: (row) => h('span', { class: 'plain-cell-text' }, formatDate(row.activeTime))
+    title: '备注',
+    key: 'remark',
+    minWidth: 220,
+    render: (row) => renderRemarkCell(row)
   },
   {
     title: '创建时间',
@@ -999,18 +1061,49 @@ onMounted(async () => {
 }
 
 :deep(.cloud-mail-account-table .n-data-table-th:nth-child(3)),
-:deep(.cloud-mail-account-table .n-data-table-th:nth-child(4)),
-:deep(.cloud-mail-account-table .n-data-table-td:nth-child(3)),
-:deep(.cloud-mail-account-table .n-data-table-td:nth-child(4)) {
-  text-align: center;
+:deep(.cloud-mail-account-table .n-data-table-td:nth-child(3)) {
+  text-align: left;
 }
 
-:deep(.cloud-mail-account-table .cloud-mail-count-chip) {
+:deep(.cloud-mail-account-table .cloud-mail-remark-cell) {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+:deep(.cloud-mail-account-table .cloud-mail-remark-text) {
+  max-width: 100%;
   color: #475569;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
+:deep(.cloud-mail-account-table .cloud-mail-remark-edit-button) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #64748b;
+  cursor: pointer;
+}
+
+:deep(.cloud-mail-account-table .cloud-mail-remark-edit-button:hover) {
+  background: #e2e8f0;
+  color: #334155;
+}
+
+:deep(.cloud-mail-account-table .cloud-mail-remark-edit-button svg) {
+  width: 14px;
+  height: 14px;
+}
 :deep(.cloud-mail-account-table .table-action-button) {
   padding: 4px 8px;
   border-radius: 4px;

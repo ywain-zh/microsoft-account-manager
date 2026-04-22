@@ -4,6 +4,7 @@ import type {
   AccountPayload,
   AuthUser,
   BatchActionResult,
+  CloudMailAccountItem,
   CloudMailAccountListResponse,
   CloudMailConfig,
   CloudMailCreatePayload,
@@ -266,6 +267,16 @@ export const api = {
         body: JSON.stringify(payload)
       }
     );
+  },
+
+  updateCloudMailRemark(userId: number, remark: string): Promise<{
+    ok: true;
+    item: CloudMailAccountItem;
+  }> {
+    return request<{ ok: true; item: CloudMailAccountItem }>(`/api/cloud-mail/accounts/${userId}/remark`, {
+      method: 'PATCH',
+      body: JSON.stringify({ remark })
+    });
   },
 
   openUpdateAccountRemark(id: number, remark: string): Promise<{
