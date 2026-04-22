@@ -248,25 +248,23 @@
                 </div>
               </div>
 
-              <div class="phone-row">
-                <div class="phone-text mono-text">{{ displayValue(selectedPpSmsItem?.fullPhone) }}</div>
+              <div class="pp-phone-select-row">
+                <div class="pp-select-wrap pp-select-wrap-single">
+                  <n-select
+                    v-model:value="selectedPpSmsId"
+                    :options="ppSmsOptions"
+                    placeholder="请选择 PP 接码手机号"
+                    clearable
+                  />
+                </div>
                 <button
                   type="button"
                   class="copy-icon-button"
-                  :disabled="!isCopyableValue(selectedPpSmsItem?.fullPhone)"
-                  @click="copyValue(selectedPpSmsItem?.fullPhone, 'PP手机号')"
+                  :disabled="!isCopyableValue(selectedPpSmsPhone.number)"
+                  @click="copyValue(selectedPpSmsPhone.number, 'PP手机号')"
                 >
                   <CopyIcon />
                 </button>
-              </div>
-
-              <div class="pp-select-wrap">
-                <n-select
-                  v-model:value="selectedPpSmsId"
-                  :options="ppSmsOptions"
-                  placeholder="请选择 PP 接码手机号"
-                  clearable
-                />
               </div>
 
               <div class="code-panel">
@@ -497,6 +495,11 @@ type AddressField = {
   mono?: boolean;
 };
 
+type SplitPhone = {
+  prefix: string | null;
+  number: string | null;
+};
+
 const CopyGlyph = () =>
   h(
     'svg',
@@ -563,10 +566,12 @@ const selectedPpSmsItem = computed(() => {
 
 const ppSmsOptions = computed(() =>
   ppSmsItems.value.map((item) => ({
-    label: `${item.fullPhone} · ${renderPpStatusLabel(item.status)}`,
+    label: formatPpPhoneOptionLabel(item),
     value: item.id
   }))
 );
+
+const selectedPpSmsPhone = computed(() => splitPhoneValue(selectedPpSmsItem.value?.fullPhone));
 
 const selectedParsedAddress = computed<ParsedAddress>(() => parseSelectedCardAddress(selectedItem.value?.address));
 
@@ -885,6 +890,43 @@ function renderPpStatusLabel(status: PpSmsStatus): string {
     return '失败';
   }
   return '可用';
+}
+
+function splitPhoneValue(value: string | null | undefined): SplitPhone {
+  const normalized = normalizeCopyValue(value);
+  if (!normalized) {
+    return { prefix: null, number: null };
+  }
+
+  const digits = normalized.replace(/\D/g, '');
+  if (!digits) {
+    return { prefix: null, number: null };
+  }
+
+  if (digits.length === 11 && digits.startsWith('1')) {
+    return {
+      prefix: '+1',
+      number: digits.slice(1)
+    };
+  }
+
+  if (normalized.trim().startsWith('+') && digits.length > 10) {
+    return {
+      prefix: `+${digits.slice(0, digits.length - 10)}`,
+      number: digits.slice(-10)
+    };
+  }
+
+  return {
+    prefix: null,
+    number: digits
+  };
+}
+
+function formatPpPhoneOptionLabel(item: PpSmsItem): string {
+  const { prefix, number } = splitPhoneValue(item.fullPhone);
+  const phoneLabel = [prefix ? `(${prefix})` : null, number].filter(Boolean).join(' ');
+  return `${phoneLabel || '-'} · ${renderPpStatusLabel(item.status)}`;
 }
 
 function renderPpStatusType(status: PpSmsStatus): 'success' | 'error' | 'warning' {
@@ -2080,15 +2122,25 @@ onMounted(async () => {
   word-break: break-word;
 }
 
+.pp-phone-select-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
 .code-panel {
   display: grid;
   gap: 10px;
-  align-content: start;
+  align-content: center;
+  justify-items: center;
   min-height: 88px;
   padding: 4px 0 0;
 }
 
 .code-line-centered {
+  display: flex;
+  width: 100%;
   justify-content: center;
 }
 
@@ -2135,6 +2187,11 @@ onMounted(async () => {
 .pp-select-wrap {
   position: relative;
   margin-top: 2px;
+  flex: 1;
+}
+
+.pp-select-wrap-single {
+  margin-top: 0;
 }
 
 :deep(.pp-select-wrap .n-base-selection) {
@@ -2146,6 +2203,12 @@ onMounted(async () => {
 }
 
 :deep(.pp-select-wrap .n-base-selection-input) {
+  font-family: var(--seven79-mono);
+  font-size: 12px;
+}
+
+:deep(.pp-select-wrap .n-base-selection-placeholder),
+:deep(.pp-select-wrap .n-base-selection-render-label) {
   font-family: var(--seven79-mono);
   font-size: 12px;
 }
@@ -2449,7 +2512,8 @@ onMounted(async () => {
   }
 
   .virtual-detail-line-header,
-  .phone-row {
+  .phone-row,
+  .pp-phone-select-row {
     width: 100%;
   }
 }
