@@ -16,6 +16,10 @@ type Bindings = {
   MS_CLIENT_SECRET?: string;
   MS_TENANT_ID?: string;
   MS_REDIRECT_URI?: string;
+  SEVEN79_OPEN_API_KEY?: string;
+  SEVEN79_OPEN_API_USERNAME?: string;
+  SEVEN79_OPEN_API_PASSWORD?: string;
+  SEVEN79_OPEN_API_INVITER_CODE?: string;
 };
 
 type Variables = {
@@ -407,7 +411,12 @@ const PP_SMS_ITEM_SELECT_SQL = `
   FROM pp_sms_items
 `;
 
-const SEVEN79_BASE_URL = 'https://card.779.chat';
+const SEVEN79_OPEN_API_BASE_URL = 'https://cards.779.chat';
+const SEVEN79_OPEN_API_LOGIN_PATH = '/open-api/web-api/auth/login';
+const SEVEN79_OPEN_API_REDEEM_PATH = '/open-api/web-api/redeem/submit';
+const DEFAULT_SEVEN79_OPEN_API_KEY = 'ak_moa17dc8_n4nmv47e4ys';
+const DEFAULT_SEVEN79_OPEN_API_USERNAME = 'admin123';
+const DEFAULT_SEVEN79_OPEN_API_PASSWORD = 'admin123';
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -3584,215 +3593,178 @@ async function fetchSeven79CardDetails(key: string): Promise<{
   rawCheck: unknown;
   rawVerify: unknown;
 }> {
-  const rawCheck = await callSeven79Check(key);
-  const rawVerify = await callSeven79Verify(key);
+  const auth = await loginSeven79OpenApi();
+  const rawRedeem = await callSeven79Redeem(key, auth);
+  const normalized = normalizeSeven79Redeem(rawRedeem);
   return {
-    check: normalizeSeven79Check(rawCheck),
-    verify: normalizeSeven79Verify(rawVerify),
-    rawCheck,
-    rawVerify
+    check: normalized.check,
+    verify: normalized.verify,
+    rawCheck: rawRedeem,
+    rawVerify: rawRedeem
   };
 }
 
-async function callSeven79Check(key: string): Promise<unknown> {
+async function loginSeven79OpenApi(): Promise<{ token: string; inviterCode: string | null }> {
+  const apiKey = getSeven79OpenApiKey();
+  const username = getSeven79OpenApiUsername();
+  const password = getSeven79OpenApiPassword();
+
   let response: Response;
   try {
-    response = await fetch(`${SEVEN79_BASE_URL}/api/exchange/check/${encodeURIComponent(key)}`);
-  } catch (error) {
-    throw new HTTPException(502, {
-      message: `779 验卡请求失败: ${error instanceof Error ? error.message : 'unknown error'}`
-    });
-  }
-
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throwSeven79RemoteError(payload, response.status, '779 验卡失败');
-  }
-
-  const businessError = resolveSeven79BusinessError(payload);
-  if (businessError) {
-    throw new HTTPException(400, { message: businessError });
-  }
-
-  return payload;
-}
-
-async function callSeven79Verify(key: string): Promise<unknown> {
-  let response: Response;
-  try {
-    response = await fetch(`${SEVEN79_BASE_URL}/api/exchange/verify`, {
+    response = await fetch(`${SEVEN79_OPEN_API_BASE_URL}${SEVEN79_OPEN_API_LOGIN_PATH}`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'X-API-Key': apiKey
       },
-      body: JSON.stringify({ key })
+      body: JSON.stringify({ username, password })
     });
   } catch (error) {
     throw new HTTPException(502, {
-      message: `779 提取请求失败: ${error instanceof Error ? error.message : 'unknown error'}`
+      message: `779 新接口登录失败: ${error instanceof Error ? error.message : 'unknown error'}`
     });
   }
 
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throwSeven79RemoteError(payload, response.status, '779 提取失败');
+    throwSeven79RemoteError(payload, response.status, '779 新接口登录失败');
+  }
+
+  const data = asRecord(asRecord(payload).data);
+  const token = toNullableText(data.token);
+  if (!token) {
+    throw new HTTPException(502, { message: '779 新接口登录失败: 未返回 token' });
+  }
+
+  const user = asRecord(data.user);
+  return {
+    token,
+    inviterCode: getSeven79OpenApiInviterCode() || toNullableText(user.inviteCode)
+  };
+}
+
+async function callSeven79Redeem(key: string, auth: { token: string; inviterCode: string | null }): Promise<unknown> {
+  const apiKey = getSeven79OpenApiKey();
+  const body: Record<string, unknown> = {
+    redeemCode: key,
+    deviceId: buildSeven79DeviceId(key)
+  };
+  if (auth.inviterCode) {
+    body.inviterCode = auth.inviterCode;
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${SEVEN79_OPEN_API_BASE_URL}${SEVEN79_OPEN_API_REDEEM_PATH}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': apiKey,
+        Authorization: `Bearer ${auth.token}`
+      },
+      body: JSON.stringify(body)
+    });
+  } catch (error) {
+    throw new HTTPException(502, {
+      message: `779 新接口兑换失败: ${error instanceof Error ? error.message : 'unknown error'}`
+    });
+  }
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throwSeven79RemoteError(payload, response.status, '779 新接口兑换失败');
   }
 
   return payload;
 }
 
-function normalizeSeven79Check(payload: unknown): Seven79CheckResult {
-  const record = asRecord(payload);
+function normalizeSeven79Redeem(payload: unknown): {
+  check: Seven79CheckResult;
+  verify: Seven79VerifyResult;
+} {
+  const data = asRecord(asRecord(payload).data);
+  const delivery = parseSeven79DeliveryContent(toNullableText(data.deliveryContent));
+  const expiresAt = normalizeSeven79DateTime(toNullableText(data.expiresAt));
+
   return {
-    category: toNullableText(record.category),
-    expiryTime: normalizeSeven79CheckExpiryTime(record),
-    remainingTimeMs: toNullableNumber(record.remaining_time)
+    check: {
+      category: toNullableText(data.categoryName),
+      expiryTime: expiresAt,
+      remainingTimeMs: resolveSeven79RemainingTimeMs(expiresAt)
+    },
+    verify: {
+      cardNumber: delivery.cardNumber,
+      expiryDate: delivery.expiryDate,
+      cvv: delivery.cvv,
+      phone: delivery.phone,
+      smsApi: delivery.smsApi,
+      holderName: delivery.holderName,
+      address: delivery.address,
+      expiresAt
+    }
   };
 }
 
-function normalizeSeven79Verify(payload: unknown): Seven79VerifyResult {
-  const record = asRecord(payload);
-  const content = asRecord(record.content);
-  const card = asRecord(record.card);
-
-  return {
-    cardNumber: toNullableText(content.card_number),
-    expiryDate: toNullableText(content.expiry_date),
-    cvv: toNullableText(content.cvv),
-    phone: toNullableText(content.phone),
-    smsApi: toNullableText(content.sms_api),
-    holderName: toNullableText(content.name),
-    address: toNullableText(content.address),
-    expiresAt: toNullableText(card.expires_at)
-  };
-}
-
-function normalizeSeven79CheckExpiryTime(record: Record<string, unknown>): string | null {
-  const rawExpiryTime = toNullableText(record.expiry_time);
-  if (rawExpiryTime) {
-    return normalizeSeven79DateTime(rawExpiryTime);
+function parseSeven79DeliveryContent(value: string | null): {
+  cardNumber: string | null;
+  expiryDate: string | null;
+  cvv: string | null;
+  phone: string | null;
+  smsApi: string | null;
+  holderName: string | null;
+  address: string | null;
+} {
+  const text = toNullableText(value);
+  if (!text) {
+    return {
+      cardNumber: null,
+      expiryDate: null,
+      cvv: null,
+      phone: null,
+      smsApi: null,
+      holderName: null,
+      address: null
+    };
   }
 
-  const rawExpiresAt = toNullableText(record.expires_at);
-  if (!rawExpiresAt) {
+  const parts = text.split('----').map((part) => part.trim()).filter(Boolean);
+  return {
+    cardNumber: parts[0] || null,
+    expiryDate: normalizeSeven79ExpiryDate(parts[1] || null),
+    cvv: parts[2] || null,
+    phone: parts[3] || null,
+    smsApi: parts[4] || null,
+    holderName: parts[5] || null,
+    address: parts[6] || null
+  };
+}
+
+function normalizeSeven79ExpiryDate(value: string | null): string | null {
+  const text = toNullableText(value);
+  if (!text) {
     return null;
   }
 
-  const parsedExpiresAt = parseSeven79DateTime(rawExpiresAt);
-  return parsedExpiresAt ? formatSqliteDateTime(new Date(parsedExpiresAt.getTime() + 8 * 60 * 60 * 1000)) : rawExpiresAt;
+  const match = text.match(/^(\d{4})\/(\d{1,2})$/);
+  if (!match) {
+    return text;
+  }
+
+  const [, year, month] = match;
+  return `${String(month).padStart(2, '0')}/${year.slice(-2)}`;
 }
 
-function resolveSeven79CardValidUntil(expiryTime: string | null): string | null {
-  const parsed = parseSeven79DateTime(expiryTime);
+function resolveSeven79RemainingTimeMs(value: string | null): number | null {
+  const parsed = parseSeven79DateTime(value);
   if (!parsed) {
     return null;
   }
 
-  return formatSqliteDateTime(new Date(parsed.getTime() + 5 * 60 * 60 * 1000));
+  return Math.max(0, parsed.getTime() - Date.now());
 }
 
-function normalizeSeven79DateTime(value: string | null): string | null {
-  const text = toNullableText(value);
-  if (!text) {
-    return null;
-  }
-
-  const parsed = parseSeven79DateTime(text);
-  return parsed ? formatSqliteDateTime(parsed) : text;
-}
-
-function parseSeven79DateTime(value: string | null): Date | null {
-  const text = toNullableText(value);
-  if (!text) {
-    return null;
-  }
-
-  const timestamp = Date.parse(text);
-  if (!Number.isNaN(timestamp)) {
-    return new Date(timestamp);
-  }
-
-  const match = text.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
-  if (!match) {
-    return null;
-  }
-
-  const [, year, month, day, hour = '0', minute = '0', second = '0'] = match;
-  const parsed = new Date(
-    Number(year),
-    Number(month) - 1,
-    Number(day),
-    Number(hour),
-    Number(minute),
-    Number(second)
-  );
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
-function formatSqliteDateTime(value: Date): string {
-  const pad = (part: number) => String(part).padStart(2, '0');
-  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())} ${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}`;
-}
-
-function extractRemoteErrorMessage(payload: unknown, status: number, fallback: string): string {
-  const record = asRecord(payload);
-  return (
-    toNullableText(record.message)
-    || toNullableText(record.error)
-    || `${fallback} (${status})`
-  );
-}
-
-function resolveSeven79BusinessError(payload: unknown): string | null {
-  const record = asRecord(payload);
-  const status = toNullableText(record.status);
-  const rawMessage = toNullableText(record.message) || toNullableText(record.error);
-  const valid = typeof record.valid === 'boolean' ? record.valid : null;
-
-  if (status === 'expired' || (rawMessage && /card has expired/i.test(rawMessage))) {
-    return '卡密已过期';
-  }
-
-  if (valid === false) {
-    return rawMessage || '卡密校验失败';
-  }
-
-  return null;
-}
-
-function throwSeven79RemoteError(payload: unknown, status: number, fallback: string): never {
-  const message = resolveSeven79BusinessError(payload) || extractRemoteErrorMessage(payload, status, fallback);
-  const isBusinessError = status >= 400 && status < 500;
-  throw new HTTPException(isBusinessError ? 400 : 502, { message });
-}
-
-function isSeven79ExpiredMessage(message: string): boolean {
-  return /卡密已过期|card has expired/i.test(message);
-}
-
-function parsePpSmsImportLine(raw: string): PpSmsParseResult {
-  const parts = raw.split('------------');
-  if (parts.length < 2) {
-    throw new HTTPException(400, { message: '格式不正确，应为 手机号------------接码API' });
-  }
-
-  const phone = parts[0].trim();
-  const smsApi = parts.slice(1).join('------------').trim();
-  if (!phone || !smsApi) {
-    throw new HTTPException(400, { message: '手机号或接码 API 不能为空' });
-  }
-
-  if (!/^https?:\/\//i.test(smsApi)) {
-    throw new HTTPException(400, { message: '接码 API 必须以 http:// 或 https:// 开头' });
-  }
-
-  const phoneParts = splitPhoneNumber(phone);
-  return {
-    fullPhone: phoneParts.fullPhone,
-    countryCode: phoneParts.countryCode,
-    phoneNumber: phoneParts.phoneNumber,
-    smsApi
-  };
+function buildSeven79DeviceId(key: string): string {
+  return `mam-${key.toLowerCase()}`;
 }
 
 function splitPhoneNumber(value: string): {
@@ -3898,6 +3870,144 @@ function extractPpSmsExpiresAt(value: string): string | null {
 
   return null;
 }
+
+function resolveSeven79CardValidUntil(expiryTime: string | null): string | null {
+  const parsed = parseSeven79DateTime(expiryTime);
+  if (!parsed) {
+    return null;
+  }
+
+  return formatSqliteDateTime(new Date(parsed.getTime() + 5 * 60 * 60 * 1000));
+}
+
+function parsePpSmsImportLine(raw: string): PpSmsParseResult {
+  const parts = raw.split('------------');
+  if (parts.length < 2) {
+    throw new HTTPException(400, { message: '格式不正确，应为 手机号------------接码API' });
+  }
+
+  const phone = parts[0].trim();
+  const smsApi = parts.slice(1).join('------------').trim();
+  if (!phone || !smsApi) {
+    throw new HTTPException(400, { message: '手机号或接码 API 不能为空' });
+  }
+
+  if (!/^https?:\/\//i.test(smsApi)) {
+    throw new HTTPException(400, { message: '接码 API 必须以 http:// 或 https:// 开头' });
+  }
+
+  const phoneParts = splitPhoneNumber(phone);
+  return {
+    fullPhone: phoneParts.fullPhone,
+    countryCode: phoneParts.countryCode,
+    phoneNumber: phoneParts.phoneNumber,
+    smsApi
+  };
+}
+
+function getSeven79OpenApiKey(): string {
+  return DEFAULT_SEVEN79_OPEN_API_KEY;
+}
+
+function getSeven79OpenApiUsername(): string {
+  return DEFAULT_SEVEN79_OPEN_API_USERNAME;
+}
+
+function getSeven79OpenApiPassword(): string {
+  return DEFAULT_SEVEN79_OPEN_API_PASSWORD;
+}
+
+function getSeven79OpenApiInviterCode(): string | null {
+  return null;
+}
+
+function normalizeSeven79DateTime(value: string | null): string | null {
+  const text = toNullableText(value);
+  if (!text) {
+    return null;
+  }
+
+  const parsed = parseSeven79DateTime(text);
+  return parsed ? formatSqliteDateTime(parsed) : text;
+}
+
+function parseSeven79DateTime(value: string | null): Date | null {
+  const text = toNullableText(value);
+  if (!text) {
+    return null;
+  }
+
+  const timestamp = Date.parse(text);
+  if (!Number.isNaN(timestamp)) {
+    return new Date(timestamp);
+  }
+
+  const match = text.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (!match) {
+    return null;
+  }
+
+  const [, year, month, day, hour = '0', minute = '0', second = '0'] = match;
+  const parsed = new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second)
+  );
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatSqliteDateTime(value: Date): string {
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())} ${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}`;
+}
+
+function extractRemoteErrorMessage(payload: unknown, status: number, fallback: string): string {
+  const record = asRecord(payload);
+  const data = asRecord(record.data);
+  return (
+    toNullableText(record.message)
+    || toNullableText(record.error)
+    || toNullableText(data.message)
+    || `${fallback} (${status})`
+  );
+}
+
+function resolveSeven79BusinessError(payload: unknown): string | null {
+  const record = asRecord(payload);
+  const data = asRecord(record.data);
+  const status = toNullableText(record.status);
+  const rawMessage = toNullableText(record.message) || toNullableText(record.error) || toNullableText(data.message);
+  const valid = typeof record.valid === 'boolean' ? record.valid : null;
+  const code = toNullableNumber(record.code);
+
+  if (status === 'expired' || (rawMessage && /卡密已过期|card has expired|redeem card has expired/i.test(rawMessage))) {
+    return '卡密已过期';
+  }
+
+  if (valid === false) {
+    return rawMessage || '卡密校验失败';
+  }
+
+  if (code !== null && code !== 0) {
+    return rawMessage || '779 接口返回业务错误';
+  }
+
+  return null;
+}
+
+function throwSeven79RemoteError(payload: unknown, status: number, fallback: string): never {
+  const message = resolveSeven79BusinessError(payload) || extractRemoteErrorMessage(payload, status, fallback);
+  const isBusinessError = status >= 400 && status < 500;
+  throw new HTTPException(isBusinessError ? 400 : 502, { message });
+}
+
+function isSeven79ExpiredMessage(message: string): boolean {
+  return /卡密已过期|card has expired/i.test(message);
+}
+
 
 function normalizePpSmsDateTime(value: string | null): string | null {
   const parsed = parseSeven79DateTime(value);

@@ -116,35 +116,58 @@
           </div>
 
           <section class="info-panel">
-            <div class="info-list info-list-stack">
-              <div class="info-row info-row-stack">
-                <div class="info-copy-block">
-                  <span class="info-key">Billing Name</span>
-                  <strong>{{ displayValue(selectedItem.holderName) }}</strong>
+            <div class="virtual-detail-grid">
+              <div class="virtual-detail-card">
+                <div class="virtual-detail-card-header">
+                  <div class="virtual-detail-card-content">
+                    <span class="info-key">持卡人</span>
+                    <strong>{{ displayValue(selectedItem.holderName) }}</strong>
+                  </div>
+                  <button
+                    type="button"
+                    class="copy-icon-button virtual-detail-copy-button"
+                    :disabled="!isCopyableValue(selectedItem.holderName)"
+                    @click="copyValue(selectedItem.holderName, '姓名')"
+                  >
+                    <CopyIcon />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  class="copy-icon-button"
-                  :disabled="!isCopyableValue(selectedItem.holderName)"
-                  @click="copyValue(selectedItem.holderName, '姓名')"
-                >
-                  <CopyIcon />
-                </button>
               </div>
 
-              <div class="info-row info-row-stack">
-                <div class="info-copy-block info-copy-block-wide">
-                  <span class="info-key">Street Address & Zip</span>
-                  <strong>{{ displayValue(selectedItem.address) }}</strong>
+              <div class="virtual-detail-card virtual-detail-card-wide">
+                <div class="virtual-detail-card-header virtual-detail-card-header-top">
+                  <div class="virtual-detail-card-content virtual-detail-card-content-wide">
+                    <span class="info-key">地址信息</span>
+                    <strong>{{ displayValue(selectedParsedAddress.fullAddress) }}</strong>
+                  </div>
+                  <button
+                    type="button"
+                    class="copy-icon-button virtual-detail-copy-button"
+                    :disabled="!isCopyableValue(selectedParsedAddress.fullAddress)"
+                    @click="copyValue(selectedParsedAddress.fullAddress, '地址')"
+                  >
+                    <CopyIcon />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  class="copy-icon-button"
-                  :disabled="!isCopyableValue(selectedItem.address)"
-                  @click="copyValue(selectedItem.address, '地址')"
-                >
-                  <CopyIcon />
-                </button>
+
+                <div class="virtual-address-grid">
+                  <div v-for="field in selectedAddressFields" :key="field.label" class="virtual-address-card">
+                    <div class="virtual-detail-card-header">
+                      <div class="virtual-detail-card-content">
+                        <span class="info-key">{{ field.label }}</span>
+                        <strong :class="{ 'mono-text': field.mono }">{{ displayValue(field.value) }}</strong>
+                      </div>
+                      <button
+                        type="button"
+                        class="copy-icon-button virtual-detail-copy-button"
+                        :disabled="!isCopyableValue(field.value)"
+                        @click="copyValue(field.value, field.copyLabel)"
+                      >
+                        <CopyIcon />
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </section>
@@ -458,6 +481,22 @@ type InfoField = {
   tone?: 'error';
 };
 
+type ParsedAddress = {
+  fullAddress: string;
+  street: string | null;
+  city: string | null;
+  state: string | null;
+  postalCode: string | null;
+  country: string | null;
+};
+
+type AddressField = {
+  label: string;
+  value: string | null;
+  copyLabel: string;
+  mono?: boolean;
+};
+
 const CopyGlyph = () =>
   h(
     'svg',
@@ -528,6 +567,19 @@ const ppSmsOptions = computed(() =>
     value: item.id
   }))
 );
+
+const selectedParsedAddress = computed<ParsedAddress>(() => parseSelectedCardAddress(selectedItem.value?.address));
+
+const selectedAddressFields = computed<AddressField[]>(() => {
+  const address = selectedParsedAddress.value;
+  return [
+    { label: 'Street', value: address.street, copyLabel: '街道地址' },
+    { label: 'City', value: address.city, copyLabel: '城市' },
+    { label: 'State', value: address.state, copyLabel: '州' },
+    { label: 'Zip Code', value: address.postalCode, copyLabel: '邮编', mono: true },
+    { label: 'Country', value: address.country, copyLabel: '国家' }
+  ];
+});
 
 const cardSummaryFields = computed<InfoField[]>(() => {
   const item = selectedItem.value;
@@ -934,6 +986,44 @@ function formatRemaining(value: number | null): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}分 ${seconds}秒`;
+}
+
+function parseSelectedCardAddress(value: string | null | undefined): ParsedAddress {
+  const fullAddress = normalizeCopyValue(value);
+  if (!fullAddress) {
+    return createParsedAddress('-');
+  }
+
+  const normalized = fullAddress.replace(/\s+/g, ' ').trim();
+  const parts = normalized.split(',').map((part) => part.trim()).filter(Boolean);
+  if (parts.length >= 3) {
+    const [streetPart, cityStateZipPart, countryPart] = parts;
+    const cityStateZipMatch = cityStateZipPart.match(/^(.*?)(?:\s+([A-Z]{2})\s+(\d{5}(?:-\d{4})?))$/i);
+    if (cityStateZipMatch) {
+      const [, city, state, postalCode] = cityStateZipMatch;
+      return {
+        fullAddress: normalized,
+        street: streetPart || null,
+        city: city.trim() || null,
+        state: state?.toUpperCase() || null,
+        postalCode: postalCode || null,
+        country: countryPart || null
+      };
+    }
+  }
+
+  return createParsedAddress(normalized);
+}
+
+function createParsedAddress(fullAddress: string): ParsedAddress {
+  return {
+    fullAddress,
+    street: null,
+    city: null,
+    state: null,
+    postalCode: null,
+    country: null
+  };
 }
 
 function formatExpiryCvv(expiryDate: string | null, cvv: string | null): string {
@@ -1880,16 +1970,75 @@ onMounted(async () => {
   align-items: flex-start;
 }
 
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 700;
-  white-space: nowrap;
+
+.virtual-detail-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.6fr);
 }
+
+.virtual-detail-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid rgba(226, 232, 240, 0.96);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 250, 252, 0.96) 100%);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
+}
+
+.virtual-detail-card-wide {
+  gap: 14px;
+}
+
+.virtual-detail-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.virtual-detail-card-header-top {
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.88);
+}
+
+.virtual-detail-card-content {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.virtual-detail-card-content-wide {
+  flex: 1;
+}
+
+.virtual-detail-card-content strong {
+  color: var(--seven79-text);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.virtual-detail-copy-button {
+  flex-shrink: 0;
+}
+
+.virtual-address-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.virtual-address-card {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+}
+
 
 .status-badge-success {
   background: #ecfdf5;
@@ -2357,10 +2506,14 @@ onMounted(async () => {
 
   .quick-check-strip,
   .facts-grid,
-  .virtual-card-meta-grid {
+  .virtual-card-meta-grid,
+  .virtual-detail-grid,
+  .virtual-address-grid {
     grid-template-columns: 1fr 1fr;
   }
 
+  .virtual-detail-card-header,
+  .virtual-detail-card-header-top,
   .info-row-stack,
   .phone-row {
     width: 100%;
@@ -2378,7 +2531,9 @@ onMounted(async () => {
 
   .quick-check-strip,
   .facts-grid,
-  .virtual-card-meta-grid {
+  .virtual-card-meta-grid,
+  .virtual-detail-grid,
+  .virtual-address-grid {
     grid-template-columns: 1fr;
   }
 
