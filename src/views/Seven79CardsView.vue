@@ -2189,8 +2189,8 @@ onMounted(async () => {
 .pp-select-wrap {
   position: relative;
   margin-top: 2px;
-  flex: 0 1 360px;
-  max-width: 360px;
+  flex: 0 0 300px;
+  max-width: 300px;
 }
 
 .pp-select-wrap-single {
@@ -2202,18 +2202,21 @@ onMounted(async () => {
 }
 
 :deep(.pp-select-wrap .n-base-selection-label) {
-  min-height: 36px;
+  min-height: 32px;
+  padding-right: 28px;
 }
 
 :deep(.pp-select-wrap .n-base-selection-input) {
   font-family: var(--seven79-mono);
-  font-size: 13px;
+  font-size: 18px;
+  font-weight: 700;
 }
 
 :deep(.pp-select-wrap .n-base-selection-placeholder),
 :deep(.pp-select-wrap .n-base-selection-render-label) {
   font-family: var(--seven79-mono);
-  font-size: 13px;
+  font-size: 18px;
+  font-weight: 700;
 }
 
 .sms-block-expiry {
