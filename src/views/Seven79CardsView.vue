@@ -2108,14 +2108,14 @@ onMounted(async () => {
 .phone-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  justify-content: flex-start;
+  gap: 6px;
   padding: 0;
 }
 
 .phone-text {
   color: var(--seven79-text);
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 700;
   letter-spacing: 0.01em;
   line-height: 1.25;
@@ -2125,7 +2125,7 @@ onMounted(async () => {
 .pp-phone-select-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   width: 100%;
 }
 
@@ -2187,7 +2187,8 @@ onMounted(async () => {
 .pp-select-wrap {
   position: relative;
   margin-top: 2px;
-  flex: 1;
+  flex: 0 1 430px;
+  max-width: 430px;
 }
 
 .pp-select-wrap-single {
@@ -2204,13 +2205,13 @@ onMounted(async () => {
 
 :deep(.pp-select-wrap .n-base-selection-input) {
   font-family: var(--seven79-mono);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 :deep(.pp-select-wrap .n-base-selection-placeholder),
 :deep(.pp-select-wrap .n-base-selection-render-label) {
   font-family: var(--seven79-mono);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .sms-block-expiry {
@@ -2267,6 +2268,7 @@ onMounted(async () => {
   width: 22px;
   height: 22px;
   padding: 0;
+  margin-left: 2px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -2526,6 +2528,11 @@ onMounted(async () => {
   .quick-check-strip,
   .virtual-detail-meta-row {
     grid-template-columns: 1fr;
+  }
+
+  .pp-select-wrap {
+    flex: 1;
+    max-width: none;
   }
 
   .phone-text {
