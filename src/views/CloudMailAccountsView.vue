@@ -627,6 +627,10 @@ const localPartInputProps = {
 
 const rowKey = (row: CloudMailAccountItem): number => row.userId;
 
+function openChatGpt(): void {
+  window.open('https://chatgpt.com/', '_blank', 'noopener,noreferrer');
+}
+
 const availableDomainsDisplay = computed(() => {
   return availableDomains.value.length > 0 ? availableDomains.value.join(' / ') : '未配置';
 });
@@ -715,25 +719,25 @@ const columns: DataTableColumns<CloudMailAccountItem> = [
   {
     title: '邮箱',
     key: 'email',
-    width: 248,
+    width: 232,
     render: (row) => renderEmailCell(row)
   },
   {
     title: '备注',
     key: 'remark',
-    minWidth: 220,
+    width: 168,
     render: (row) => renderRemarkCell(row)
   },
   {
     title: '创建时间',
     key: 'createTime',
-    width: 148,
+    width: 136,
     render: (row) => h('span', { class: 'plain-cell-text' }, formatDate(row.createTime))
   },
   {
     title: '操作',
     key: 'actions',
-    width: 90,
+    width: 110,
     render: (row) =>
       h('div', { class: 'action-cell action-cell-compact' }, [
         h(
@@ -743,10 +747,10 @@ const columns: DataTableColumns<CloudMailAccountItem> = [
             class: 'table-action-button',
             onClick: (event: MouseEvent) => {
               event.stopPropagation();
-              void copyEmail(row.email);
+              openChatGpt();
             }
           },
-          '复制'
+          'GPT'
         ),
         h(
           'button',
@@ -892,7 +896,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: flex-start !important;
-  gap: 12px;
+  gap: 10px;
   margin: 0;
   padding: 0 !important;
   border: 0 !important;
@@ -904,7 +908,7 @@ onMounted(async () => {
 :deep(.cloud-toolbar .toolbar-button-group) {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
@@ -917,8 +921,8 @@ onMounted(async () => {
 
 :deep(.cloud-toolbar .toolbar-search.search-input),
 :deep(.cloud-toolbar .cloud-search-input) {
-  width: 260px !important;
-  flex: 0 0 260px !important;
+  width: 220px !important;
+  flex: 0 0 220px !important;
 }
 
 :deep(.cloud-toolbar .n-input-wrapper) {
@@ -1010,11 +1014,11 @@ onMounted(async () => {
 :deep(.cloud-mail-config-strip-spec) {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px;
 }
 
 :deep(.cloud-mail-config-item) {
-  padding: 14px 16px;
+  padding: 12px 14px;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   background: #ffffff;
@@ -1045,7 +1049,7 @@ onMounted(async () => {
 
 :deep(.cloud-mail-account-table .n-data-table-th),
 :deep(.cloud-mail-account-table .n-data-table-td) {
-  padding: 14px 16px !important;
+  padding: 12px 12px !important;
   border-bottom-color: #f1f5f9 !important;
 }
 
@@ -1069,7 +1073,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
+  gap: 6px;
 }
 
 :deep(.cloud-mail-account-table .cloud-mail-remark-text) {
