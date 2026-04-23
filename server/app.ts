@@ -3636,10 +3636,9 @@ async function loginSeven79OpenApi(): Promise<{ token: string; inviterCode: stri
     throw new HTTPException(502, { message: '779 新接口登录失败: 未返回 token' });
   }
 
-  const user = asRecord(data.user);
   return {
     token,
-    inviterCode: getSeven79OpenApiInviterCode() || toNullableText(user.inviteCode)
+    inviterCode: getSeven79OpenApiInviterCode()
   };
 }
 
