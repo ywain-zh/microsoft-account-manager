@@ -176,9 +176,15 @@
           <n-empty description="点击右侧按钮打开列表管理，选择卡密后这里会展示详情。" class="section-empty" />
         </div>
 
-        <footer class="work-card-footer">
-          <span>卡片有效期:</span>
-          <strong>{{ displayValue(selectedItem?.cardValidUntil) }}</strong>
+        <footer class="work-card-footer work-card-footer-split">
+          <div>
+            <span>激活码有效期:</span>
+            <strong>{{ displayValue(selectedItem?.checkExpiryTime || selectedItem?.expiresAt) }}</strong>
+          </div>
+          <div>
+            <span>卡片有效期:</span>
+            <strong>{{ displayValue(selectedItem?.cardValidUntil) }}</strong>
+          </div>
         </footer>
       </article>
 
@@ -576,7 +582,13 @@ const ppSmsOptions = computed(() =>
 const selectedPpSmsPhone = computed(() => splitPhoneValue(selectedPpSmsItem.value?.fullPhone));
 const selectedCardSmsPhone = computed(() => splitPhoneValue(selectedItem.value?.phone));
 
-const selectedParsedAddress = computed<ParsedAddress>(() => parseSelectedCardAddress(selectedItem.value?.address));
+const selectedParsedAddress = computed<ParsedAddress>(() => {
+  const parsed = parseSelectedCardAddress(selectedItem.value?.address);
+  return {
+    ...parsed,
+    fullAddress: formatParsedFullAddress(parsed)
+  };
+});
 
 const selectedAddressFields = computed<AddressField[]>(() => {
   const address = selectedParsedAddress.value;
@@ -655,8 +667,9 @@ const selectedCardBundle = computed(() => {
       `日期: ${formatCardExpiryDisplay(item.expiryDate)}`,
     `CVV: ${displayValue(item.cvv)}`,
     `姓名: ${displayValue(item.holderName)}`,
-    `地址: ${displayValue(item.address)}`,
+    `地址: ${displayValue(selectedParsedAddress.value.fullAddress)}`,
     `手机号: ${displayValue(item.phone)}`,
+    `激活码有效期: ${displayValue(item.checkExpiryTime || item.expiresAt)}`,
     `卡片有效期: ${displayValue(item.cardValidUntil)}`,
     `远端到期: ${displayValue(item.expiresAt)}`
   ];
@@ -667,8 +680,9 @@ const selectedCardBundle = computed(() => {
 const canCopySelectedCardBundle = computed(() => Boolean(selectedItem.value));
 
 watch(
-  selectedItem,
-  (item) => {
+  () => `${selectedItem.value?.id ?? ''}:${selectedItem.value?.smsApi ?? ''}`,
+  () => {
+    const item = selectedItem.value;
     cardCodeInput.value = item?.smsApi ? '暂无验证码' : '无接码接口';
   },
   { immediate: true }
@@ -1122,9 +1136,34 @@ function parseCityPostal(value: string): { city: string | null; state: string | 
 
   return {
     city: parsedCity,
-    state: null,
+    state: resolveUsStateByPostalCode(postalCode),
     postalCode
   };
+}
+
+function resolveUsStateByPostalCode(value: string | null | undefined): string | null {
+  const normalized = normalizeCopyValue(value);
+  const zip = Number.parseInt(normalized.slice(0, 5), 10);
+  if (!Number.isInteger(zip)) {
+    return null;
+  }
+
+  if (zip >= 27000 && zip <= 28999) {
+    return 'NC';
+  }
+
+  return null;
+}
+
+function formatParsedFullAddress(address: ParsedAddress): string {
+  const street = normalizeCopyValue(address.street);
+  const city = normalizeCopyValue(address.city);
+  const state = normalizeCopyValue(address.state);
+  const postalCode = normalizeCopyValue(address.postalCode);
+  const country = normalizeCopyValue(address.country);
+  const location = [city, state, postalCode].filter(Boolean).join(' ');
+  const fullAddress = [street, location, country].filter(Boolean).join(', ');
+  return fullAddress || address.fullAddress;
 }
 
 function resolveAddressCountry(value: string | null | undefined): string | null {
@@ -2260,6 +2299,19 @@ onMounted(async () => {
 .work-card-footer strong {
   color: var(--seven79-text);
   font-weight: 700;
+}
+
+.work-card-footer-split {
+  align-items: stretch;
+}
+
+.work-card-footer-split > div {
+  display: grid;
+  gap: 3px;
+}
+
+.work-card-footer-split > div:last-child {
+  text-align: right;
 }
 
 .work-card-footer-right {
