@@ -1279,7 +1279,7 @@ app.post('/api/stripe-payment/run', async (c) => {
   const rootDir = process.cwd();
   const scriptPath = resolve(process.env.PAY_SCRIPT_PATH?.trim() || resolve(rootDir, 'pay.py'));
   const configPath = resolveStripePaymentConfigPath(rootDir, payload.configProfile);
-  const pythonBin = process.env.PAY_PYTHON_BIN?.trim() || 'python';
+  const pythonBin = process.env.PAY_PYTHON_BIN?.trim() || 'python3';
   const timeoutMs = parsePositiveInteger(process.env.PAY_TIMEOUT_MS, DEFAULT_PAY_TIMEOUT_MS);
   const args = [scriptPath, payload.checkoutInput, '--card', String(payload.cardIndex), '--config', configPath];
 
