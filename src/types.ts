@@ -130,20 +130,36 @@ export interface Sub2ApiDeleteAccountsResponse {
   details: Sub2ApiDeleteAccountDetail[];
 }
 
-export interface StripePaymentRequest {
-  checkoutInput: string;
-  cardIndex: number;
-  configProfile: string;
-  manualToken?: string;
+export interface StripePaymentRuntimeConfig {
+  clientKey: string;
+  cardLine: string;
+  publishableKey?: string;
 }
 
-export interface StripePaymentResponse {
-  ok: boolean;
-  exitCode: number | null;
+export interface StripePaymentRequest {
+  checkoutInput: string;
+  cardIndex?: number;
+  configProfile?: string;
+  manualToken?: string;
+  runtimeConfig?: StripePaymentRuntimeConfig;
+}
+
+export type StripePaymentRunStatus = 'running' | 'completed' | 'failed' | 'timeout';
+
+export interface StripePaymentRunStartResponse {
+  runId: string;
+}
+
+export interface StripePaymentRunLogResponse {
+  runId: string;
+  status: StripePaymentRunStatus;
+  log: string;
   stdout: string;
   stderr: string;
-  log: string;
+  exitCode: number | null;
   message: string;
+  startedAt: string;
+  finishedAt?: string;
 }
 
 export type TokenStatus = 'unknown' | 'valid' | 'invalid';

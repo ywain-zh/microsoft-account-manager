@@ -20,7 +20,8 @@ import type {
   Seven79CheckResponse,
   Seven79ImportResult,
   StripePaymentRequest,
-  StripePaymentResponse,
+  StripePaymentRunLogResponse,
+  StripePaymentRunStartResponse,
   Sub2ApiConfig,
   Sub2ApiDeleteAccountsResponse
 } from './types';
@@ -301,11 +302,15 @@ export const api = {
     return request<{ items: AccountItem[] }>(`/api/open/accounts${query}`);
   },
 
-  runStripePayment(payload: StripePaymentRequest): Promise<StripePaymentResponse> {
-    return request<StripePaymentResponse>('/api/stripe-payment/run', {
+  runStripePayment(payload: StripePaymentRequest): Promise<StripePaymentRunStartResponse> {
+    return request<StripePaymentRunStartResponse>('/api/stripe-payment/run', {
       method: 'POST',
       body: JSON.stringify(payload)
     });
+  },
+
+  getStripePaymentRunLog(runId: string): Promise<StripePaymentRunLogResponse> {
+    return request<StripePaymentRunLogResponse>(`/api/stripe-payment/runs/${runId}/log`);
   },
 
   listSeven79Cards(keyword?: string): Promise<{ items: Seven79CardItem[] }> {

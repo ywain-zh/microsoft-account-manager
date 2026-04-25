@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { cors } from 'hono/cors';
@@ -52,27 +54,54 @@ interface AccountRow {
   tokenCheckedAt: string | null;
 }
 
+interface StripePaymentRuntimeConfig {
+  clientKey: string;
+  cardLine: string;
+  publishableKey?: string;
+}
+
 interface StripePaymentRequest {
   checkoutInput: string;
-  cardIndex: number;
-  configProfile: string;
+  cardIndex?: number;
+  configProfile?: string;
   manualToken?: string;
+  runtimeConfig?: StripePaymentRuntimeConfig;
 }
 
-interface StripePaymentResponse {
-  ok: boolean;
-  exitCode: number | null;
+type StripePaymentRunStatus = 'running' | 'completed' | 'failed' | 'timeout';
+
+interface StripePaymentRun {
+  runId: string;
+  status: StripePaymentRunStatus;
+  cwd: string;
+  tempDir: string;
+  logPath: string;
   stdout: string;
   stderr: string;
-  log: string;
+  exitCode: number | null;
   message: string;
+  startedAt: string;
+  finishedAt?: string;
+  timeoutId: ReturnType<typeof setTimeout>;
+  cleanupTimer?: ReturnType<typeof setTimeout>;
+  secrets: string[];
 }
 
-interface StripePaymentProcessResult {
-  exitCode: number | null;
-  stdout: string;
-  stderr: string;
-  timedOut: boolean;
+interface RuntimeStripeCard {
+  number: string;
+  cvc: string;
+  exp_month: string;
+  exp_year: string;
+  phone: string;
+  sms_api: string;
+  name: string;
+  address: {
+    country: string;
+    line1: string;
+    city: string;
+    state: string;
+    postal_code: string;
+  };
 }
 
 type Seven79CardStatus = 'pending' | 'checked' | 'expired' | 'failed';
@@ -446,8 +475,11 @@ const DEFAULT_SEVEN79_OPEN_API_PASSWORD = 'admin123';
 
 const DEFAULT_PAY_TIMEOUT_MS = 120000;
 const PAY_OUTPUT_LIMIT = 60000;
+const STRIPE_RUN_CLEANUP_MS = 20 * 60 * 1000;
+const STRIPE_LOG_RESPONSE_LIMIT = 200000;
 const PAY_CONFIG_PROFILES = new Map<string, string>([['default', 'config.json']]);
 const CHECKOUT_SESSION_PATTERN = /cs_(?:live|test)_[A-Za-z0-9]+/;
+const stripePaymentRuns = new Map<string, StripePaymentRun>();
 let stripePaymentRunning = false;
 
 const textEncoder = new TextEncoder();
@@ -1278,37 +1310,71 @@ app.post('/api/stripe-payment/run', async (c) => {
   const payload = normalizeStripePaymentRequest(body);
   const rootDir = process.cwd();
   const scriptPath = resolve(process.env.PAY_SCRIPT_PATH?.trim() || resolve(rootDir, 'pay.py'));
-  const configPath = resolveStripePaymentConfigPath(rootDir, payload.configProfile);
   const pythonBin = process.env.PAY_PYTHON_BIN?.trim() || 'python3';
   const timeoutMs = parsePositiveInteger(process.env.PAY_TIMEOUT_MS, DEFAULT_PAY_TIMEOUT_MS);
-  const args = [scriptPath, payload.checkoutInput, '--card', String(payload.cardIndex), '--config', configPath];
+  const runId = randomUUID();
+  const tempDir = await mkdtemp(join(tmpdir(), `stripe-payment-${runId}-`));
+  const logPath = join(tempDir, 'log.txt');
+  const configPath = payload.runtimeConfig
+    ? await writeRuntimeStripeConfig(tempDir, payload.runtimeConfig)
+    : resolveStripePaymentConfigPath(rootDir, payload.configProfile || 'default');
+  const cardIndex = payload.runtimeConfig ? 0 : payload.cardIndex ?? 0;
+  const args = [
+    scriptPath,
+    payload.checkoutInput,
+    '--card',
+    String(cardIndex),
+    '--config',
+    configPath,
+    '--log',
+    logPath
+  ];
 
   if (payload.manualToken) {
     args.push('--token', payload.manualToken);
   }
 
+  const run: StripePaymentRun = {
+    runId,
+    status: 'running',
+    cwd: rootDir,
+    tempDir,
+    logPath,
+    stdout: '',
+    stderr: '',
+    exitCode: null,
+    message: '支付脚本运行中',
+    startedAt: new Date().toISOString(),
+    timeoutId: setTimeout(() => undefined, 0),
+    secrets: collectStripePaymentSecrets(payload)
+  };
+  clearTimeout(run.timeoutId);
+  stripePaymentRuns.set(runId, run);
   stripePaymentRunning = true;
-  try {
-    const processResult = await runStripePaymentProcess(pythonBin, args, rootDir, timeoutMs);
-    const log = await readStripePaymentLog(rootDir);
-    const ok = !processResult.timedOut && processResult.exitCode === 0;
-    const message = processResult.timedOut
-      ? `支付脚本执行超时 (${Math.round(timeoutMs / 1000)}s)`
-      : ok
-        ? '支付脚本执行完成'
-        : '支付脚本执行失败';
+  startStripePaymentRun(run, pythonBin, args, timeoutMs);
 
-    return c.json({
-      ok,
-      exitCode: processResult.exitCode,
-      stdout: redactStripePaymentText(limitText(processResult.stdout)),
-      stderr: redactStripePaymentText(limitText(processResult.stderr)),
-      log,
-      message
-    } satisfies StripePaymentResponse);
-  } finally {
-    stripePaymentRunning = false;
+  return c.json({ runId });
+});
+
+app.get('/api/stripe-payment/runs/:runId/log', async (c) => {
+  const runId = c.req.param('runId');
+  const run = stripePaymentRuns.get(runId);
+  if (!run) {
+    throw new HTTPException(404, { message: '支付任务不存在或已清理' });
   }
+
+  const log = await readStripePaymentLog(run.logPath, run.secrets);
+  return c.json({
+    runId: run.runId,
+    status: run.status,
+    log,
+    stdout: redactStripePaymentText(limitText(run.stdout), run.secrets),
+    stderr: redactStripePaymentText(limitText(run.stderr), run.secrets),
+    exitCode: run.exitCode,
+    message: run.message,
+    startedAt: run.startedAt,
+    finishedAt: run.finishedAt
+  });
 });
 
 app.get('/api/sub2api/config', async (c) => {
@@ -1672,13 +1738,14 @@ function normalizeStripePaymentRequest(input: Partial<StripePaymentRequest>): St
     throw new HTTPException(400, { message: 'Checkout 输入必须包含 cs_live/cs_test 或合法 URL' });
   }
 
+  const runtimeConfig = normalizeStripeRuntimeConfig(input.runtimeConfig);
   const cardIndex = Number(input.cardIndex ?? 0);
   if (!Number.isInteger(cardIndex) || cardIndex < 0 || cardIndex > 999) {
     throw new HTTPException(400, { message: '卡索引必须是 0 到 999 的整数' });
   }
 
   const configProfile = asText(input.configProfile || 'default').trim() || 'default';
-  if (!PAY_CONFIG_PROFILES.has(configProfile)) {
+  if (!runtimeConfig && !PAY_CONFIG_PROFILES.has(configProfile)) {
     throw new HTTPException(400, { message: '配置档案不存在' });
   }
 
@@ -1691,7 +1758,41 @@ function normalizeStripePaymentRequest(input: Partial<StripePaymentRequest>): St
     checkoutInput,
     cardIndex,
     configProfile,
-    manualToken: manualToken || undefined
+    manualToken: manualToken || undefined,
+    runtimeConfig
+  };
+}
+
+function normalizeStripeRuntimeConfig(input: unknown): StripePaymentRuntimeConfig | undefined {
+  if (!input) {
+    return undefined;
+  }
+
+  const record = asRecord(input);
+  const clientKey = asText(record.clientKey).trim();
+  const cardLine = asText(record.cardLine).trim();
+  const publishableKey = asText(record.publishableKey).trim();
+
+  if (!clientKey) {
+    throw new HTTPException(400, { message: 'ClientKey 不能为空' });
+  }
+  if (clientKey.length > 4096) {
+    throw new HTTPException(400, { message: 'ClientKey 过长' });
+  }
+  if (!cardLine) {
+    throw new HTTPException(400, { message: '卡信息不能为空' });
+  }
+  if (cardLine.length > 4096) {
+    throw new HTTPException(400, { message: '卡信息过长' });
+  }
+  if (publishableKey && !/^pk_(?:live|test)_[A-Za-z0-9]+$/.test(publishableKey)) {
+    throw new HTTPException(400, { message: '备用 publishable key 格式不正确' });
+  }
+
+  return {
+    clientKey,
+    cardLine,
+    publishableKey: publishableKey || undefined
   };
 }
 
@@ -1723,78 +1824,236 @@ function parsePositiveInteger(value: string | undefined, fallback: number): numb
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function runStripePaymentProcess(
+function startStripePaymentRun(
+  run: StripePaymentRun,
   command: string,
   args: string[],
-  cwd: string,
   timeoutMs: number
-): Promise<StripePaymentProcessResult> {
-  return new Promise((resolveProcess, rejectProcess) => {
-    const child = spawn(command, args, {
-      cwd,
-      shell: false,
-      windowsHide: true
-    });
+): void {
+  const child = spawn(command, args, {
+    cwd: run.cwd,
+    shell: false,
+    windowsHide: true
+  });
 
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
+  let timedOut = false;
+  run.timeoutId = setTimeout(() => {
+    timedOut = true;
+    child.kill('SIGTERM');
+  }, timeoutMs);
 
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGTERM');
-    }, timeoutMs);
-
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => {
-      stdout = limitText(stdout + chunk);
-    });
-    child.stderr.on('data', (chunk: string) => {
-      stderr = limitText(stderr + chunk);
-    });
-    child.on('error', (error) => {
-      clearTimeout(timer);
-      rejectProcess(new HTTPException(500, { message: `支付脚本启动失败: ${error.message}` }));
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolveProcess({
-        exitCode: code,
-        stdout,
-        stderr,
-        timedOut
-      });
-    });
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk: string) => {
+    run.stdout = limitText(run.stdout + chunk);
+  });
+  child.stderr.on('data', (chunk: string) => {
+    run.stderr = limitText(run.stderr + chunk);
+  });
+  child.on('error', (error) => {
+    clearTimeout(run.timeoutId);
+    run.status = 'failed';
+    run.message = `支付脚本启动失败: ${error.message}`;
+    run.finishedAt = new Date().toISOString();
+    stripePaymentRunning = false;
+    scheduleStripeRunCleanup(run);
+  });
+  child.on('close', (code) => {
+    clearTimeout(run.timeoutId);
+    run.exitCode = code;
+    run.finishedAt = new Date().toISOString();
+    run.status = timedOut ? 'timeout' : code === 0 ? 'completed' : 'failed';
+    run.message = timedOut
+      ? `支付脚本执行超时 (${Math.round(timeoutMs / 1000)}s)`
+      : code === 0
+        ? '支付脚本执行完成'
+        : '支付脚本执行失败';
+    stripePaymentRunning = false;
+    scheduleStripeRunCleanup(run);
   });
 }
 
-async function readStripePaymentLog(rootDir: string): Promise<string> {
+async function writeRuntimeStripeConfig(tempDir: string, runtimeConfig: StripePaymentRuntimeConfig): Promise<string> {
+  const configPath = join(tempDir, 'config.json');
+  const card = parseStripeRuntimeCardLine(runtimeConfig.cardLine);
+  const config = {
+    locale: 'US',
+    preserve_card_details: true,
+    captcha: {
+      api_key: runtimeConfig.clientKey
+    },
+    cards: [card],
+    ...(runtimeConfig.publishableKey ? { publishable_key: runtimeConfig.publishableKey } : {})
+  };
+
+  await writeFile(configPath, JSON.stringify(config, null, 2), 'utf8');
+  return configPath;
+}
+
+function parseStripeRuntimeCardLine(line: string): RuntimeStripeCard {
+  const parts = line.split('----').map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 7) {
+    throw new HTTPException(400, { message: '卡信息格式必须为：卡号 ---- 有效期 ---- CVC ---- 手机号 ---- 短信接口URL ---- 姓名 ---- 地址' });
+  }
+
+  const number = parts[0].replace(/\D/g, '');
+  if (!/^\d{12,19}$/.test(number)) {
+    throw new HTTPException(400, { message: '卡号格式不正确' });
+  }
+
+  const expiryMatch = parts[1].match(/^(\d{1,2})\s*\/\s*(\d{2}|\d{4})$/);
+  if (!expiryMatch) {
+    throw new HTTPException(400, { message: '有效期格式必须为 MM/YY 或 MM/YYYY' });
+  }
+  const month = expiryMatch[1].padStart(2, '0');
+  const monthNumber = Number(month);
+  if (monthNumber < 1 || monthNumber > 12) {
+    throw new HTTPException(400, { message: '有效期月份不正确' });
+  }
+  const expYear = expiryMatch[2].length === 2 ? `20${expiryMatch[2]}` : expiryMatch[2];
+
+  const cvc = parts[2].replace(/\D/g, '');
+  if (!/^\d{3,4}$/.test(cvc)) {
+    throw new HTTPException(400, { message: 'CVC 格式不正确' });
+  }
+
+  const phone = parts[3];
+  const smsApi = parts[4];
+  if (!isHttpUrl(smsApi)) {
+    throw new HTTPException(400, { message: '短信接口 URL 不合法' });
+  }
+
+  return {
+    number,
+    cvc,
+    exp_month: month,
+    exp_year: expYear,
+    phone,
+    sms_api: smsApi,
+    name: parts[5],
+    address: parseStripeRuntimeAddress(parts.slice(6).join(' ---- '))
+  };
+}
+
+function parseStripeRuntimeAddress(rawAddress: string): RuntimeStripeCard['address'] {
+  const trimmed = rawAddress.trim();
+  const normalized = trimmed.replace(/\s+/g, ' ');
+  const countryMatch = normalized.match(/,\s*([A-Z]{2})\s*$/i);
+  const country = (countryMatch?.[1] || 'US').toUpperCase();
+  const withoutCountry = countryMatch ? normalized.slice(0, countryMatch.index).trim() : normalized;
+  const postalMatch = withoutCountry.match(/\b(\d{5})(?:-\d{4})?\b/);
+  const postalCode = postalMatch?.[1] || '';
+  const beforePostal = postalMatch ? withoutCountry.slice(0, postalMatch.index).trim().replace(/,$/, '') : withoutCountry;
+  const cityStateMatch = beforePostal.match(/,\s*([^,]+?)\s+([A-Z]{2})$/i);
+
+  if (cityStateMatch) {
+    return {
+      country,
+      line1: beforePostal.slice(0, cityStateMatch.index).trim().replace(/,$/, ''),
+      city: cityStateMatch[1].trim(),
+      state: cityStateMatch[2].toUpperCase(),
+      postal_code: postalCode
+    };
+  }
+
+  const fallbackMatch = beforePostal.match(/^(.+?)\s+([A-Z][A-Za-z .'-]+)\s+([A-Z]{2})$/);
+  if (fallbackMatch) {
+    return {
+      country,
+      line1: fallbackMatch[1].trim().replace(/,$/, ''),
+      city: fallbackMatch[2].trim().replace(/,$/, ''),
+      state: fallbackMatch[3].toUpperCase(),
+      postal_code: postalCode
+    };
+  }
+
+  return {
+    country,
+    line1: beforePostal || normalized,
+    city: '',
+    state: '',
+    postal_code: postalCode
+  };
+}
+
+function collectStripePaymentSecrets(payload: StripePaymentRequest): string[] {
+  const secrets = [payload.manualToken, payload.runtimeConfig?.clientKey, payload.runtimeConfig?.publishableKey]
+    .map((value) => asText(value).trim())
+    .filter((value) => value.length >= 6);
+
+  if (payload.runtimeConfig?.cardLine) {
+    const parts = payload.runtimeConfig.cardLine.split('----').map((part) => part.trim());
+    secrets.push(...parts.filter((part) => part.length >= 6));
+    const smsUrl = parts[4];
+    if (smsUrl) {
+      try {
+        const url = new URL(smsUrl);
+        for (const value of url.searchParams.values()) {
+          if (value.length >= 6) {
+            secrets.push(value);
+          }
+        }
+      } catch {
+        // ignore invalid URL here; validation happens earlier
+      }
+    }
+  }
+
+  return [...new Set(secrets)];
+}
+
+function scheduleStripeRunCleanup(run: StripePaymentRun): void {
+  run.cleanupTimer = setTimeout(() => {
+    stripePaymentRuns.delete(run.runId);
+    void rm(run.tempDir, { recursive: true, force: true });
+  }, STRIPE_RUN_CLEANUP_MS);
+}
+async function readStripePaymentLog(logPath: string, secrets: string[]): Promise<string> {
   try {
-    const content = await readFile(resolve(rootDir, 'log.txt'), 'utf8');
-    return redactStripePaymentText(limitText(content));
+    const content = await readFile(logPath, 'utf8');
+    return redactStripePaymentText(limitText(content, STRIPE_LOG_RESPONSE_LIMIT), secrets);
   } catch {
     return '';
   }
 }
 
-function limitText(value: string): string {
-  if (value.length <= PAY_OUTPUT_LIMIT) {
+function limitText(value: string, limit = PAY_OUTPUT_LIMIT): string {
+  if (value.length <= limit) {
     return value;
   }
 
-  return `${value.slice(0, PAY_OUTPUT_LIMIT)}\n...输出已截断...`;
+  return `${value.slice(-limit)}\n...输出已截断...`;
 }
 
-function redactStripePaymentText(value: string): string {
-  return value
+function redactStripePaymentText(value: string, secrets: string[] = []): string {
+  let redacted = value;
+  for (const secret of secrets) {
+    if (!secret) {
+      continue;
+    }
+    redacted = redacted.split(secret).join(maskStripeSecret(secret));
+  }
+
+  return redacted
+    .replace(/(pk_(?:live|test)_)[A-Za-z0-9_\-]+/g, '$1[REDACTED]')
     .replace(/(sk_live_)[A-Za-z0-9_\-]+/g, '$1[REDACTED]')
     .replace(/(sk_test_)[A-Za-z0-9_\-]+/g, '$1[REDACTED]')
+    .replace(/([?&]key=)[^\s&"']+/gi, '$1[REDACTED]')
     .replace(/(api[_-]?key["'\s:=]+)[^\s"']+/gi, '$1[REDACTED]')
     .replace(/(token["'\s:=]+)[^\s"']{12,}/gi, '$1[REDACTED]')
     .replace(/(pass(?:word)?["'\s:=]+)[^\s"']+/gi, '$1[REDACTED]')
-    .replace(/\b\d{12,19}\b/g, '[REDACTED_CARD]')
-    .replace(/(\b\d{3,4}\b)(?=\s*(?:cvv|cvc|安全码))/gi, '[REDACTED_CVC]');
+    .replace(/\b(\d{6})\d{2,9}(\d{4})\b/g, '$1******$2')
+    .replace(/((?:cvv|cvc|安全码)["'\s:=]*)\d{3,4}/gi, '$1***');
+}
+
+function maskStripeSecret(secret: string): string {
+  if (/^\d{12,19}$/.test(secret)) {
+    return `${secret.slice(0, 6)}******${secret.slice(-4)}`;
+  }
+  if (/^pk_(?:live|test)_/.test(secret)) {
+    return `${secret.slice(0, 8)}[REDACTED]`;
+  }
+  return '[REDACTED]';
 }
 
 export default app;

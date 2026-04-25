@@ -26,25 +26,35 @@ import requests
 
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "log.txt")
 
+
+def set_log_file(path: str | None):
+    global LOG_FILE
+    if path:
+        LOG_FILE = os.path.abspath(path)
+
 def _init_log():
     """清空并初始化 log.txt"""
+    os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
     with open(LOG_FILE, "w", encoding="utf-8") as f:
         f.write(f"{'='*80}\n")
         f.write(f"  Stripe 自动化支付 日志  —  {datetime.now().isoformat()}\n")
         f.write(f"{'='*80}\n\n")
+        f.flush()
 
 def _log(msg: str):
     """追加一行到 log.txt 并同时 print"""
     ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
     line = f"[{ts}] {msg}"
-    print(line)
+    print(line, flush=True)
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(line + "\n")
+        f.flush()
 
 def _log_raw(text: str):
     """追加原始文本到 log.txt（不 print）"""
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(text + "\n")
+        f.flush()
 
 def _log_request(method: str, url: str, data=None, params=None, tag: str = ""):
     """记录 HTTP 请求详情"""
@@ -387,10 +397,25 @@ def parse_checkout_url(raw: str) -> tuple[str, str]:
 
     return session_id, stripe_url
 
-def fetch_publishable_key(session: requests.Session, session_id: str, stripe_checkout_url: str) -> str:
+def fetch_publishable_key(session: requests.Session, session_id: str, stripe_checkout_url: str, publishable_key: str = "") -> str:
     checkout_url = stripe_checkout_url
 
     _log("[2/6] 获取 publishable_key ...")
+
+    if publishable_key:
+        try:
+            url = f"{STRIPE_API}/v1/payment_pages/{session_id}/init"
+            post_data = {"key": publishable_key, "_stripe_version": STRIPE_VERSION_BASE,
+                      "browser_locale": "en-US"}
+            _log_request("POST", url, data=post_data, tag="[2/6] 手动pk探测")
+            test_resp = session.post(url, data=post_data, headers=_stripe_headers(), timeout=15)
+            _log_response(test_resp, tag="[2/6] 手动pk探测")
+            if test_resp.status_code == 200:
+                _log(f"      publishable_key: {publishable_key[:30]}... (手动)")
+                return publishable_key
+            _log(f"      手动 publishable_key 无法初始化，继续尝试内置 key")
+        except Exception as e:
+            _log(f"      手动pk探测异常: {e}")
 
     for acct_id_part, known_pk in KNOWN_PUBLISHABLE_KEYS.items():
         try:
@@ -1363,19 +1388,21 @@ def run(checkout_input: str, card_index: int = 0, config_path: str = "config.jso
     _LAST_NAMES = ["SMITH", "JOHNSON", "WILLIAMS", "BROWN", "JONES", "GARCIA", "MILLER",
                    "DAVIS", "RODRIGUEZ", "MARTINEZ", "WILSON", "ANDERSON", "TAYLOR", "THOMAS",
                    "MOORE", "JACKSON", "MARTIN", "LEE", "THOMPSON", "WHITE", "HARRIS", "CLARK"]
-    card["name"] = f"{random.choice(_FIRST_NAMES)} {random.choice(_LAST_NAMES)}"
+    if not cfg.get("preserve_card_details"):
+        card["name"] = f"{random.choice(_FIRST_NAMES)} {random.choice(_LAST_NAMES)}"
 
     email_user = ''.join(random.choices(string.ascii_lowercase + string.digits, k=random.randint(8, 12)))
     _EMAIL_DOMAINS = ["gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "icloud.com", "protonmail.com"]
     card["email"] = f"{email_user}@{random.choice(_EMAIL_DOMAINS)}"
 
     addr = card.get("address", {})
-    line1 = addr.get("line1", "")
+    if not cfg.get("preserve_card_details"):
+        line1 = addr.get("line1", "")
 
-    new_line1 = re.sub(r"^\d+", str(random.randint(100, 999)), line1)
-    if new_line1 == line1 and line1:
-        new_line1 = f"{random.randint(100, 999)} {line1}"
-    addr["line1"] = new_line1
+        new_line1 = re.sub(r"^\d+", str(random.randint(100, 999)), line1)
+        if new_line1 == line1 and line1:
+            new_line1 = f"{random.randint(100, 999)} {line1}"
+        addr["line1"] = new_line1
     card["address"] = addr
 
    
@@ -1422,7 +1449,11 @@ def run(checkout_input: str, card_index: int = 0, config_path: str = "config.jso
     reg_guid, reg_muid, reg_sid = register_fingerprint(http)
 
  
-    pk = fetch_publishable_key(http, session_id, stripe_checkout_url)
+    manual_publishable_key = str(cfg.get("publishable_key", "")).strip()
+    if manual_publishable_key and not re.match(r"^pk_(?:live|test)_[A-Za-z0-9]+$", manual_publishable_key):
+        raise ValueError("publishable_key 格式不正确")
+
+    pk = fetch_publishable_key(http, session_id, stripe_checkout_url, publishable_key=manual_publishable_key)
 
 
     init_resp, stripe_ver, init_ctx = init_checkout(http, session_id, pk, locale_profile=locale_profile)
@@ -1512,7 +1543,10 @@ def main():
     parser.add_argument("--card", type=int, default=0, help="使用第 N 张卡 (0-based, 默认 0)")
     parser.add_argument("--config", default="config.json", help="配置文件路径 (默认 config.json)")
     parser.add_argument("--token", default="", help="手动传入 hCaptcha token (跳过打码平台)")
+    parser.add_argument("--log", default="", help="日志文件路径 (默认脚本目录 log.txt)")
     args = parser.parse_args()
+
+    set_log_file(args.log)
 
     try:
         run(args.session_id, card_index=args.card, config_path=args.config, manual_token=args.token)
@@ -1527,6 +1561,7 @@ def main():
                 f.write(err_msg + "\n")
                 f.write(traceback.format_exc())
                 f.write(f"{'!'*60}\n")
+                f.flush()
         except Exception:
             pass
         sys.exit(1)

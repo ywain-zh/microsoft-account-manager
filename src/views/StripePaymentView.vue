@@ -21,15 +21,55 @@
           />
         </n-form-item>
 
-        <div class="form-grid">
-          <n-form-item label="卡索引">
-            <n-input-number v-model:value="form.cardIndex" :min="0" :precision="0" placeholder="0" />
+        <n-form-item label="配置方式">
+          <n-radio-group v-model:value="form.configMode" name="stripe-config-mode">
+            <n-space>
+              <n-radio value="runtime">临时配置</n-radio>
+              <n-radio value="default">服务器默认配置</n-radio>
+            </n-space>
+          </n-radio-group>
+        </n-form-item>
+
+        <template v-if="form.configMode === 'runtime'">
+          <n-form-item label="ClientKey / YesCaptcha API Key" required>
+            <n-input
+              v-model:value="form.clientKey"
+              type="password"
+              show-password-on="click"
+              placeholder="本次运行使用，不会保存"
+            />
           </n-form-item>
 
-          <n-form-item label="配置档案">
-            <n-select v-model:value="form.configProfile" :options="configProfileOptions" />
+          <n-form-item label="卡信息" required>
+            <n-input
+              v-model:value="form.cardLine"
+              type="textarea"
+              placeholder="卡号 ---- MM/YY ---- CVC ---- 手机号 ---- 短信接口URL ---- 姓名 ---- 地址"
+              :autosize="{ minRows: 3, maxRows: 6 }"
+            />
           </n-form-item>
-        </div>
+
+          <n-form-item label="备用 publishable key（可选）">
+            <n-input
+              v-model:value="form.publishableKey"
+              type="password"
+              show-password-on="click"
+              placeholder="pk_live_... 或 pk_test_...；留空使用内置/自动探测"
+            />
+          </n-form-item>
+        </template>
+
+        <template v-else>
+          <div class="form-grid">
+            <n-form-item label="卡索引">
+              <n-input-number v-model:value="form.cardIndex" :min="0" :precision="0" placeholder="0" />
+            </n-form-item>
+
+            <n-form-item label="配置档案">
+              <n-select v-model:value="form.configProfile" :options="configProfileOptions" />
+            </n-form-item>
+          </div>
+        </template>
 
         <n-form-item label="手动 hCaptcha Token（可选）">
           <n-input
@@ -42,41 +82,42 @@
 
         <div class="action-row">
           <n-button type="primary" :loading="running" @click="handleRun">执行支付脚本</n-button>
-          <n-button :disabled="running && !result" @click="handleClear">清空结果</n-button>
+          <n-button :disabled="running && !runLog" @click="handleClear">清空结果</n-button>
         </div>
       </n-form>
     </n-card>
 
     <n-alert class="security-note" type="warning" :bordered="false">
-      该功能会在登录后的服务端环境调用 pay.py。页面不会保存 Token；配置文件路径只允许后端预设档案映射。
+      该功能会在登录后的服务端环境调用 pay.py。页面不会保存 Token、ClientKey、卡号或 CVC；临时配置只用于本次运行。
     </n-alert>
 
-    <n-card v-if="result" class="result-card" :bordered="false" title="执行结果">
-      <div class="result-summary" :class="{ success: result.ok, failed: !result.ok }">
-        <span>{{ result.message }}</span>
-        <span>退出码：{{ result.exitCode ?? '-' }}</span>
+    <n-card v-if="running || runLog" class="result-card" :bordered="false" title="执行结果 / 实时日志">
+      <div class="result-summary" :class="{ success: runLog?.status === 'completed', failed: isFailedStatus }">
+        <span>{{ runLog?.message || '支付脚本运行中' }}</span>
+        <span>状态：{{ runLog?.status || 'running' }}</span>
+        <span>退出码：{{ runLog?.exitCode ?? '-' }}</span>
       </div>
 
-      <section v-if="result.stdout" class="output-block">
+      <section v-if="runLog?.stdout" class="output-block">
         <h3>stdout</h3>
-        <pre>{{ result.stdout }}</pre>
+        <pre>{{ runLog.stdout }}</pre>
       </section>
 
-      <section v-if="result.stderr" class="output-block">
+      <section v-if="runLog?.stderr" class="output-block">
         <h3>stderr</h3>
-        <pre>{{ result.stderr }}</pre>
+        <pre>{{ runLog.stderr }}</pre>
       </section>
 
-      <section v-if="result.log" class="output-block">
+      <section class="output-block">
         <h3>log.txt</h3>
-        <pre>{{ result.log }}</pre>
+        <pre>{{ runLog?.log || '等待日志输出...' }}</pre>
       </section>
     </n-card>
   </div>
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, reactive, ref } from 'vue';
 import {
   createDiscreteApi,
   NAlert,
@@ -86,10 +127,13 @@ import {
   NFormItem,
   NInput,
   NInputNumber,
-  NSelect
+  NRadio,
+  NRadioGroup,
+  NSelect,
+  NSpace
 } from 'naive-ui';
 import { api } from '../api';
-import type { StripePaymentResponse } from '../types';
+import type { StripePaymentRunLogResponse } from '../types';
 
 const { message } = createDiscreteApi(['message']);
 
@@ -97,13 +141,22 @@ const configProfileOptions = [{ label: 'default (config.json)', value: 'default'
 
 const form = reactive({
   checkoutInput: '',
+  configMode: 'runtime' as 'runtime' | 'default',
   cardIndex: 0,
   configProfile: 'default',
+  clientKey: '',
+  cardLine: '',
+  publishableKey: '',
   manualToken: ''
 });
 
 const running = ref(false);
-const result = ref<StripePaymentResponse | null>(null);
+const runLog = ref<StripePaymentRunLogResponse | null>(null);
+let pollTimer: number | undefined;
+
+const isFailedStatus = computed(() =>
+  runLog.value?.status === 'failed' || runLog.value?.status === 'timeout'
+);
 
 function normalizeCardIndex(value: number | null): number {
   if (!Number.isFinite(value) || value === null || value < 0) {
@@ -120,32 +173,90 @@ async function handleRun(): Promise<void> {
     return;
   }
 
+  const publishableKey = form.publishableKey.trim();
+  if (publishableKey && !/^pk_(?:live|test)_[A-Za-z0-9]+$/.test(publishableKey)) {
+    message.warning('备用 publishable key 必须以 pk_live_ 或 pk_test_ 开头');
+    return;
+  }
+
+  if (form.configMode === 'runtime') {
+    if (!form.clientKey.trim()) {
+      message.warning('请输入 ClientKey');
+      return;
+    }
+    if (!form.cardLine.trim()) {
+      message.warning('请输入卡信息');
+      return;
+    }
+  }
+
+  stopPolling();
   running.value = true;
-  result.value = null;
+  runLog.value = null;
 
   try {
     const response = await api.runStripePayment({
       checkoutInput,
-      cardIndex: normalizeCardIndex(form.cardIndex),
-      configProfile: form.configProfile,
-      manualToken: form.manualToken.trim() || undefined
+      manualToken: form.manualToken.trim() || undefined,
+      ...(form.configMode === 'runtime'
+        ? {
+            runtimeConfig: {
+              clientKey: form.clientKey.trim(),
+              cardLine: form.cardLine.trim(),
+              publishableKey: publishableKey || undefined
+            }
+          }
+        : {
+            cardIndex: normalizeCardIndex(form.cardIndex),
+            configProfile: form.configProfile
+          })
     });
-    result.value = response;
-    if (response.ok) {
-      message.success(response.message || '支付脚本执行完成');
-    } else {
-      message.warning(response.message || '支付脚本执行失败');
+    await pollRunLog(response.runId);
+    pollTimer = window.setInterval(() => {
+      void pollRunLog(response.runId);
+    }, 1000);
+  } catch (error) {
+    running.value = false;
+    message.error(error instanceof Error ? error.message : '支付脚本执行失败');
+  }
+}
+
+async function pollRunLog(runId: string): Promise<void> {
+  try {
+    const response = await api.getStripePaymentRunLog(runId);
+    runLog.value = response;
+    if (response.status !== 'running') {
+      running.value = false;
+      stopPolling();
+      if (response.status === 'completed') {
+        message.success(response.message || '支付脚本执行完成');
+      } else {
+        message.warning(response.message || '支付脚本执行失败');
+      }
     }
   } catch (error) {
-    message.error(error instanceof Error ? error.message : '支付脚本执行失败');
-  } finally {
     running.value = false;
+    stopPolling();
+    message.error(error instanceof Error ? error.message : '读取支付日志失败');
   }
 }
 
 function handleClear(): void {
-  result.value = null;
+  if (!running.value) {
+    runLog.value = null;
+  }
 }
+
+function stopPolling(): void {
+  if (pollTimer !== undefined) {
+    window.clearInterval(pollTimer);
+    pollTimer = undefined;
+  }
+}
+
+onBeforeUnmount(() => {
+  stopPolling();
+});
 </script>
 
 <style scoped>
