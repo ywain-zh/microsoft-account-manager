@@ -4,21 +4,16 @@ export async function copyToClipboard(value: string): Promise<boolean> {
     return false;
   }
 
-  const fallbackCopied = copyWithSelectionFallback(text);
-  if (fallbackCopied) {
-    return true;
-  }
-
   if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(text);
       return true;
     } catch {
-      return false;
+      // Fall back for browsers or contexts that block the async Clipboard API.
     }
   }
 
-  return false;
+  return copyWithSelectionFallback(text);
 }
 
 function copyWithSelectionFallback(text: string): boolean {
