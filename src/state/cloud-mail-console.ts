@@ -5,12 +5,20 @@ import { copyToClipboard } from '../utils/clipboard';
 import type {
   AccountMailItem,
   CloudMailAccountItem,
+  CloudMailAccountListResponse,
   CloudMailConfig,
-  CloudMailCreatePayload
+  CloudMailCreatePayload,
+  CloudMailMessagesResponse
 } from '../types';
 
 const { message } = createDiscreteApi(['message']);
 const CLOUD_MAIL_SEARCH_STORAGE_KEY = 'mail-console-cloud-mail-search';
+const CLOUD_MAIL_CONFIG_CACHE_KEY = 'mail-console-cloud-mail-config-cache';
+const CLOUD_MAIL_ACCOUNTS_CACHE_PREFIX = 'mail-console-cloud-mail-accounts-cache:';
+const CLOUD_MAIL_MESSAGES_CACHE_PREFIX = 'mail-console-cloud-mail-messages-cache:';
+const CLOUD_MAIL_CONFIG_CACHE_TTL_MS = 10 * 60 * 1000;
+const CLOUD_MAIL_ACCOUNTS_CACHE_TTL_MS = 2 * 60 * 1000;
+const CLOUD_MAIL_MESSAGES_CACHE_TTL_MS = 2 * 60 * 1000;
 const RANDOM_LOCAL_PART_NAMES = [
   'harper',
   'mason',
@@ -45,6 +53,17 @@ interface CloudMailRemarkFormState {
   userId: number;
   email: string;
   remark: string;
+}
+
+interface TimedCacheEntry<T> {
+  savedAt: number;
+  payload: T;
+}
+
+interface CloudMailAccountsQuery {
+  page: number;
+  pageSize: number;
+  keyword: string;
 }
 
 function createDefaultCloudMailConfig(): CloudMailConfig {
@@ -110,6 +129,90 @@ function persistSearchKeyword(value: string): void {
   }
 }
 
+function readSessionCache<T>(key: string, ttlMs: number): T | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  try {
+    const raw = window.sessionStorage.getItem(key);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<TimedCacheEntry<T>>;
+    if (typeof parsed.savedAt !== 'number' || !('payload' in parsed)) {
+      window.sessionStorage.removeItem(key);
+      return null;
+    }
+
+    if (Date.now() - parsed.savedAt > ttlMs) {
+      window.sessionStorage.removeItem(key);
+      return null;
+    }
+
+    return parsed.payload as T;
+  } catch {
+    return null;
+  }
+}
+
+function writeSessionCache<T>(key: string, payload: T): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    const entry: TimedCacheEntry<T> = {
+      savedAt: Date.now(),
+      payload
+    };
+    window.sessionStorage.setItem(key, JSON.stringify(entry));
+  } catch {
+    // Cache writes are best-effort; data loading should not depend on browser storage.
+  }
+}
+
+function removeSessionCacheByPrefix(prefix: string): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    const keys: string[] = [];
+    for (let index = 0; index < window.sessionStorage.length; index += 1) {
+      const key = window.sessionStorage.key(index);
+      if (key?.startsWith(prefix)) {
+        keys.push(key);
+      }
+    }
+
+    for (const key of keys) {
+      window.sessionStorage.removeItem(key);
+    }
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function getAccountsCacheKey(query: CloudMailAccountsQuery): string {
+  return `${CLOUD_MAIL_ACCOUNTS_CACHE_PREFIX}${encodeURIComponent(
+    `${query.page}|${query.pageSize}|${query.keyword.trim().toLowerCase()}`
+  )}`;
+}
+
+function getMessagesCacheKey(email: string): string {
+  return `${CLOUD_MAIL_MESSAGES_CACHE_PREFIX}${encodeURIComponent(email.trim().toLowerCase())}`;
+}
+
+function clearAccountsCache(): void {
+  removeSessionCacheByPrefix(CLOUD_MAIL_ACCOUNTS_CACHE_PREFIX);
+}
+
+function clearMailMessagesCache(): void {
+  removeSessionCacheByPrefix(CLOUD_MAIL_MESSAGES_CACHE_PREFIX);
+}
+
 const initialDataLoaded = ref(false);
 const configLoaded = ref(false);
 
@@ -160,6 +263,7 @@ function markMailAsRead(id: string): void {
       isRead: true
     };
   });
+  cacheCurrentMailMessages();
 }
 
 let initialLoadPromise: Promise<void> | null = null;
@@ -269,17 +373,68 @@ function clearTableState(): void {
   checkedRowKeys.value = [];
 }
 
-async function loadConfig(): Promise<void> {
+function assignAccountsResponse(response: CloudMailAccountListResponse): void {
+  accounts.value = response.items;
+  total.value = response.total;
+  checkedRowKeys.value = checkedRowKeys.value.filter((id) => response.items.some((item) => item.userId === id));
+}
+
+function getCurrentAccountsQuery(): CloudMailAccountsQuery {
+  return {
+    page: tablePage.value,
+    pageSize: tablePageSize.value,
+    keyword: searchKeyword.value.trim()
+  };
+}
+
+function cacheCurrentAccounts(): void {
+  writeSessionCache<CloudMailAccountListResponse>(getAccountsCacheKey(getCurrentAccountsQuery()), {
+    items: accounts.value,
+    total: total.value,
+    page: tablePage.value,
+    pageSize: tablePageSize.value
+  });
+}
+
+function assignMailMessagesResponse(response: CloudMailMessagesResponse): void {
+  mailAccount.value = response.account;
+  mailItems.value = response.messages;
+  selectedMailId.value = response.messages[0]?.id ?? '';
+}
+
+function cacheCurrentMailMessages(): void {
+  const account = mailAccount.value.trim();
+  if (!account) {
+    return;
+  }
+
+  writeSessionCache<CloudMailMessagesResponse>(getMessagesCacheKey(account), {
+    account,
+    messages: mailItems.value
+  });
+}
+
+async function loadConfig(options: { force?: boolean; preferCache?: boolean } = {}): Promise<void> {
+  if (!options.force && options.preferCache) {
+    const cached = readSessionCache<CloudMailConfig>(CLOUD_MAIL_CONFIG_CACHE_KEY, CLOUD_MAIL_CONFIG_CACHE_TTL_MS);
+    if (cached) {
+      assignConfig(storedConfig, cached);
+      configLoaded.value = true;
+      return;
+    }
+  }
+
   try {
     const response = await api.getCloudMailConfig();
     assignConfig(storedConfig, response.item);
     configLoaded.value = true;
+    writeSessionCache(CLOUD_MAIL_CONFIG_CACHE_KEY, response.item);
   } catch (error) {
     handleApiError(error);
   }
 }
 
-async function loadAccounts(options: { resetPage?: boolean } = {}): Promise<void> {
+async function loadAccounts(options: { resetPage?: boolean; force?: boolean; preferCache?: boolean } = {}): Promise<void> {
   if (options.resetPage) {
     tablePage.value = 1;
   }
@@ -290,16 +445,24 @@ async function loadAccounts(options: { resetPage?: boolean } = {}): Promise<void
     return;
   }
 
+  const query = getCurrentAccountsQuery();
+  if (!options.force && options.preferCache) {
+    const cached = readSessionCache<CloudMailAccountListResponse>(
+      getAccountsCacheKey(query),
+      CLOUD_MAIL_ACCOUNTS_CACHE_TTL_MS
+    );
+    if (cached) {
+      assignAccountsResponse(cached);
+      clearCloudMailServiceError();
+      return;
+    }
+  }
+
   tableLoading.value = true;
   try {
-    const response = await api.listCloudMailAccounts({
-      page: tablePage.value,
-      pageSize: tablePageSize.value,
-      keyword: searchKeyword.value.trim()
-    });
-    accounts.value = response.items;
-    total.value = response.total;
-    checkedRowKeys.value = checkedRowKeys.value.filter((id) => response.items.some((item) => item.userId === id));
+    const response = await api.listCloudMailAccounts(query);
+    assignAccountsResponse(response);
+    writeSessionCache(getAccountsCacheKey(query), response);
     clearCloudMailServiceError();
   } catch (error) {
     clearTableState();
@@ -311,14 +474,18 @@ async function loadAccounts(options: { resetPage?: boolean } = {}): Promise<void
 }
 
 async function loadInitialData(force = false): Promise<void> {
+  if (initialDataLoaded.value && !force) {
+    return;
+  }
+
   if (initialLoadPromise && !force) {
     return initialLoadPromise;
   }
 
   initialLoadPromise = (async () => {
-    await loadConfig();
+    await loadConfig({ force, preferCache: true });
     if (hasConfiguredCloudMail.value) {
-      await loadAccounts();
+      await loadAccounts({ force, preferCache: true });
     } else {
       clearTableState();
       clearMailState();
@@ -360,10 +527,13 @@ async function saveConfig(): Promise<void> {
     const response = await api.updateCloudMailConfig(payload);
     assignConfig(storedConfig, response.item);
     fillConfigForm(response.item);
+    writeSessionCache(CLOUD_MAIL_CONFIG_CACHE_KEY, response.item);
+    clearAccountsCache();
+    clearMailMessagesCache();
     clearCloudMailServiceError();
     configVisible.value = false;
     message.success('Cloud Mail 配置信息已保存');
-    await loadAccounts({ resetPage: true });
+    await loadAccounts({ resetPage: true, force: true });
   } catch (error) {
     rememberCloudMailServiceError(error);
     handleApiError(error);
@@ -407,11 +577,12 @@ async function createAccount(): Promise<void> {
   createLoading.value = true;
   try {
     await api.createCloudMailAccount(payload);
+    clearAccountsCache();
     clearCloudMailServiceError();
     createVisible.value = false;
     resetCreateForm();
     message.success('Cloud Mail 邮箱已新增');
-    await loadAccounts();
+    await loadAccounts({ force: true });
   } catch (error) {
     rememberCloudMailServiceError(error);
     handleApiError(error);
@@ -436,10 +607,12 @@ async function deleteAccounts(userIds: number[]): Promise<void> {
   deleteLoading.value = true;
   try {
     await api.deleteCloudMailAccounts({ userIds });
+    clearAccountsCache();
+    clearMailMessagesCache();
     clearCloudMailServiceError();
     message.success(`已删除 ${userIds.length} 个 Cloud Mail 邮箱`);
     checkedRowKeys.value = checkedRowKeys.value.filter((id) => !userIds.includes(id));
-    await loadAccounts();
+    await loadAccounts({ force: true });
   } catch (error) {
     rememberCloudMailServiceError(error);
     handleApiError(error);
@@ -468,7 +641,7 @@ async function refreshAccounts(): Promise<void> {
     return;
   }
 
-  await loadAccounts();
+  await loadAccounts({ force: true });
 }
 
 function openRemarkModal(row: CloudMailAccountItem): void {
@@ -495,6 +668,7 @@ async function saveRemark(): Promise<void> {
     accounts.value = accounts.value.map((item) =>
       item.userId === response.item.userId ? response.item : item
     );
+    cacheCurrentAccounts();
     remarkVisible.value = false;
     resetRemarkForm();
     clearCloudMailServiceError();
@@ -564,7 +738,11 @@ async function copyMailAccount(): Promise<boolean> {
   return copyText(mailAccount.value, '邮箱已复制');
 }
 
-async function loadMailMessages(email: string, openModal = true): Promise<void> {
+async function loadMailMessages(
+  email: string,
+  openModal = true,
+  options: { force?: boolean; preferCache?: boolean } = {}
+): Promise<void> {
   const targetEmail = email.trim();
   if (!targetEmail) {
     message.warning('当前邮箱不能为空');
@@ -574,16 +752,36 @@ async function loadMailMessages(email: string, openModal = true): Promise<void> 
   if (openModal) {
     mailVisible.value = true;
   }
+
+  const cacheKey = getMessagesCacheKey(targetEmail);
+  if (!options.force && options.preferCache) {
+    const cached = readSessionCache<CloudMailMessagesResponse>(
+      cacheKey,
+      CLOUD_MAIL_MESSAGES_CACHE_TTL_MS
+    );
+    if (cached) {
+      assignMailMessagesResponse(cached);
+      mailLoading.value = false;
+      clearCloudMailServiceError();
+      return;
+    }
+  }
+
   mailLoading.value = true;
+  const previousEmail = mailAccount.value.trim().toLowerCase();
   mailAccount.value = targetEmail;
-  mailItems.value = [];
-  selectedMailId.value = '';
+  if (previousEmail !== targetEmail.toLowerCase()) {
+    mailItems.value = [];
+    selectedMailId.value = '';
+  } else if (!options.force) {
+    mailItems.value = [];
+    selectedMailId.value = '';
+  }
 
   try {
     const response = await api.getCloudMailMessages(targetEmail);
-    mailAccount.value = response.account;
-    mailItems.value = response.messages;
-    selectedMailId.value = response.messages[0]?.id ?? '';
+    assignMailMessagesResponse(response);
+    writeSessionCache(cacheKey, response);
     clearCloudMailServiceError();
   } catch (error) {
     rememberCloudMailServiceError(error);
@@ -605,7 +803,7 @@ async function openMailModal(row: CloudMailAccountItem): Promise<void> {
     return;
   }
 
-  await loadMailMessages(row.email, true);
+  await loadMailMessages(row.email, true, { preferCache: true });
 }
 
 async function refreshMailInbox(): Promise<void> {
@@ -614,7 +812,7 @@ async function refreshMailInbox(): Promise<void> {
     return;
   }
 
-  await loadMailMessages(mailAccount.value, false);
+  await loadMailMessages(mailAccount.value, false, { force: true });
 }
 
 function formatDate(value: string | null): string {

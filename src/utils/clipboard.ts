@@ -4,15 +4,24 @@ export async function copyToClipboard(value: string): Promise<boolean> {
     return false;
   }
 
+  const fallbackCopied = copyWithSelectionFallback(text);
+  if (fallbackCopied) {
+    return true;
+  }
+
   if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(text);
       return true;
     } catch {
-      // Fall back to a manual copy path for insecure or restricted contexts.
+      return false;
     }
   }
 
+  return false;
+}
+
+function copyWithSelectionFallback(text: string): boolean {
   if (typeof document === 'undefined' || !document.body) {
     return false;
   }

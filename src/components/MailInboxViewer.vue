@@ -22,7 +22,7 @@
               aria-label="复制邮箱"
               :disabled="!account || copyLoading"
               :class="{ 'btn-small-action-success': copyFeedbackVisible }"
-              @click="handleCopy"
+              @click.stop.prevent="handleCopy"
             >
               <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <rect
