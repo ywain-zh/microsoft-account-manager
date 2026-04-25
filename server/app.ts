@@ -1,3 +1,6 @@
+import { spawn } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { cors } from 'hono/cors';
@@ -47,6 +50,29 @@ interface AccountRow {
   tokenStatus: TokenStatus;
   tokenMessage: string | null;
   tokenCheckedAt: string | null;
+}
+
+interface StripePaymentRequest {
+  checkoutInput: string;
+  cardIndex: number;
+  configProfile: string;
+  manualToken?: string;
+}
+
+interface StripePaymentResponse {
+  ok: boolean;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  log: string;
+  message: string;
+}
+
+interface StripePaymentProcessResult {
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
 }
 
 type Seven79CardStatus = 'pending' | 'checked' | 'expired' | 'failed';
@@ -417,6 +443,12 @@ const SEVEN79_OPEN_API_REDEEM_PATH = '/open-api/web-api/redeem/submit';
 const DEFAULT_SEVEN79_OPEN_API_KEY = 'ak_moa17dc8_n4nmv47e4ys';
 const DEFAULT_SEVEN79_OPEN_API_USERNAME = 'admin123';
 const DEFAULT_SEVEN79_OPEN_API_PASSWORD = 'admin123';
+
+const DEFAULT_PAY_TIMEOUT_MS = 120000;
+const PAY_OUTPUT_LIMIT = 60000;
+const PAY_CONFIG_PROFILES = new Map<string, string>([['default', 'config.json']]);
+const CHECKOUT_SESSION_PATTERN = /cs_(?:live|test)_[A-Za-z0-9]+/;
+let stripePaymentRunning = false;
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -1237,6 +1269,48 @@ app.put('/api/cloud-mail/config', async (c) => {
   return c.json({ item });
 });
 
+app.post('/api/stripe-payment/run', async (c) => {
+  if (stripePaymentRunning) {
+    throw new HTTPException(409, { message: '已有支付任务正在执行，请稍后再试' });
+  }
+
+  const body = await readJson<Partial<StripePaymentRequest>>(c);
+  const payload = normalizeStripePaymentRequest(body);
+  const rootDir = process.cwd();
+  const scriptPath = resolve(process.env.PAY_SCRIPT_PATH?.trim() || resolve(rootDir, 'pay.py'));
+  const configPath = resolveStripePaymentConfigPath(rootDir, payload.configProfile);
+  const pythonBin = process.env.PAY_PYTHON_BIN?.trim() || 'python';
+  const timeoutMs = parsePositiveInteger(process.env.PAY_TIMEOUT_MS, DEFAULT_PAY_TIMEOUT_MS);
+  const args = [scriptPath, payload.checkoutInput, '--card', String(payload.cardIndex), '--config', configPath];
+
+  if (payload.manualToken) {
+    args.push('--token', payload.manualToken);
+  }
+
+  stripePaymentRunning = true;
+  try {
+    const processResult = await runStripePaymentProcess(pythonBin, args, rootDir, timeoutMs);
+    const log = await readStripePaymentLog(rootDir);
+    const ok = !processResult.timedOut && processResult.exitCode === 0;
+    const message = processResult.timedOut
+      ? `支付脚本执行超时 (${Math.round(timeoutMs / 1000)}s)`
+      : ok
+        ? '支付脚本执行完成'
+        : '支付脚本执行失败';
+
+    return c.json({
+      ok,
+      exitCode: processResult.exitCode,
+      stdout: redactStripePaymentText(limitText(processResult.stdout)),
+      stderr: redactStripePaymentText(limitText(processResult.stderr)),
+      log,
+      message
+    } satisfies StripePaymentResponse);
+  } finally {
+    stripePaymentRunning = false;
+  }
+});
+
 app.get('/api/sub2api/config', async (c) => {
   const item = await getSub2ApiConfig(c.env.DB);
   return c.json({ item });
@@ -1585,6 +1659,143 @@ app.onError((error, c) => {
   console.error(error);
   return c.json({ message: '服务器内部错误' }, 500);
 });
+
+function normalizeStripePaymentRequest(input: Partial<StripePaymentRequest>): StripePaymentRequest {
+  const checkoutInput = asText(input.checkoutInput).trim();
+  if (!checkoutInput) {
+    throw new HTTPException(400, { message: 'Checkout Session 或支付链接不能为空' });
+  }
+  if (checkoutInput.length > 2048) {
+    throw new HTTPException(400, { message: 'Checkout 输入过长' });
+  }
+  if (!CHECKOUT_SESSION_PATTERN.test(checkoutInput) && !isHttpUrl(checkoutInput)) {
+    throw new HTTPException(400, { message: 'Checkout 输入必须包含 cs_live/cs_test 或合法 URL' });
+  }
+
+  const cardIndex = Number(input.cardIndex ?? 0);
+  if (!Number.isInteger(cardIndex) || cardIndex < 0 || cardIndex > 999) {
+    throw new HTTPException(400, { message: '卡索引必须是 0 到 999 的整数' });
+  }
+
+  const configProfile = asText(input.configProfile || 'default').trim() || 'default';
+  if (!PAY_CONFIG_PROFILES.has(configProfile)) {
+    throw new HTTPException(400, { message: '配置档案不存在' });
+  }
+
+  const manualToken = asText(input.manualToken).trim();
+  if (manualToken.length > 4096) {
+    throw new HTTPException(400, { message: 'hCaptcha Token 过长' });
+  }
+
+  return {
+    checkoutInput,
+    cardIndex,
+    configProfile,
+    manualToken: manualToken || undefined
+  };
+}
+
+function resolveStripePaymentConfigPath(rootDir: string, profile: string): string {
+  const configFile = PAY_CONFIG_PROFILES.get(profile);
+  if (!configFile) {
+    throw new HTTPException(400, { message: '配置档案不存在' });
+  }
+
+  const configuredDefault = process.env.PAY_CONFIG_DEFAULT_PATH?.trim();
+  if (profile === 'default' && configuredDefault) {
+    return resolve(configuredDefault);
+  }
+
+  return resolve(rootDir, configFile);
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function parsePositiveInteger(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value ?? '', 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function runStripePaymentProcess(
+  command: string,
+  args: string[],
+  cwd: string,
+  timeoutMs: number
+): Promise<StripePaymentProcessResult> {
+  return new Promise((resolveProcess, rejectProcess) => {
+    const child = spawn(command, args, {
+      cwd,
+      shell: false,
+      windowsHide: true
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+    }, timeoutMs);
+
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      stdout = limitText(stdout + chunk);
+    });
+    child.stderr.on('data', (chunk: string) => {
+      stderr = limitText(stderr + chunk);
+    });
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      rejectProcess(new HTTPException(500, { message: `支付脚本启动失败: ${error.message}` }));
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolveProcess({
+        exitCode: code,
+        stdout,
+        stderr,
+        timedOut
+      });
+    });
+  });
+}
+
+async function readStripePaymentLog(rootDir: string): Promise<string> {
+  try {
+    const content = await readFile(resolve(rootDir, 'log.txt'), 'utf8');
+    return redactStripePaymentText(limitText(content));
+  } catch {
+    return '';
+  }
+}
+
+function limitText(value: string): string {
+  if (value.length <= PAY_OUTPUT_LIMIT) {
+    return value;
+  }
+
+  return `${value.slice(0, PAY_OUTPUT_LIMIT)}\n...输出已截断...`;
+}
+
+function redactStripePaymentText(value: string): string {
+  return value
+    .replace(/(sk_live_)[A-Za-z0-9_\-]+/g, '$1[REDACTED]')
+    .replace(/(sk_test_)[A-Za-z0-9_\-]+/g, '$1[REDACTED]')
+    .replace(/(api[_-]?key["'\s:=]+)[^\s"']+/gi, '$1[REDACTED]')
+    .replace(/(token["'\s:=]+)[^\s"']{12,}/gi, '$1[REDACTED]')
+    .replace(/(pass(?:word)?["'\s:=]+)[^\s"']+/gi, '$1[REDACTED]')
+    .replace(/\b\d{12,19}\b/g, '[REDACTED_CARD]')
+    .replace(/(\b\d{3,4}\b)(?=\s*(?:cvv|cvc|安全码))/gi, '[REDACTED_CVC]');
+}
 
 export default app;
 

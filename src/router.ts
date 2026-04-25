@@ -47,6 +47,16 @@ const router = createRouter({
           }
         },
         {
+          path: 'services/stripe/payment',
+          name: 'stripe-payment',
+          component: () => import('./views/StripePaymentView.vue'),
+          meta: {
+            requiresAuth: true,
+            title: 'Stripe支付',
+            description: '通过 pay.py 执行 Stripe Checkout 自动化支付脚本。'
+          }
+        },
+        {
           path: 'services/sub2api/checker',
           name: 'sub2api-checker',
           component: () => import('./views/Sub2ApiCheckerView.vue'),

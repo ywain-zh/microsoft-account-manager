@@ -130,6 +130,22 @@ export interface Sub2ApiDeleteAccountsResponse {
   details: Sub2ApiDeleteAccountDetail[];
 }
 
+export interface StripePaymentRequest {
+  checkoutInput: string;
+  cardIndex: number;
+  configProfile: string;
+  manualToken?: string;
+}
+
+export interface StripePaymentResponse {
+  ok: boolean;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  log: string;
+  message: string;
+}
+
 export type TokenStatus = 'unknown' | 'valid' | 'invalid';
 
 export type MailFetchMode = 'auto' | 'graph' | 'imap';

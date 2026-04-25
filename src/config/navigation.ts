@@ -18,6 +18,11 @@ export const consoleNavigation: ConsoleNavItem[] = [
     path: '/services/779/cards'
   },
   {
+    key: 'stripe-payment',
+    label: 'Stripe支付',
+    path: '/services/stripe/payment'
+  },
+  {
     key: 'sub2api',
     label: 'Sub2API 检测',
     path: '/services/sub2api/checker'

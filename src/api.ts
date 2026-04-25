@@ -19,6 +19,8 @@ import type {
   Seven79CardSmsCodeResponse,
   Seven79CheckResponse,
   Seven79ImportResult,
+  StripePaymentRequest,
+  StripePaymentResponse,
   Sub2ApiConfig,
   Sub2ApiDeleteAccountsResponse
 } from './types';
@@ -297,6 +299,13 @@ export const api = {
   openListAccounts(keyword?: string): Promise<{ items: AccountItem[] }> {
     const query = buildQuery({ keyword });
     return request<{ items: AccountItem[] }>(`/api/open/accounts${query}`);
+  },
+
+  runStripePayment(payload: StripePaymentRequest): Promise<StripePaymentResponse> {
+    return request<StripePaymentResponse>('/api/stripe-payment/run', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
   },
 
   listSeven79Cards(keyword?: string): Promise<{ items: Seven79CardItem[] }> {
