@@ -27,7 +27,7 @@
           </n-button>
           <a
             class="subscription-link-button"
-            href="https://payurl.779.chat/"
+            href="https://ezweystock.petrix.id/gpt"
             target="_blank"
             rel="noopener noreferrer"
           >
