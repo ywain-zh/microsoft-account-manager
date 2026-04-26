@@ -131,9 +131,12 @@ export interface Sub2ApiDeleteAccountsResponse {
 }
 
 export interface StripePaymentRuntimeConfig {
-  clientKey: string;
   cardLine: string;
   publishableKey?: string;
+}
+
+export interface StripeCaptchaConfig {
+  clientKey: string;
 }
 
 export type StripeProxyProtocol = 'https' | 'socks5';

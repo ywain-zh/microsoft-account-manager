@@ -55,7 +55,6 @@ interface AccountRow {
 }
 
 interface StripePaymentRuntimeConfig {
-  clientKey: string;
   cardLine: string;
   publishableKey?: string;
 }
@@ -71,6 +70,10 @@ interface StripePaymentRequest {
 type StripePaymentRunStatus = 'running' | 'completed' | 'failed' | 'timeout';
 
 type StripeProxyProtocol = 'https' | 'socks5';
+
+interface StripeCaptchaConfig {
+  clientKey: string;
+}
 
 interface StripeProxyConfig {
   enabled: boolean;
@@ -424,7 +427,12 @@ const DEFAULT_CLOUD_MAIL_CONFIG: CloudMailConfig = {
 const SUB2API_CONFIG_KEY = 'sub2api_config';
 const SUB2API_TEST_MODEL = 'gpt-5.4';
 const SUB2API_PAGE_SIZE = 100;
+const STRIPE_CAPTCHA_CONFIG_KEY = 'stripe_captcha_config';
 const STRIPE_PROXY_CONFIG_KEY = 'stripe_proxy_config';
+
+const DEFAULT_STRIPE_CAPTCHA_CONFIG: StripeCaptchaConfig = {
+  clientKey: ''
+};
 
 const DEFAULT_STRIPE_PROXY_CONFIG: StripeProxyConfig = {
   enabled: false,
@@ -1355,7 +1363,8 @@ app.post('/api/stripe-payment/run', async (c) => {
   const tempDir = await mkdtemp(join(tmpdir(), `stripe-payment-${runId}-`));
   const logPath = join(tempDir, 'log.txt');
   const proxyConfig = await getStripeProxyConfig(c.env.DB);
-  const configPath = await resolveStripePaymentRunConfigPath(rootDir, tempDir, payload, proxyConfig);
+  const captchaConfig = await getStripeCaptchaConfig(c.env.DB);
+  const configPath = await resolveStripePaymentRunConfigPath(rootDir, tempDir, payload, proxyConfig, captchaConfig);
   const cardIndex = payload.runtimeConfig ? 0 : payload.cardIndex ?? 0;
   const args = [
     scriptPath,
@@ -1384,7 +1393,7 @@ app.post('/api/stripe-payment/run', async (c) => {
     message: '支付脚本运行中',
     startedAt: new Date().toISOString(),
     timeoutId: setTimeout(() => undefined, 0),
-    secrets: collectStripePaymentSecrets(payload, proxyConfig)
+    secrets: collectStripePaymentSecrets(payload, proxyConfig, captchaConfig)
   };
   clearTimeout(run.timeoutId);
   stripePaymentRuns.set(runId, run);
@@ -1392,6 +1401,18 @@ app.post('/api/stripe-payment/run', async (c) => {
   startStripePaymentRun(run, pythonBin, args, timeoutMs);
 
   return c.json({ runId });
+});
+
+app.get('/api/stripe-payment/captcha-config', async (c) => {
+  const item = await getStripeCaptchaConfig(c.env.DB);
+  return c.json({ item });
+});
+
+app.put('/api/stripe-payment/captcha-config', async (c) => {
+  const body = await readJson<Partial<StripeCaptchaConfig>>(c);
+  const item = normalizeStripeCaptchaConfig(body);
+  await setAppSetting(c.env.DB, STRIPE_CAPTCHA_CONFIG_KEY, JSON.stringify(item));
+  return c.json({ item });
 });
 
 app.get('/api/stripe-payment/proxy-config', async (c) => {
@@ -1828,16 +1849,9 @@ function normalizeStripeRuntimeConfig(input: unknown): StripePaymentRuntimeConfi
   }
 
   const record = asRecord(input);
-  const clientKey = asText(record.clientKey).trim();
   const cardLine = asText(record.cardLine).trim();
   const publishableKey = asText(record.publishableKey).trim();
 
-  if (!clientKey) {
-    throw new HTTPException(400, { message: 'ClientKey 不能为空' });
-  }
-  if (clientKey.length > 4096) {
-    throw new HTTPException(400, { message: 'ClientKey 过长' });
-  }
   if (!cardLine) {
     throw new HTTPException(400, { message: '卡信息不能为空' });
   }
@@ -1849,7 +1863,6 @@ function normalizeStripeRuntimeConfig(input: unknown): StripePaymentRuntimeConfi
   }
 
   return {
-    clientKey,
     cardLine,
     publishableKey: publishableKey || undefined
   };
@@ -1873,22 +1886,36 @@ async function resolveStripePaymentRunConfigPath(
   rootDir: string,
   tempDir: string,
   payload: StripePaymentRequest,
-  proxyConfig: StripeProxyConfig
+  proxyConfig: StripeProxyConfig,
+  captchaConfig: StripeCaptchaConfig
 ): Promise<string> {
   const proxy = buildPayProxyConfig(proxyConfig);
+  const clientKey = captchaConfig.clientKey.trim();
   if (payload.runtimeConfig) {
-    return writeRuntimeStripeConfig(tempDir, payload.runtimeConfig, proxy);
+    if (!clientKey) {
+      throw new HTTPException(400, { message: '请先保存 YesCaptcha ClientKey' });
+    }
+    return writeRuntimeStripeConfig(tempDir, payload.runtimeConfig, proxy, clientKey);
   }
 
   const sourcePath = resolveStripePaymentConfigPath(rootDir, payload.configProfile || 'default');
-  if (!proxy) {
+  if (!proxy && !clientKey) {
     return sourcePath;
   }
 
   const configPath = join(tempDir, 'config.json');
   const raw = await readFile(sourcePath, 'utf8');
   const config = JSON.parse(raw) as Record<string, unknown>;
-  config.proxy = proxy;
+  if (proxy) {
+    config.proxy = proxy;
+  }
+  if (clientKey) {
+    const captcha = asRecord(config.captcha);
+    config.captcha = {
+      ...captcha,
+      api_key: clientKey
+    };
+  }
   await writeFile(configPath, JSON.stringify(config, null, 2), 'utf8');
   return configPath;
 }
@@ -1976,6 +2003,15 @@ async function testStripeProxyConfig(config: StripeProxyConfig): Promise<StripeP
   } finally {
     void rm(tempDir, { recursive: true, force: true });
   }
+}
+
+function normalizeStripeCaptchaConfig(input: Partial<StripeCaptchaConfig>): StripeCaptchaConfig {
+  const clientKey = asText(asRecord(input).clientKey).trim();
+  if (clientKey.length > 4096) {
+    throw new HTTPException(400, { message: 'ClientKey 过长' });
+  }
+
+  return { clientKey };
 }
 
 function normalizeStripeProxyConfig(input: Partial<StripeProxyConfig>): StripeProxyConfig {
@@ -2120,7 +2156,8 @@ function startStripePaymentRun(
 async function writeRuntimeStripeConfig(
   tempDir: string,
   runtimeConfig: StripePaymentRuntimeConfig,
-  proxy?: PayProxyConfig
+  proxy?: PayProxyConfig,
+  clientKey = ''
 ): Promise<string> {
   const configPath = join(tempDir, 'config.json');
   const card = parseStripeRuntimeCardLine(runtimeConfig.cardLine);
@@ -2128,7 +2165,7 @@ async function writeRuntimeStripeConfig(
     locale: 'US',
     preserve_card_details: true,
     captcha: {
-      api_key: runtimeConfig.clientKey
+      api_key: clientKey
     },
     cards: [card],
     ...(runtimeConfig.publishableKey ? { publishable_key: runtimeConfig.publishableKey } : {}),
@@ -2225,8 +2262,12 @@ function parseStripeRuntimeAddress(rawAddress: string): RuntimeStripeCard['addre
   };
 }
 
-function collectStripePaymentSecrets(payload: StripePaymentRequest, proxyConfig?: StripeProxyConfig): string[] {
-  const secrets = [payload.manualToken, payload.runtimeConfig?.clientKey, payload.runtimeConfig?.publishableKey]
+function collectStripePaymentSecrets(
+  payload: StripePaymentRequest,
+  proxyConfig?: StripeProxyConfig,
+  captchaConfig?: StripeCaptchaConfig
+): string[] {
+  const secrets = [payload.manualToken, payload.runtimeConfig?.publishableKey, captchaConfig?.clientKey]
     .map((value) => asText(value).trim())
     .filter((value) => value.length >= 6);
 
@@ -2501,6 +2542,21 @@ async function getSub2ApiConfig(db: D1Database): Promise<Sub2ApiConfig> {
     return normalizeSub2ApiConfig(parsed);
   } catch {
     return DEFAULT_SUB2API_CONFIG;
+  }
+}
+
+async function getStripeCaptchaConfig(db: D1Database): Promise<StripeCaptchaConfig> {
+  const value = await getAppSetting(db, STRIPE_CAPTCHA_CONFIG_KEY);
+
+  if (!value) {
+    return DEFAULT_STRIPE_CAPTCHA_CONFIG;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as Partial<StripeCaptchaConfig>;
+    return normalizeStripeCaptchaConfig(parsed);
+  } catch {
+    return DEFAULT_STRIPE_CAPTCHA_CONFIG;
   }
 }
 

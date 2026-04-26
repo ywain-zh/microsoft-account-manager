@@ -31,15 +31,6 @@
         </n-form-item>
 
         <template v-if="form.configMode === 'runtime'">
-          <n-form-item label="ClientKey / YesCaptcha API Key" required>
-            <n-input
-              v-model:value="form.clientKey"
-              type="password"
-              show-password-on="click"
-              placeholder="本次运行使用，不会保存"
-            />
-          </n-form-item>
-
           <n-form-item label="卡信息" required>
             <n-input
               v-model:value="form.cardLine"
@@ -83,6 +74,23 @@
         <div class="action-row">
           <n-button type="primary" :loading="running" @click="handleRun">执行支付脚本</n-button>
           <n-button :disabled="running && !runLog" @click="handleClear">清空结果</n-button>
+        </div>
+      </n-form>
+    </n-card>
+
+    <n-card class="stripe-card captcha-card" :bordered="false" title="YesCaptcha 配置">
+      <n-form label-placement="top" autocomplete="off">
+        <n-form-item label="ClientKey / YesCaptcha API Key">
+          <n-input
+            v-model:value="captchaForm.clientKey"
+            type="password"
+            show-password-on="click"
+            placeholder="保存后自动用于后续 Stripe 支付运行"
+          />
+        </n-form-item>
+
+        <div class="action-row">
+          <n-button type="primary" :loading="savingCaptcha" @click="handleSaveCaptchaConfig">保存 YesCaptcha 配置</n-button>
         </div>
       </n-form>
     </n-card>
@@ -135,7 +143,7 @@
     </n-card>
 
     <n-alert class="security-note" type="warning" :bordered="false">
-      该功能会在登录后的服务端环境调用 pay.py。页面不会保存 Token、ClientKey、卡号、CVC 或备用 publishable key；代理配置会按你的要求保存到服务端并用于后续运行。
+      该功能会在登录后的服务端环境调用 pay.py。页面会按你的要求保存 YesCaptcha ClientKey 和代理配置；卡信息、CVC、Token 或备用 publishable key 不会保存。
     </n-alert>
 
     <n-card v-if="running || runLog" class="result-card" :bordered="false" title="执行结果 / 实时日志">
@@ -182,7 +190,7 @@ import {
   NSwitch
 } from 'naive-ui';
 import { api } from '../api';
-import type { StripePaymentRunLogResponse, StripeProxyConfig } from '../types';
+import type { StripeCaptchaConfig, StripePaymentRunLogResponse, StripeProxyConfig } from '../types';
 
 const { message } = createDiscreteApi(['message']);
 
@@ -197,17 +205,21 @@ const form = reactive({
   configMode: 'runtime' as 'runtime' | 'default',
   cardIndex: 0,
   configProfile: 'default',
-  clientKey: '',
   cardLine: '',
   publishableKey: '',
   manualToken: ''
 });
 
 const running = ref(false);
+const savingCaptcha = ref(false);
 const savingProxy = ref(false);
 const testingProxy = ref(false);
 const runLog = ref<StripePaymentRunLogResponse | null>(null);
 let pollTimer: number | undefined;
+
+const captchaForm = reactive<StripeCaptchaConfig>({
+  clientKey: ''
+});
 
 const proxyForm = reactive<StripeProxyConfig>({
   enabled: false,
@@ -229,6 +241,32 @@ function normalizeCardIndex(value: number | null): number {
   }
 
   return Math.floor(value);
+}
+
+function applyCaptchaConfig(config: StripeCaptchaConfig): void {
+  captchaForm.clientKey = config.clientKey;
+}
+
+async function loadCaptchaConfig(): Promise<void> {
+  try {
+    const response = await api.getStripePaymentCaptchaConfig();
+    applyCaptchaConfig(response.item);
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '读取 YesCaptcha 配置失败');
+  }
+}
+
+async function handleSaveCaptchaConfig(): Promise<void> {
+  savingCaptcha.value = true;
+  try {
+    const response = await api.updateStripePaymentCaptchaConfig({ ...captchaForm });
+    applyCaptchaConfig(response.item);
+    message.success('YesCaptcha 配置已保存');
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '保存 YesCaptcha 配置失败');
+  } finally {
+    savingCaptcha.value = false;
+  }
 }
 
 function applyProxyConfig(config: StripeProxyConfig): void {
@@ -314,10 +352,6 @@ async function handleRun(): Promise<void> {
   }
 
   if (form.configMode === 'runtime') {
-    if (!form.clientKey.trim()) {
-      message.warning('请输入 ClientKey');
-      return;
-    }
     if (!form.cardLine.trim()) {
       message.warning('请输入卡信息');
       return;
@@ -335,7 +369,6 @@ async function handleRun(): Promise<void> {
       ...(form.configMode === 'runtime'
         ? {
             runtimeConfig: {
-              clientKey: form.clientKey.trim(),
               cardLine: form.cardLine.trim(),
               publishableKey: publishableKey || undefined
             }
@@ -389,6 +422,7 @@ function stopPolling(): void {
 }
 
 onMounted(() => {
+  void loadCaptchaConfig();
   void loadProxyConfig();
 });
 
@@ -440,6 +474,7 @@ onBeforeUnmount(() => {
 }
 
 .stripe-card,
+.captcha-card,
 .proxy-card,
 .result-card,
 .security-note {
@@ -447,6 +482,7 @@ onBeforeUnmount(() => {
 }
 
 .stripe-card,
+.captcha-card,
 .proxy-card,
 .result-card {
   border-radius: 16px;
@@ -468,6 +504,7 @@ onBeforeUnmount(() => {
   margin-top: 16px;
 }
 
+.captcha-card,
 .proxy-card,
 .result-card {
   margin-top: 16px;

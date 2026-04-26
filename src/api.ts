@@ -22,6 +22,7 @@ import type {
   StripePaymentRequest,
   StripePaymentRunLogResponse,
   StripePaymentRunStartResponse,
+  StripeCaptchaConfig,
   StripeProxyConfig,
   StripeProxyTestResponse,
   Sub2ApiConfig,
@@ -313,6 +314,17 @@ export const api = {
 
   getStripePaymentRunLog(runId: string): Promise<StripePaymentRunLogResponse> {
     return request<StripePaymentRunLogResponse>(`/api/stripe-payment/runs/${runId}/log`);
+  },
+
+  getStripePaymentCaptchaConfig(): Promise<{ item: StripeCaptchaConfig }> {
+    return request<{ item: StripeCaptchaConfig }>('/api/stripe-payment/captcha-config');
+  },
+
+  updateStripePaymentCaptchaConfig(payload: StripeCaptchaConfig): Promise<{ item: StripeCaptchaConfig }> {
+    return request<{ item: StripeCaptchaConfig }>('/api/stripe-payment/captcha-config', {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
   },
 
   getStripePaymentProxyConfig(): Promise<{ item: StripeProxyConfig }> {

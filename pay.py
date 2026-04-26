@@ -56,20 +56,34 @@ def _log_raw(text: str):
         f.write(text + "\n")
         f.flush()
 
+def _redact_request_data(value):
+    if isinstance(value, dict):
+        safe = {}
+        for key, item in value.items():
+            normalized_key = str(key).lower()
+            if key == "card[number]":
+                safe[key] = "****" + str(item)[-4:]
+            elif key == "card[cvc]":
+                safe[key] = "***"
+            elif normalized_key in ("clientkey", "api_key"):
+                safe[key] = "[REDACTED]"
+            else:
+                safe[key] = _redact_request_data(item)
+        return safe
+    if isinstance(value, list):
+        return [_redact_request_data(item) for item in value]
+    return value
+
+
 def _log_request(method: str, url: str, data=None, params=None, tag: str = ""):
     """记录 HTTP 请求详情"""
     _log_raw(f"\n{'─'*70}")
     _log_raw(f">>> REQUEST  {tag}")
     _log_raw(f"    {method} {url}")
     if params:
-        _log_raw(f"    PARAMS: {json.dumps(params, ensure_ascii=False, indent=6)}")
+        _log_raw(f"    PARAMS: {json.dumps(_redact_request_data(params), ensure_ascii=False, indent=6)}")
     if data:
-        # 脱敏卡号
-        safe = dict(data) if isinstance(data, dict) else {}
-        if "card[number]" in safe:
-            safe["card[number]"] = "****" + str(safe["card[number]"])[-4:]
-        if "card[cvc]" in safe:
-            safe["card[cvc]"] = "***"
+        safe = _redact_request_data(data)
         _log_raw(f"    BODY: {json.dumps(safe, ensure_ascii=False, indent=6)}")
 
 def _log_response(resp: requests.Response, tag: str = ""):
