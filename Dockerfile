@@ -14,7 +14,7 @@ RUN npm ci --omit=dev --no-audit --no-fund
 FROM node:22.22.0-alpine AS runtime
 WORKDIR /app
 
-RUN apk add --no-cache ca-certificates tini wget python3 py3-requests py3-pysocks
+RUN apk add --no-cache ca-certificates tini wget
 
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
@@ -27,7 +27,6 @@ COPY --from=runtime-deps /app/package.json ./package.json
 COPY --from=build /app/build ./build
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/migrations ./migrations
-COPY --from=build /app/pay.py ./pay.py
 
 EXPOSE 8787
 VOLUME ["/app/data"]

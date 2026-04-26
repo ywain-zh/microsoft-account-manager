@@ -130,59 +130,6 @@ export interface Sub2ApiDeleteAccountsResponse {
   details: Sub2ApiDeleteAccountDetail[];
 }
 
-export interface StripePaymentRuntimeConfig {
-  cardLine: string;
-  publishableKey?: string;
-}
-
-export interface StripeCaptchaConfig {
-  clientKey: string;
-}
-
-export type StripeProxyProtocol = 'https' | 'socks5';
-
-export interface StripeProxyConfig {
-  enabled: boolean;
-  protocol: StripeProxyProtocol;
-  proxyLine?: string;
-  host: string;
-  port: number | null;
-  user: string;
-  pass: string;
-}
-
-export interface StripeProxyTestResponse {
-  ok: boolean;
-  message: string;
-  ip?: string;
-}
-
-export interface StripePaymentRequest {
-  checkoutInput: string;
-  cardIndex?: number;
-  configProfile?: string;
-  manualToken?: string;
-  runtimeConfig?: StripePaymentRuntimeConfig;
-}
-
-export type StripePaymentRunStatus = 'running' | 'completed' | 'failed' | 'timeout';
-
-export interface StripePaymentRunStartResponse {
-  runId: string;
-}
-
-export interface StripePaymentRunLogResponse {
-  runId: string;
-  status: StripePaymentRunStatus;
-  log: string;
-  stdout: string;
-  stderr: string;
-  exitCode: number | null;
-  message: string;
-  startedAt: string;
-  finishedAt?: string;
-}
-
 export type TokenStatus = 'unknown' | 'valid' | 'invalid';
 
 export type MailFetchMode = 'auto' | 'graph' | 'imap';

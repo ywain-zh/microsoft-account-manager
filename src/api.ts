@@ -19,12 +19,6 @@ import type {
   Seven79CardSmsCodeResponse,
   Seven79CheckResponse,
   Seven79ImportResult,
-  StripePaymentRequest,
-  StripePaymentRunLogResponse,
-  StripePaymentRunStartResponse,
-  StripeCaptchaConfig,
-  StripeProxyConfig,
-  StripeProxyTestResponse,
   Sub2ApiConfig,
   Sub2ApiDeleteAccountsResponse
 } from './types';
@@ -303,46 +297,6 @@ export const api = {
   openListAccounts(keyword?: string): Promise<{ items: AccountItem[] }> {
     const query = buildQuery({ keyword });
     return request<{ items: AccountItem[] }>(`/api/open/accounts${query}`);
-  },
-
-  runStripePayment(payload: StripePaymentRequest): Promise<StripePaymentRunStartResponse> {
-    return request<StripePaymentRunStartResponse>('/api/stripe-payment/run', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    });
-  },
-
-  getStripePaymentRunLog(runId: string): Promise<StripePaymentRunLogResponse> {
-    return request<StripePaymentRunLogResponse>(`/api/stripe-payment/runs/${runId}/log`);
-  },
-
-  getStripePaymentCaptchaConfig(): Promise<{ item: StripeCaptchaConfig }> {
-    return request<{ item: StripeCaptchaConfig }>('/api/stripe-payment/captcha-config');
-  },
-
-  updateStripePaymentCaptchaConfig(payload: StripeCaptchaConfig): Promise<{ item: StripeCaptchaConfig }> {
-    return request<{ item: StripeCaptchaConfig }>('/api/stripe-payment/captcha-config', {
-      method: 'PUT',
-      body: JSON.stringify(payload)
-    });
-  },
-
-  getStripePaymentProxyConfig(): Promise<{ item: StripeProxyConfig }> {
-    return request<{ item: StripeProxyConfig }>('/api/stripe-payment/proxy-config');
-  },
-
-  updateStripePaymentProxyConfig(payload: StripeProxyConfig): Promise<{ item: StripeProxyConfig }> {
-    return request<{ item: StripeProxyConfig }>('/api/stripe-payment/proxy-config', {
-      method: 'PUT',
-      body: JSON.stringify(payload)
-    });
-  },
-
-  testStripePaymentProxyConfig(payload?: StripeProxyConfig): Promise<StripeProxyTestResponse> {
-    return request<StripeProxyTestResponse>('/api/stripe-payment/proxy-config/test', {
-      method: 'POST',
-      body: JSON.stringify(payload ?? {})
-    });
   },
 
   listSeven79Cards(keyword?: string): Promise<{ items: Seven79CardItem[] }> {
