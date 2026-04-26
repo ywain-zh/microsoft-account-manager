@@ -136,6 +136,24 @@ export interface StripePaymentRuntimeConfig {
   publishableKey?: string;
 }
 
+export type StripeProxyProtocol = 'https' | 'socks5';
+
+export interface StripeProxyConfig {
+  enabled: boolean;
+  protocol: StripeProxyProtocol;
+  proxyLine?: string;
+  host: string;
+  port: number | null;
+  user: string;
+  pass: string;
+}
+
+export interface StripeProxyTestResponse {
+  ok: boolean;
+  message: string;
+  ip?: string;
+}
+
 export interface StripePaymentRequest {
   checkoutInput: string;
   cardIndex?: number;

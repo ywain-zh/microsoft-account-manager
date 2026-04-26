@@ -14,7 +14,7 @@ RUN npm ci --omit=dev --no-audit --no-fund
 FROM node:22.22.0-alpine AS runtime
 WORKDIR /app
 
-RUN apk add --no-cache ca-certificates tini wget python3 py3-requests
+RUN apk add --no-cache ca-certificates tini wget python3 py3-requests py3-pysocks
 
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0

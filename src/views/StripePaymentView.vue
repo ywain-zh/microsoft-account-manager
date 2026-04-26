@@ -87,8 +87,55 @@
       </n-form>
     </n-card>
 
+    <n-card class="stripe-card proxy-card" :bordered="false" title="代理配置">
+      <n-form label-placement="top" autocomplete="off">
+        <n-form-item label="是否启用代理">
+          <n-switch v-model:value="proxyForm.enabled" />
+        </n-form-item>
+
+        <div class="form-grid">
+          <n-form-item label="代理协议">
+            <n-select v-model:value="proxyForm.protocol" :options="proxyProtocolOptions" />
+          </n-form-item>
+
+          <n-form-item label="代理格式粘贴">
+            <n-input-group>
+              <n-input
+                v-model:value="proxyForm.proxyLine"
+                placeholder="host:port:user:pass"
+              />
+              <n-button @click="handleParseProxyLine">解析</n-button>
+            </n-input-group>
+          </n-form-item>
+        </div>
+
+        <div class="form-grid proxy-grid">
+          <n-form-item label="Host">
+            <n-input v-model:value="proxyForm.host" placeholder="us.rrp.b2proxy.com" />
+          </n-form-item>
+
+          <n-form-item label="Port">
+            <n-input-number v-model:value="proxyForm.port" :min="1" :max="65535" :precision="0" placeholder="10000" />
+          </n-form-item>
+
+          <n-form-item label="User">
+            <n-input v-model:value="proxyForm.user" placeholder="USER844093-zone-custom-region-US" />
+          </n-form-item>
+
+          <n-form-item label="Password">
+            <n-input v-model:value="proxyForm.pass" type="password" show-password-on="click" placeholder="代理密码" />
+          </n-form-item>
+        </div>
+
+        <div class="action-row">
+          <n-button type="primary" :loading="savingProxy" @click="handleSaveProxyConfig">保存代理配置</n-button>
+          <n-button :loading="testingProxy" @click="handleTestProxyConfig">测试代理</n-button>
+        </div>
+      </n-form>
+    </n-card>
+
     <n-alert class="security-note" type="warning" :bordered="false">
-      该功能会在登录后的服务端环境调用 pay.py。页面不会保存 Token、ClientKey、卡号或 CVC；临时配置只用于本次运行。
+      该功能会在登录后的服务端环境调用 pay.py。页面不会保存 Token、ClientKey、卡号、CVC 或备用 publishable key；代理配置会按你的要求保存到服务端并用于后续运行。
     </n-alert>
 
     <n-card v-if="running || runLog" class="result-card" :bordered="false" title="执行结果 / 实时日志">
@@ -117,7 +164,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import {
   createDiscreteApi,
   NAlert,
@@ -126,18 +173,24 @@ import {
   NForm,
   NFormItem,
   NInput,
+  NInputGroup,
   NInputNumber,
   NRadio,
   NRadioGroup,
   NSelect,
-  NSpace
+  NSpace,
+  NSwitch
 } from 'naive-ui';
 import { api } from '../api';
-import type { StripePaymentRunLogResponse } from '../types';
+import type { StripePaymentRunLogResponse, StripeProxyConfig } from '../types';
 
 const { message } = createDiscreteApi(['message']);
 
 const configProfileOptions = [{ label: 'default (config.json)', value: 'default' }];
+const proxyProtocolOptions = [
+  { label: 'HTTPS', value: 'https' },
+  { label: 'socket5 / SOCKS5', value: 'socks5' }
+];
 
 const form = reactive({
   checkoutInput: '',
@@ -151,8 +204,20 @@ const form = reactive({
 });
 
 const running = ref(false);
+const savingProxy = ref(false);
+const testingProxy = ref(false);
 const runLog = ref<StripePaymentRunLogResponse | null>(null);
 let pollTimer: number | undefined;
+
+const proxyForm = reactive<StripeProxyConfig>({
+  enabled: false,
+  protocol: 'https',
+  proxyLine: '',
+  host: '',
+  port: null,
+  user: '',
+  pass: ''
+});
 
 const isFailedStatus = computed(() =>
   runLog.value?.status === 'failed' || runLog.value?.status === 'timeout'
@@ -164,6 +229,75 @@ function normalizeCardIndex(value: number | null): number {
   }
 
   return Math.floor(value);
+}
+
+function applyProxyConfig(config: StripeProxyConfig): void {
+  proxyForm.enabled = config.enabled;
+  proxyForm.protocol = config.protocol;
+  proxyForm.proxyLine = config.proxyLine || '';
+  proxyForm.host = config.host;
+  proxyForm.port = config.port;
+  proxyForm.user = config.user;
+  proxyForm.pass = config.pass;
+}
+
+async function loadProxyConfig(): Promise<void> {
+  try {
+    const response = await api.getStripePaymentProxyConfig();
+    applyProxyConfig(response.item);
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '读取代理配置失败');
+  }
+}
+
+function handleParseProxyLine(): void {
+  const parts = (proxyForm.proxyLine || '').trim().split(':');
+  if (parts.length < 2) {
+    message.warning('代理格式必须为 host:port:user:pass');
+    return;
+  }
+
+  const port = Number(parts[1]);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    message.warning('代理端口必须是 1 到 65535 的整数');
+    return;
+  }
+
+  proxyForm.host = parts[0].trim();
+  proxyForm.port = port;
+  proxyForm.user = parts[2]?.trim() || '';
+  proxyForm.pass = parts.slice(3).join(':').trim();
+  proxyForm.enabled = true;
+  message.success('代理信息已解析');
+}
+
+async function handleSaveProxyConfig(): Promise<void> {
+  savingProxy.value = true;
+  try {
+    const response = await api.updateStripePaymentProxyConfig({ ...proxyForm });
+    applyProxyConfig(response.item);
+    message.success('代理配置已保存');
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '保存代理配置失败');
+  } finally {
+    savingProxy.value = false;
+  }
+}
+
+async function handleTestProxyConfig(): Promise<void> {
+  testingProxy.value = true;
+  try {
+    const response = await api.testStripePaymentProxyConfig({ ...proxyForm });
+    if (response.ok) {
+      message.success(response.ip ? `${response.message} (${response.ip})` : response.message);
+    } else {
+      message.warning(response.message);
+    }
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '代理测试失败');
+  } finally {
+    testingProxy.value = false;
+  }
 }
 
 async function handleRun(): Promise<void> {
@@ -254,6 +388,10 @@ function stopPolling(): void {
   }
 }
 
+onMounted(() => {
+  void loadProxyConfig();
+});
+
 onBeforeUnmount(() => {
   stopPolling();
 });
@@ -302,12 +440,14 @@ onBeforeUnmount(() => {
 }
 
 .stripe-card,
+.proxy-card,
 .result-card,
 .security-note {
   max-width: 980px;
 }
 
 .stripe-card,
+.proxy-card,
 .result-card {
   border-radius: 16px;
   box-shadow: 0 14px 40px rgba(15, 23, 42, 0.08);
@@ -328,8 +468,13 @@ onBeforeUnmount(() => {
   margin-top: 16px;
 }
 
+.proxy-card,
 .result-card {
   margin-top: 16px;
+}
+
+.proxy-grid {
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
 }
 
 .result-summary {

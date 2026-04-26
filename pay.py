@@ -1370,6 +1370,50 @@ def load_config(path: str) -> dict:
         return json.load(f)
 
 
+def configure_proxy(http: requests.Session, cfg: dict):
+    proxy_cfg = cfg.get("proxy")
+    if not proxy_cfg:
+        _log("      代理: 无 (直连)")
+        return
+
+    host = str(proxy_cfg.get("host", "")).strip()
+    port = str(proxy_cfg.get("port", "")).strip()
+    user = str(proxy_cfg.get("user", "")).strip()
+    pwd = str(proxy_cfg.get("pass", "")).strip()
+    protocol = str(proxy_cfg.get("protocol", "https")).strip().lower()
+    if protocol == "socket5":
+        protocol = "socks5"
+    if protocol not in ("https", "socks5"):
+        raise ValueError("代理协议必须是 https 或 socks5")
+    if not host or not port:
+        raise ValueError("代理 host/port 不能为空")
+
+    scheme = "socks5h" if protocol == "socks5" else "https"
+    auth = ""
+    if user and pwd:
+        auth = f"{urllib.parse.quote(user, safe='')}:{urllib.parse.quote(pwd, safe='')}@"
+    proxy_url = f"{scheme}://{auth}{host}:{port}"
+    http.proxies = {"http": proxy_url, "https": proxy_url}
+    _log(f"      代理: {protocol} {host}:{port}")
+
+
+def test_proxy(config_path: str):
+    _init_log()
+    cfg = load_config(config_path)
+    http = requests.Session()
+    http.headers.update({"User-Agent": USER_AGENT})
+    configure_proxy(http, cfg)
+    _log("      正在测试代理出口 ...")
+    resp = http.get("https://api.ipify.org?format=json", timeout=15)
+    _log(f"      测试状态: {resp.status_code}")
+    if resp.status_code != 200:
+        raise RuntimeError(f"代理测试失败 [{resp.status_code}]: {resp.text[:200]}")
+    data = resp.json()
+    ip = data.get("ip", "")
+    _log(f"      代理测试成功: {ip}")
+    print(f"代理测试成功: {ip}", flush=True)
+
+
 def run(checkout_input: str, card_index: int = 0, config_path: str = "config.json", manual_token: str = ""):
     _init_log()  # 初始化日志文件
 
@@ -1429,21 +1473,7 @@ def run(checkout_input: str, card_index: int = 0, config_path: str = "config.jso
     http = requests.Session()
     http.headers.update({"User-Agent": USER_AGENT})
 
-    # 代理配置
-    proxy_cfg = cfg.get("proxy")
-    if proxy_cfg:
-        host = proxy_cfg["host"]
-        port = proxy_cfg["port"]
-        user = proxy_cfg.get("user", "")
-        pwd  = proxy_cfg.get("pass", "")
-        if user and pwd:
-            proxy_url = f"http://{user}:{pwd}@{host}:{port}"
-        else:
-            proxy_url = f"http://{host}:{port}"
-        http.proxies = {"http": proxy_url, "https": proxy_url}
-        _log(f"      代理: {host}:{port} (user={user})")
-    else:
-        _log("      代理: 无 (直连)")
+    configure_proxy(http, cfg)
 
 
     reg_guid, reg_muid, reg_sid = register_fingerprint(http)
@@ -1539,17 +1569,23 @@ def main():
         description="Stripe Checkout 自动化支付",
         epilog="示例: python pay.py cs_live_a12H3g13P9TH6udPmljRCpWsmHiKRFH7VUiZBbcA1U60eMzFFI2wp3rtXL",
     )
-    parser.add_argument("session_id", help="Checkout Session ID (cs_live_xxx 或 cs_test_xxx)")
+    parser.add_argument("session_id", nargs="?", help="Checkout Session ID (cs_live_xxx 或 cs_test_xxx)")
     parser.add_argument("--card", type=int, default=0, help="使用第 N 张卡 (0-based, 默认 0)")
     parser.add_argument("--config", default="config.json", help="配置文件路径 (默认 config.json)")
     parser.add_argument("--token", default="", help="手动传入 hCaptcha token (跳过打码平台)")
     parser.add_argument("--log", default="", help="日志文件路径 (默认脚本目录 log.txt)")
+    parser.add_argument("--test-proxy", action="store_true", help="仅测试配置文件中的代理是否可用")
     args = parser.parse_args()
 
     set_log_file(args.log)
 
     try:
-        run(args.session_id, card_index=args.card, config_path=args.config, manual_token=args.token)
+        if args.test_proxy:
+            test_proxy(args.config)
+        else:
+            if not args.session_id:
+                parser.error("必须提供 Checkout Session ID，或使用 --test-proxy")
+            run(args.session_id, card_index=args.card, config_path=args.config, manual_token=args.token)
     except Exception as e:
         err_msg = f"\n[ERROR] {type(e).__name__}: {e}"
         print(err_msg, file=sys.stderr)

@@ -1070,19 +1070,23 @@ onMounted(async () => {
 }
 
 :deep(.cloud-mail-account-table .cloud-mail-remark-cell) {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
   gap: 6px;
+  vertical-align: middle;
 }
 
 :deep(.cloud-mail-account-table .cloud-mail-remark-text) {
+  min-width: 0;
   max-width: 100%;
   color: #475569;
   font-size: 13px;
   line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 :deep(.cloud-mail-account-table .cloud-mail-remark-edit-button) {
@@ -1091,6 +1095,7 @@ onMounted(async () => {
   justify-content: center;
   width: 24px;
   height: 24px;
+  flex: 0 0 24px;
   padding: 0;
   border: 0;
   border-radius: 6px;
@@ -1167,4 +1172,3 @@ onMounted(async () => {
   }
 }
 </style>
-

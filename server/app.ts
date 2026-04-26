@@ -70,6 +70,32 @@ interface StripePaymentRequest {
 
 type StripePaymentRunStatus = 'running' | 'completed' | 'failed' | 'timeout';
 
+type StripeProxyProtocol = 'https' | 'socks5';
+
+interface StripeProxyConfig {
+  enabled: boolean;
+  protocol: StripeProxyProtocol;
+  proxyLine?: string;
+  host: string;
+  port: number | null;
+  user: string;
+  pass: string;
+}
+
+interface StripeProxyTestResponse {
+  ok: boolean;
+  message: string;
+  ip?: string;
+}
+
+interface PayProxyConfig {
+  protocol: StripeProxyProtocol;
+  host: string;
+  port: number;
+  user?: string;
+  pass?: string;
+}
+
 interface StripePaymentRun {
   runId: string;
   status: StripePaymentRunStatus;
@@ -398,6 +424,19 @@ const DEFAULT_CLOUD_MAIL_CONFIG: CloudMailConfig = {
 const SUB2API_CONFIG_KEY = 'sub2api_config';
 const SUB2API_TEST_MODEL = 'gpt-5.4';
 const SUB2API_PAGE_SIZE = 100;
+const STRIPE_PROXY_CONFIG_KEY = 'stripe_proxy_config';
+
+const DEFAULT_STRIPE_PROXY_CONFIG: StripeProxyConfig = {
+  enabled: false,
+  protocol: 'https',
+  proxyLine: '',
+  host: '',
+  port: null,
+  user: '',
+  pass: ''
+};
+
+const STRIPE_PROXY_TEST_TIMEOUT_MS = 30000;
 
 const DEFAULT_SUB2API_CONFIG: Sub2ApiConfig = {
   baseUrl: '',
@@ -1315,9 +1354,8 @@ app.post('/api/stripe-payment/run', async (c) => {
   const runId = randomUUID();
   const tempDir = await mkdtemp(join(tmpdir(), `stripe-payment-${runId}-`));
   const logPath = join(tempDir, 'log.txt');
-  const configPath = payload.runtimeConfig
-    ? await writeRuntimeStripeConfig(tempDir, payload.runtimeConfig)
-    : resolveStripePaymentConfigPath(rootDir, payload.configProfile || 'default');
+  const proxyConfig = await getStripeProxyConfig(c.env.DB);
+  const configPath = await resolveStripePaymentRunConfigPath(rootDir, tempDir, payload, proxyConfig);
   const cardIndex = payload.runtimeConfig ? 0 : payload.cardIndex ?? 0;
   const args = [
     scriptPath,
@@ -1346,7 +1384,7 @@ app.post('/api/stripe-payment/run', async (c) => {
     message: '支付脚本运行中',
     startedAt: new Date().toISOString(),
     timeoutId: setTimeout(() => undefined, 0),
-    secrets: collectStripePaymentSecrets(payload)
+    secrets: collectStripePaymentSecrets(payload, proxyConfig)
   };
   clearTimeout(run.timeoutId);
   stripePaymentRuns.set(runId, run);
@@ -1354,6 +1392,27 @@ app.post('/api/stripe-payment/run', async (c) => {
   startStripePaymentRun(run, pythonBin, args, timeoutMs);
 
   return c.json({ runId });
+});
+
+app.get('/api/stripe-payment/proxy-config', async (c) => {
+  const item = await getStripeProxyConfig(c.env.DB);
+  return c.json({ item });
+});
+
+app.put('/api/stripe-payment/proxy-config', async (c) => {
+  const body = await readJson<Partial<StripeProxyConfig>>(c);
+  const item = normalizeStripeProxyConfig(body);
+  await setAppSetting(c.env.DB, STRIPE_PROXY_CONFIG_KEY, JSON.stringify(item));
+  return c.json({ item });
+});
+
+app.post('/api/stripe-payment/proxy-config/test', async (c) => {
+  const body = await readJson<Partial<StripeProxyConfig>>(c);
+  const item = Object.keys(asRecord(body)).length
+    ? normalizeStripeProxyConfig(body)
+    : await getStripeProxyConfig(c.env.DB);
+  const result = await testStripeProxyConfig(item);
+  return c.json(result);
 });
 
 app.get('/api/stripe-payment/runs/:runId/log', async (c) => {
@@ -1810,6 +1869,44 @@ function resolveStripePaymentConfigPath(rootDir: string, profile: string): strin
   return resolve(rootDir, configFile);
 }
 
+async function resolveStripePaymentRunConfigPath(
+  rootDir: string,
+  tempDir: string,
+  payload: StripePaymentRequest,
+  proxyConfig: StripeProxyConfig
+): Promise<string> {
+  const proxy = buildPayProxyConfig(proxyConfig);
+  if (payload.runtimeConfig) {
+    return writeRuntimeStripeConfig(tempDir, payload.runtimeConfig, proxy);
+  }
+
+  const sourcePath = resolveStripePaymentConfigPath(rootDir, payload.configProfile || 'default');
+  if (!proxy) {
+    return sourcePath;
+  }
+
+  const configPath = join(tempDir, 'config.json');
+  const raw = await readFile(sourcePath, 'utf8');
+  const config = JSON.parse(raw) as Record<string, unknown>;
+  config.proxy = proxy;
+  await writeFile(configPath, JSON.stringify(config, null, 2), 'utf8');
+  return configPath;
+}
+
+function buildPayProxyConfig(config: StripeProxyConfig): PayProxyConfig | undefined {
+  if (!config.enabled || !config.host || !config.port) {
+    return undefined;
+  }
+
+  return {
+    protocol: config.protocol,
+    host: config.host,
+    port: config.port,
+    ...(config.user ? { user: config.user } : {}),
+    ...(config.pass ? { pass: config.pass } : {})
+  };
+}
+
 function isHttpUrl(value: string): boolean {
   try {
     const url = new URL(value);
@@ -1817,6 +1914,153 @@ function isHttpUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+async function testStripeProxyConfig(config: StripeProxyConfig): Promise<StripeProxyTestResponse> {
+  const proxy = buildPayProxyConfig(config);
+  if (!proxy) {
+    return { ok: false, message: '代理未启用或配置不完整' };
+  }
+
+  const rootDir = process.cwd();
+  const tempDir = await mkdtemp(join(tmpdir(), 'stripe-proxy-test-'));
+  const configPath = join(tempDir, 'config.json');
+  const logPath = join(tempDir, 'log.txt');
+  const scriptPath = resolve(process.env.PAY_SCRIPT_PATH?.trim() || resolve(rootDir, 'pay.py'));
+  const pythonBin = process.env.PAY_PYTHON_BIN?.trim() || 'python3';
+
+  await writeFile(configPath, JSON.stringify({ proxy }, null, 2), 'utf8');
+
+  try {
+    return await new Promise<StripeProxyTestResponse>((resolveTest) => {
+      const child = spawn(pythonBin, [scriptPath, '--config', configPath, '--log', logPath, '--test-proxy'], {
+        cwd: rootDir,
+        shell: false,
+        windowsHide: true
+      });
+      let stdout = '';
+      let stderr = '';
+      let timedOut = false;
+      const timeoutId = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGTERM');
+      }, STRIPE_PROXY_TEST_TIMEOUT_MS);
+
+      child.stdout.setEncoding('utf8');
+      child.stderr.setEncoding('utf8');
+      child.stdout.on('data', (chunk: string) => {
+        stdout = limitText(stdout + chunk, 10000);
+      });
+      child.stderr.on('data', (chunk: string) => {
+        stderr = limitText(stderr + chunk, 10000);
+      });
+      child.on('error', (error) => {
+        clearTimeout(timeoutId);
+        resolveTest({ ok: false, message: `代理测试启动失败: ${error.message}` });
+      });
+      child.on('close', (code) => {
+        clearTimeout(timeoutId);
+        const output = redactStripePaymentText(`${stdout}\n${stderr}`, collectStripeProxySecrets(config)).trim();
+        if (timedOut) {
+          resolveTest({ ok: false, message: '代理测试超时' });
+          return;
+        }
+        const ipMatch = output.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
+        resolveTest({
+          ok: code === 0,
+          message: code === 0 ? output || '代理测试成功' : output || '代理测试失败',
+          ...(ipMatch ? { ip: ipMatch[0] } : {})
+        });
+      });
+    });
+  } finally {
+    void rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+function normalizeStripeProxyConfig(input: Partial<StripeProxyConfig>): StripeProxyConfig {
+  const record = asRecord(input);
+  const parsedLine = parseStripeProxyLine(asText(record.proxyLine));
+  const protocol = normalizeStripeProxyProtocol(asText(record.protocol || parsedLine.protocol || DEFAULT_STRIPE_PROXY_CONFIG.protocol));
+  const enabled = Boolean(record.enabled);
+  const host = asText(record.host || parsedLine.host).trim();
+  const portValue = record.port ?? parsedLine.port ?? null;
+  const parsedPort = portValue === null || portValue === '' ? null : Number(portValue);
+  const normalizedPort = Number.isInteger(parsedPort) ? parsedPort : null;
+  const user = asText(record.user || parsedLine.user).trim();
+  const pass = asText(record.pass || parsedLine.pass).trim();
+  const proxyLine = asText(record.proxyLine).trim();
+
+  if (host.length > 255) {
+    throw new HTTPException(400, { message: '代理 host 过长' });
+  }
+  if (user.length > 512) {
+    throw new HTTPException(400, { message: '代理用户名过长' });
+  }
+  if (pass.length > 1024) {
+    throw new HTTPException(400, { message: '代理密码过长' });
+  }
+
+  if (enabled) {
+    if (!host) {
+      throw new HTTPException(400, { message: '启用代理时 host 不能为空' });
+    }
+    if (normalizedPort === null || normalizedPort < 1 || normalizedPort > 65535) {
+      throw new HTTPException(400, { message: '代理端口必须是 1 到 65535 的整数' });
+    }
+  }
+
+  return {
+    enabled,
+    protocol,
+    proxyLine,
+    host,
+    port: normalizedPort,
+    user,
+    pass
+  };
+}
+
+function normalizeStripeProxyProtocol(value: string): StripeProxyProtocol {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'socket5' || normalized === 'socks5') {
+    return 'socks5';
+  }
+  if (normalized === 'https') {
+    return 'https';
+  }
+  throw new HTTPException(400, { message: '代理协议必须是 https 或 socket5/socks5' });
+}
+
+function parseStripeProxyLine(line: string): Partial<StripeProxyConfig> {
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return {};
+  }
+
+  const parts = trimmed.split(':');
+  if (parts.length < 2) {
+    throw new HTTPException(400, { message: '代理格式必须为 host:port:user:pass' });
+  }
+
+  return {
+    host: parts[0].trim(),
+    port: Number(parts[1]),
+    user: parts[2]?.trim() || '',
+    pass: parts.slice(3).join(':').trim()
+  };
+}
+
+function collectStripeProxySecrets(config: StripeProxyConfig): string[] {
+  return [
+    config.proxyLine,
+    config.user,
+    config.pass,
+    encodeURIComponent(config.user),
+    encodeURIComponent(config.pass)
+  ]
+    .map((value) => asText(value).trim())
+    .filter((value) => value.length >= 6);
 }
 
 function parsePositiveInteger(value: string | undefined, fallback: number): number {
@@ -1873,7 +2117,11 @@ function startStripePaymentRun(
   });
 }
 
-async function writeRuntimeStripeConfig(tempDir: string, runtimeConfig: StripePaymentRuntimeConfig): Promise<string> {
+async function writeRuntimeStripeConfig(
+  tempDir: string,
+  runtimeConfig: StripePaymentRuntimeConfig,
+  proxy?: PayProxyConfig
+): Promise<string> {
   const configPath = join(tempDir, 'config.json');
   const card = parseStripeRuntimeCardLine(runtimeConfig.cardLine);
   const config = {
@@ -1883,7 +2131,8 @@ async function writeRuntimeStripeConfig(tempDir: string, runtimeConfig: StripePa
       api_key: runtimeConfig.clientKey
     },
     cards: [card],
-    ...(runtimeConfig.publishableKey ? { publishable_key: runtimeConfig.publishableKey } : {})
+    ...(runtimeConfig.publishableKey ? { publishable_key: runtimeConfig.publishableKey } : {}),
+    ...(proxy ? { proxy } : {})
   };
 
   await writeFile(configPath, JSON.stringify(config, null, 2), 'utf8');
@@ -1976,7 +2225,7 @@ function parseStripeRuntimeAddress(rawAddress: string): RuntimeStripeCard['addre
   };
 }
 
-function collectStripePaymentSecrets(payload: StripePaymentRequest): string[] {
+function collectStripePaymentSecrets(payload: StripePaymentRequest, proxyConfig?: StripeProxyConfig): string[] {
   const secrets = [payload.manualToken, payload.runtimeConfig?.clientKey, payload.runtimeConfig?.publishableKey]
     .map((value) => asText(value).trim())
     .filter((value) => value.length >= 6);
@@ -1997,6 +2246,10 @@ function collectStripePaymentSecrets(payload: StripePaymentRequest): string[] {
         // ignore invalid URL here; validation happens earlier
       }
     }
+  }
+
+  if (proxyConfig) {
+    secrets.push(...collectStripeProxySecrets(proxyConfig));
   }
 
   return [...new Set(secrets)];
@@ -2248,6 +2501,21 @@ async function getSub2ApiConfig(db: D1Database): Promise<Sub2ApiConfig> {
     return normalizeSub2ApiConfig(parsed);
   } catch {
     return DEFAULT_SUB2API_CONFIG;
+  }
+}
+
+async function getStripeProxyConfig(db: D1Database): Promise<StripeProxyConfig> {
+  const value = await getAppSetting(db, STRIPE_PROXY_CONFIG_KEY);
+
+  if (!value) {
+    return DEFAULT_STRIPE_PROXY_CONFIG;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as Partial<StripeProxyConfig>;
+    return normalizeStripeProxyConfig(parsed);
+  } catch {
+    return DEFAULT_STRIPE_PROXY_CONFIG;
   }
 }
 

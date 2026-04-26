@@ -22,6 +22,8 @@ import type {
   StripePaymentRequest,
   StripePaymentRunLogResponse,
   StripePaymentRunStartResponse,
+  StripeProxyConfig,
+  StripeProxyTestResponse,
   Sub2ApiConfig,
   Sub2ApiDeleteAccountsResponse
 } from './types';
@@ -311,6 +313,24 @@ export const api = {
 
   getStripePaymentRunLog(runId: string): Promise<StripePaymentRunLogResponse> {
     return request<StripePaymentRunLogResponse>(`/api/stripe-payment/runs/${runId}/log`);
+  },
+
+  getStripePaymentProxyConfig(): Promise<{ item: StripeProxyConfig }> {
+    return request<{ item: StripeProxyConfig }>('/api/stripe-payment/proxy-config');
+  },
+
+  updateStripePaymentProxyConfig(payload: StripeProxyConfig): Promise<{ item: StripeProxyConfig }> {
+    return request<{ item: StripeProxyConfig }>('/api/stripe-payment/proxy-config', {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  testStripePaymentProxyConfig(payload?: StripeProxyConfig): Promise<StripeProxyTestResponse> {
+    return request<StripeProxyTestResponse>('/api/stripe-payment/proxy-config/test', {
+      method: 'POST',
+      body: JSON.stringify(payload ?? {})
+    });
   },
 
   listSeven79Cards(keyword?: string): Promise<{ items: Seven79CardItem[] }> {
