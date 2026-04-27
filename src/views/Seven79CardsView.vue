@@ -441,7 +441,7 @@
           <n-input
             v-model:value="ppImportText"
             type="textarea"
-            placeholder="+13502473488------------http://a.62-us.com/api/get_sms?key=xxxx"
+            placeholder="+14642648591|http://a.62-us.com/api/get_sms?key=xxxx&#10;+14642649067 ==== http://a.62-us.com/api/get_sms?key=xxxx&#10;自动识别手机号和 http(s) 网址，中间分隔符不限"
             :autosize="{ minRows: 10, maxRows: 16 }"
           />
         </n-form-item>

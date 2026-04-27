@@ -114,6 +114,11 @@ interface PpSmsParseResult {
   smsApi: string;
 }
 
+interface PpSmsImportEntry {
+  line: number;
+  raw: string;
+}
+
 interface PpSmsFetchResult {
   status: PpSmsStatus;
   expiresAt: string | null;
@@ -997,20 +1002,15 @@ app.post('/api/779/pp-sms/import', async (c) => {
     throw new HTTPException(400, { message: '导入内容不能为空' });
   }
 
-  const lines = text.split(/\r?\n/);
+  const entries = splitPpSmsImportText(text);
   let inserted = 0;
   let skipped = 0;
   const errors: ParseErrorItem[] = [];
   const touchedIds: number[] = [];
 
-  for (let index = 0; index < lines.length; index += 1) {
-    const raw = lines[index].trim();
-    if (!raw) {
-      continue;
-    }
-
+  for (const entry of entries) {
     try {
-      const parsed = parsePpSmsImportLine(raw);
+      const parsed = parsePpSmsImportLine(entry.raw);
       const existing = await c.env.DB
         .prepare('SELECT id FROM pp_sms_items WHERE full_phone = ? OR sms_api = ? LIMIT 1')
         .bind(parsed.fullPhone, parsed.smsApi)
@@ -1040,8 +1040,8 @@ app.post('/api/779/pp-sms/import', async (c) => {
       }
     } catch (error) {
       errors.push({
-        line: index + 1,
-        raw,
+        line: entry.line,
+        raw: entry.raw,
         reason: getErrorMessage(error)
       });
     }
@@ -3772,9 +3772,13 @@ function splitPhoneNumber(value: string): {
   phoneNumber: string;
 } {
   const trimmed = value.trim();
-  const normalized = trimmed.replace(/\s+/g, '');
+  const normalized = trimmed.replace(/[\s().-]+/g, '');
   if (!normalized) {
     throw new HTTPException(400, { message: '手机号不能为空' });
+  }
+
+  if (!/^\+?\d{6,20}$/.test(normalized)) {
+    throw new HTTPException(400, { message: '手机号格式不正确' });
   }
 
   if (normalized.startsWith('+1') && normalized.length > 2) {
@@ -3879,19 +3883,53 @@ function resolveSeven79CardValidUntil(expiryTime: string | null): string | null 
   return formatSqliteDateTime(new Date(parsed.getTime() + 5 * 60 * 60 * 1000));
 }
 
-function parsePpSmsImportLine(raw: string): PpSmsParseResult {
-  const parts = raw.split('------------');
-  if (parts.length < 2) {
-    throw new HTTPException(400, { message: '格式不正确，应为 手机号------------接码API' });
+function splitPpSmsImportText(text: string): PpSmsImportEntry[] {
+  const entries: PpSmsImportEntry[] = [];
+  const lines = text.split(/\r?\n/);
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const raw = lines[index].trim();
+    if (!raw) {
+      continue;
+    }
+
+    const urlMatches = Array.from(raw.matchAll(/https?:\/\/\S+/gi));
+    if (urlMatches.length <= 1) {
+      entries.push({ line: index + 1, raw });
+      continue;
+    }
+
+    let segmentStart = 0;
+    for (const match of urlMatches) {
+      const urlStart = match.index ?? 0;
+      const urlEnd = urlStart + match[0].length;
+      const entryRaw = raw.slice(segmentStart, urlEnd).trim();
+      if (entryRaw) {
+        entries.push({ line: index + 1, raw: entryRaw });
+      }
+      segmentStart = urlEnd;
+    }
   }
 
-  const phone = parts[0].trim();
-  const smsApi = parts.slice(1).join('------------').trim();
+  return entries;
+}
+
+function parsePpSmsImportLine(raw: string): PpSmsParseResult {
+  const urlMatch = raw.match(/https?:\/\/\S+/i);
+  if (!urlMatch || typeof urlMatch.index !== 'number') {
+    throw new HTTPException(400, {
+      message: '格式不正确，应包含手机号和 http(s) 接码 API，中间分隔符可不同'
+    });
+  }
+
+  const smsApi = normalizePpSmsApi(urlMatch[0]);
+  const phoneSource = raw.slice(0, urlMatch.index).trim();
+  const phone = extractPpSmsPhone(phoneSource);
   if (!phone || !smsApi) {
     throw new HTTPException(400, { message: '手机号或接码 API 不能为空' });
   }
 
-  if (!/^https?:\/\//i.test(smsApi)) {
+  if (!isValidHttpUrl(smsApi)) {
     throw new HTTPException(400, { message: '接码 API 必须以 http:// 或 https:// 开头' });
   }
 
@@ -3902,6 +3940,29 @@ function parsePpSmsImportLine(raw: string): PpSmsParseResult {
     phoneNumber: phoneParts.phoneNumber,
     smsApi
   };
+}
+
+function normalizePpSmsApi(value: string): string {
+  return value.trim().replace(/[，,;；。]+$/g, '');
+}
+
+function extractPpSmsPhone(value: string): string {
+  const parts = value
+    .split(/\|+|-{2,}|[,，;；\t]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const candidate = parts[parts.length - 1] || value.trim();
+  const matches = Array.from(candidate.matchAll(/\+?\d[\d\s().-]{5,}\d/g));
+  return matches[matches.length - 1]?.[0]?.trim() || '';
+}
+
+function isValidHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 function getSeven79OpenApiKey(): string {
