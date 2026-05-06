@@ -1090,7 +1090,7 @@ function parseAddressByTailPattern(fullAddress: string): ParsedAddress | null {
     fullAddress,
     street: street.trim() || null,
     city: city.trim() || null,
-    state: state.toUpperCase(),
+    state: normalizeUsState(state),
     postalCode,
     country: resolveAddressCountry(country)
   };
@@ -1111,7 +1111,7 @@ function parseCityStatePostal(value: string): { city: string | null; state: stri
   const [, city, state, postalCode] = match;
   return {
     city: city.replace(/,$/, '').trim() || null,
-    state: state.toUpperCase(),
+    state: normalizeUsState(state),
     postalCode
   };
 }
@@ -1141,6 +1141,133 @@ function parseCityPostal(value: string): { city: string | null; state: string | 
   };
 }
 
+const US_STATE_ZIP_RANGES: Array<{ state: string; start: number; end: number }> = [
+  { state: 'NY', start: 500, end: 599 },
+  { state: 'PR', start: 600, end: 999 },
+  { state: 'MA', start: 1000, end: 2799 },
+  { state: 'RI', start: 2800, end: 2999 },
+  { state: 'NH', start: 3000, end: 3899 },
+  { state: 'ME', start: 3900, end: 4999 },
+  { state: 'VT', start: 5000, end: 5499 },
+  { state: 'MA', start: 5500, end: 5599 },
+  { state: 'VT', start: 5600, end: 5999 },
+  { state: 'CT', start: 6000, end: 6999 },
+  { state: 'NJ', start: 7000, end: 8999 },
+  { state: 'NY', start: 10000, end: 14999 },
+  { state: 'PA', start: 15000, end: 19699 },
+  { state: 'DE', start: 19700, end: 19999 },
+  { state: 'DC', start: 20000, end: 20099 },
+  { state: 'VA', start: 20100, end: 20199 },
+  { state: 'DC', start: 20200, end: 20599 },
+  { state: 'MD', start: 20600, end: 21999 },
+  { state: 'VA', start: 22000, end: 24699 },
+  { state: 'WV', start: 24700, end: 26899 },
+  { state: 'NC', start: 27000, end: 28999 },
+  { state: 'SC', start: 29000, end: 29999 },
+  { state: 'GA', start: 30000, end: 31999 },
+  { state: 'FL', start: 32000, end: 34999 },
+  { state: 'AL', start: 35000, end: 36999 },
+  { state: 'TN', start: 37000, end: 38599 },
+  { state: 'MS', start: 38600, end: 39799 },
+  { state: 'GA', start: 39800, end: 39999 },
+  { state: 'KY', start: 40000, end: 42799 },
+  { state: 'OH', start: 43000, end: 45999 },
+  { state: 'IN', start: 46000, end: 47999 },
+  { state: 'MI', start: 48000, end: 49999 },
+  { state: 'IA', start: 50000, end: 52999 },
+  { state: 'WI', start: 53000, end: 54999 },
+  { state: 'MN', start: 55000, end: 56799 },
+  { state: 'DC', start: 56900, end: 56999 },
+  { state: 'SD', start: 57000, end: 57999 },
+  { state: 'ND', start: 58000, end: 58999 },
+  { state: 'MT', start: 59000, end: 59999 },
+  { state: 'IL', start: 60000, end: 62999 },
+  { state: 'MO', start: 63000, end: 65999 },
+  { state: 'KS', start: 66000, end: 67999 },
+  { state: 'NE', start: 68000, end: 69999 },
+  { state: 'LA', start: 70000, end: 71599 },
+  { state: 'AR', start: 71600, end: 72999 },
+  { state: 'OK', start: 73000, end: 74999 },
+  { state: 'TX', start: 75000, end: 79999 },
+  { state: 'CO', start: 80000, end: 81999 },
+  { state: 'WY', start: 82000, end: 83199 },
+  { state: 'ID', start: 83200, end: 83999 },
+  { state: 'UT', start: 84000, end: 84999 },
+  { state: 'AZ', start: 85000, end: 86999 },
+  { state: 'NM', start: 87000, end: 88499 },
+  { state: 'TX', start: 88500, end: 88599 },
+  { state: 'NV', start: 88900, end: 89999 },
+  { state: 'CA', start: 90000, end: 96199 },
+  { state: 'HI', start: 96700, end: 96899 },
+  { state: 'OR', start: 97000, end: 97999 },
+  { state: 'WA', start: 98000, end: 99499 },
+  { state: 'AK', start: 99500, end: 99999 }
+];
+
+const US_STATE_NAMES: Record<string, string> = {
+  AK: 'Alaska',
+  AL: 'Alabama',
+  AR: 'Arkansas',
+  AZ: 'Arizona',
+  CA: 'California',
+  CO: 'Colorado',
+  CT: 'Connecticut',
+  DC: 'District of Columbia',
+  DE: 'Delaware',
+  FL: 'Florida',
+  GA: 'Georgia',
+  HI: 'Hawaii',
+  IA: 'Iowa',
+  ID: 'Idaho',
+  IL: 'Illinois',
+  IN: 'Indiana',
+  KS: 'Kansas',
+  KY: 'Kentucky',
+  LA: 'Louisiana',
+  MA: 'Massachusetts',
+  MD: 'Maryland',
+  ME: 'Maine',
+  MI: 'Michigan',
+  MN: 'Minnesota',
+  MO: 'Missouri',
+  MS: 'Mississippi',
+  MT: 'Montana',
+  NC: 'North Carolina',
+  ND: 'North Dakota',
+  NE: 'Nebraska',
+  NH: 'New Hampshire',
+  NJ: 'New Jersey',
+  NM: 'New Mexico',
+  NV: 'Nevada',
+  NY: 'New York',
+  OH: 'Ohio',
+  OK: 'Oklahoma',
+  OR: 'Oregon',
+  PA: 'Pennsylvania',
+  PR: 'Puerto Rico',
+  RI: 'Rhode Island',
+  SC: 'South Carolina',
+  SD: 'South Dakota',
+  TN: 'Tennessee',
+  TX: 'Texas',
+  UT: 'Utah',
+  VA: 'Virginia',
+  VT: 'Vermont',
+  WA: 'Washington',
+  WI: 'Wisconsin',
+  WV: 'West Virginia',
+  WY: 'Wyoming'
+};
+
+function normalizeUsState(value: string | null | undefined): string | null {
+  const normalized = normalizeCopyValue(value);
+  if (!normalized) {
+    return null;
+  }
+
+  return US_STATE_NAMES[normalized.toUpperCase()] ?? normalized;
+}
+
 function resolveUsStateByPostalCode(value: string | null | undefined): string | null {
   const normalized = normalizeCopyValue(value);
   const zip = Number.parseInt(normalized.slice(0, 5), 10);
@@ -1148,11 +1275,8 @@ function resolveUsStateByPostalCode(value: string | null | undefined): string | 
     return null;
   }
 
-  if (zip >= 27000 && zip <= 28999) {
-    return 'NC';
-  }
-
-  return null;
+  const state = US_STATE_ZIP_RANGES.find((range) => zip >= range.start && zip <= range.end)?.state ?? null;
+  return normalizeUsState(state);
 }
 
 function formatParsedFullAddress(address: ParsedAddress): string {

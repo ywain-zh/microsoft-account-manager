@@ -3746,8 +3746,235 @@ function parseSeven79DeliveryContent(value: string | null): {
     phone: parts[3] || null,
     smsApi: parts[4] || null,
     holderName: parts[5] || null,
-    address: parts[6] || null
+    address: normalizeSeven79Address(parts.slice(6).join('----') || null)
   };
+}
+
+function normalizeSeven79Address(value: string | null): string | null {
+  const text = toNullableText(value);
+  if (!text) {
+    return null;
+  }
+
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  const parts = normalized.split(',').map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2) {
+    return normalized;
+  }
+
+  const country = normalizeSeven79Country(parts.at(-1) ?? null);
+  const locationPart = parts.at(-2) ?? '';
+  const street = parts.slice(0, Math.max(0, parts.length - 2)).join(', ').trim();
+  const location = parseSeven79CityStatePostal(locationPart) ?? parseSeven79CityPostal(locationPart);
+  if (!country || !location) {
+    return [street, locationPart, country].filter(Boolean).join(', ') || normalized;
+  }
+
+  const formattedLocation = [location.city, location.state, location.postalCode].filter(Boolean).join(' ');
+  return [street, formattedLocation, country].filter(Boolean).join(', ');
+}
+
+function normalizeSeven79Country(value: string | null): string | null {
+  const text = toNullableText(value);
+  if (!text) {
+    return null;
+  }
+
+  const upper = text.toUpperCase();
+  if (upper === 'USA' || upper === 'UNITED STATES' || upper === 'UNITED STATES OF AMERICA') {
+    return 'US';
+  }
+
+  return text;
+}
+
+function parseSeven79CityStatePostal(
+  value: string
+): { city: string | null; state: string | null; postalCode: string | null } | null {
+  const text = toNullableText(value);
+  if (!text) {
+    return null;
+  }
+
+  const match = text.match(/^(.*?)(?:\s+|,\s*)([A-Z]{2})(?:\s+|,\s*)(\d{5}(?:-\d{4})?)$/i);
+  if (!match) {
+    return null;
+  }
+
+  const [, city, state, postalCode] = match;
+  return {
+    city: city.replace(/,$/, '').trim() || null,
+    state: normalizeSeven79UsState(state),
+    postalCode
+  };
+}
+
+function parseSeven79CityPostal(
+  value: string
+): { city: string | null; state: string | null; postalCode: string | null } | null {
+  const text = toNullableText(value);
+  if (!text) {
+    return null;
+  }
+
+  const match = text.match(/^(.*?)(?:\s+|,\s*)(\d{5}(?:-\d{4})?)$/);
+  if (!match) {
+    return null;
+  }
+
+  const [, city, postalCode] = match;
+  const parsedCity = city.replace(/,$/, '').trim() || null;
+  if (!parsedCity) {
+    return null;
+  }
+
+  return {
+    city: parsedCity,
+    state: resolveSeven79UsStateByPostalCode(postalCode),
+    postalCode
+  };
+}
+
+const SEVEN79_US_STATE_ZIP_RANGES: Array<{ state: string; start: number; end: number }> = [
+  { state: 'NY', start: 500, end: 599 },
+  { state: 'PR', start: 600, end: 999 },
+  { state: 'MA', start: 1000, end: 2799 },
+  { state: 'RI', start: 2800, end: 2999 },
+  { state: 'NH', start: 3000, end: 3899 },
+  { state: 'ME', start: 3900, end: 4999 },
+  { state: 'VT', start: 5000, end: 5499 },
+  { state: 'MA', start: 5500, end: 5599 },
+  { state: 'VT', start: 5600, end: 5999 },
+  { state: 'CT', start: 6000, end: 6999 },
+  { state: 'NJ', start: 7000, end: 8999 },
+  { state: 'NY', start: 10000, end: 14999 },
+  { state: 'PA', start: 15000, end: 19699 },
+  { state: 'DE', start: 19700, end: 19999 },
+  { state: 'DC', start: 20000, end: 20099 },
+  { state: 'VA', start: 20100, end: 20199 },
+  { state: 'DC', start: 20200, end: 20599 },
+  { state: 'MD', start: 20600, end: 21999 },
+  { state: 'VA', start: 22000, end: 24699 },
+  { state: 'WV', start: 24700, end: 26899 },
+  { state: 'NC', start: 27000, end: 28999 },
+  { state: 'SC', start: 29000, end: 29999 },
+  { state: 'GA', start: 30000, end: 31999 },
+  { state: 'FL', start: 32000, end: 34999 },
+  { state: 'AL', start: 35000, end: 36999 },
+  { state: 'TN', start: 37000, end: 38599 },
+  { state: 'MS', start: 38600, end: 39799 },
+  { state: 'GA', start: 39800, end: 39999 },
+  { state: 'KY', start: 40000, end: 42799 },
+  { state: 'OH', start: 43000, end: 45999 },
+  { state: 'IN', start: 46000, end: 47999 },
+  { state: 'MI', start: 48000, end: 49999 },
+  { state: 'IA', start: 50000, end: 52999 },
+  { state: 'WI', start: 53000, end: 54999 },
+  { state: 'MN', start: 55000, end: 56799 },
+  { state: 'DC', start: 56900, end: 56999 },
+  { state: 'SD', start: 57000, end: 57999 },
+  { state: 'ND', start: 58000, end: 58999 },
+  { state: 'MT', start: 59000, end: 59999 },
+  { state: 'IL', start: 60000, end: 62999 },
+  { state: 'MO', start: 63000, end: 65999 },
+  { state: 'KS', start: 66000, end: 67999 },
+  { state: 'NE', start: 68000, end: 69999 },
+  { state: 'LA', start: 70000, end: 71599 },
+  { state: 'AR', start: 71600, end: 72999 },
+  { state: 'OK', start: 73000, end: 74999 },
+  { state: 'TX', start: 75000, end: 79999 },
+  { state: 'CO', start: 80000, end: 81999 },
+  { state: 'WY', start: 82000, end: 83199 },
+  { state: 'ID', start: 83200, end: 83999 },
+  { state: 'UT', start: 84000, end: 84999 },
+  { state: 'AZ', start: 85000, end: 86999 },
+  { state: 'NM', start: 87000, end: 88499 },
+  { state: 'TX', start: 88500, end: 88599 },
+  { state: 'NV', start: 88900, end: 89999 },
+  { state: 'CA', start: 90000, end: 96199 },
+  { state: 'HI', start: 96700, end: 96899 },
+  { state: 'OR', start: 97000, end: 97999 },
+  { state: 'WA', start: 98000, end: 99499 },
+  { state: 'AK', start: 99500, end: 99999 }
+];
+
+const SEVEN79_US_STATE_NAMES: Record<string, string> = {
+  AK: 'Alaska',
+  AL: 'Alabama',
+  AR: 'Arkansas',
+  AZ: 'Arizona',
+  CA: 'California',
+  CO: 'Colorado',
+  CT: 'Connecticut',
+  DC: 'District of Columbia',
+  DE: 'Delaware',
+  FL: 'Florida',
+  GA: 'Georgia',
+  HI: 'Hawaii',
+  IA: 'Iowa',
+  ID: 'Idaho',
+  IL: 'Illinois',
+  IN: 'Indiana',
+  KS: 'Kansas',
+  KY: 'Kentucky',
+  LA: 'Louisiana',
+  MA: 'Massachusetts',
+  MD: 'Maryland',
+  ME: 'Maine',
+  MI: 'Michigan',
+  MN: 'Minnesota',
+  MO: 'Missouri',
+  MS: 'Mississippi',
+  MT: 'Montana',
+  NC: 'North Carolina',
+  ND: 'North Dakota',
+  NE: 'Nebraska',
+  NH: 'New Hampshire',
+  NJ: 'New Jersey',
+  NM: 'New Mexico',
+  NV: 'Nevada',
+  NY: 'New York',
+  OH: 'Ohio',
+  OK: 'Oklahoma',
+  OR: 'Oregon',
+  PA: 'Pennsylvania',
+  PR: 'Puerto Rico',
+  RI: 'Rhode Island',
+  SC: 'South Carolina',
+  SD: 'South Dakota',
+  TN: 'Tennessee',
+  TX: 'Texas',
+  UT: 'Utah',
+  VA: 'Virginia',
+  VT: 'Vermont',
+  WA: 'Washington',
+  WI: 'Wisconsin',
+  WV: 'West Virginia',
+  WY: 'Wyoming'
+};
+
+function normalizeSeven79UsState(value: string | null): string | null {
+  const text = toNullableText(value);
+  if (!text) {
+    return null;
+  }
+
+  return SEVEN79_US_STATE_NAMES[text.toUpperCase()] ?? text;
+}
+
+function resolveSeven79UsStateByPostalCode(value: string | null): string | null {
+  const text = toNullableText(value);
+  if (!text) {
+    return null;
+  }
+
+  const zip = Number.parseInt(text.slice(0, 5), 10);
+  if (!Number.isInteger(zip)) {
+    return null;
+  }
+
+  const state = SEVEN79_US_STATE_ZIP_RANGES.find((range) => zip >= range.start && zip <= range.end)?.state ?? null;
+  return normalizeSeven79UsState(state);
 }
 
 function normalizeSeven79ExpiryDate(value: string | null): string | null {
