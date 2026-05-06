@@ -925,12 +925,24 @@ app.post('/api/779/cards/check', async (c) => {
   }
 
   const item = await ensureSeven79CardRefreshedByKey(c.env.DB, key);
-  const latest = await fetchSeven79CardDetails(key);
 
   return c.json({
     item,
-    check: latest.check,
-    verify: latest.verify
+    check: {
+      category: item.category,
+      expiryTime: item.checkExpiryTime,
+      remainingTimeMs: item.checkRemainingTimeMs
+    },
+    verify: {
+      cardNumber: item.cardNumber,
+      expiryDate: item.expiryDate,
+      cvv: item.cvv,
+      phone: item.phone,
+      smsApi: item.smsApi,
+      holderName: item.holderName,
+      address: item.address,
+      expiresAt: item.expiresAt
+    }
   });
 });
 
