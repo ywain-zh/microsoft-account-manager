@@ -149,8 +149,7 @@
     >
       <n-form label-placement="top" autocomplete="off">
         <div class="form-autofill-guard" aria-hidden="true">
-          <input type="text" tabindex="-1" autocomplete="username" />
-          <input type="password" tabindex="-1" autocomplete="current-password" />
+          <input type="text" tabindex="-1" autocomplete="off" />
         </div>
         <n-grid :cols="24" :x-gap="14" :y-gap="8">
           <n-gi :span="24">
@@ -167,10 +166,25 @@
             <n-form-item label="管理员密码">
               <n-input
                 v-model:value="configForm.adminPassword"
-                type="password"
-                show-password-on="click"
+                class="cloud-mail-secret-input"
+                :class="{ 'is-secret-visible': adminPasswordVisible }"
+                type="text"
                 :input-props="adminPasswordInputProps"
-              />
+              >
+                <template #suffix>
+                  <button
+                    type="button"
+                    class="input-icon-button"
+                    :title="adminPasswordVisible ? '隐藏密码' : '显示密码'"
+                    :aria-label="adminPasswordVisible ? '隐藏密码' : '显示密码'"
+                    @mousedown.prevent
+                    @click="adminPasswordVisible = !adminPasswordVisible"
+                  >
+                    <EyeOffGlyph v-if="adminPasswordVisible" />
+                    <EyeGlyph v-else />
+                  </button>
+                </template>
+              </n-input>
             </n-form-item>
           </n-gi>
           <n-gi :span="24">
@@ -305,7 +319,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, onUnmounted, watch } from 'vue';
+import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue';
 import {
   NButton,
   NCard,
@@ -506,6 +520,47 @@ const CloudGlyph = () =>
     ]
   );
 
+const EyeGlyph = () =>
+  h(
+    'svg',
+    { viewBox: '0 0 20 20', fill: 'none' },
+    [
+      h('path', {
+        d: 'M2.5 10s2.4-4.5 7.5-4.5 7.5 4.5 7.5 4.5-2.4 4.5-7.5 4.5S2.5 10 2.5 10Z',
+        stroke: 'currentColor',
+        'stroke-width': '1.5',
+        'stroke-linecap': 'round',
+        'stroke-linejoin': 'round'
+      }),
+      h('path', {
+        d: 'M10 12.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4Z',
+        stroke: 'currentColor',
+        'stroke-width': '1.5'
+      })
+    ]
+  );
+
+const EyeOffGlyph = () =>
+  h(
+    'svg',
+    { viewBox: '0 0 20 20', fill: 'none' },
+    [
+      h('path', {
+        d: 'M3 3l14 14',
+        stroke: 'currentColor',
+        'stroke-width': '1.5',
+        'stroke-linecap': 'round'
+      }),
+      h('path', {
+        d: 'M7.4 5.9A7.9 7.9 0 0 1 10 5.5c5.1 0 7.5 4.5 7.5 4.5a11.4 11.4 0 0 1-2.1 2.6M12.1 13.8a7.9 7.9 0 0 1-2.1.3C4.9 14.1 2.5 10 2.5 10a10.9 10.9 0 0 1 2.4-2.8',
+        stroke: 'currentColor',
+        'stroke-width': '1.5',
+        'stroke-linecap': 'round',
+        'stroke-linejoin': 'round'
+      })
+    ]
+  );
+
 const cloudMail = useCloudMailConsole();
 const {
   initialDataLoaded,
@@ -559,6 +614,8 @@ const {
   markMailAsRead
 } = cloudMail;
 
+const adminPasswordVisible = ref(false);
+
 const apiUriInputProps = {
   autocomplete: 'off',
   autocapitalize: 'off',
@@ -580,8 +637,12 @@ const adminEmailInputProps = {
 } as const;
 
 const adminPasswordInputProps = {
-  autocomplete: 'new-password',
-  name: 'cloud-mail-admin-password',
+  autocomplete: 'off',
+  autocapitalize: 'off',
+  autocorrect: 'off',
+  spellcheck: 'false',
+  name: 'cloud-mail-admin-secret',
+  inputmode: 'text',
   'data-lpignore': 'true',
   'data-1p-ignore': 'true'
 } as const;
@@ -992,6 +1053,24 @@ onUnmounted(() => {
 :deep(.cloud-mail-service-alert .n-button__icon svg) {
   width: 14px;
   height: 14px;
+}
+
+:deep(.cloud-mail-secret-input:not(.is-secret-visible) .n-input__input-el) {
+  -webkit-text-security: disc;
+  text-security: disc;
+}
+
+:deep(.cloud-mail-secret-input .input-icon-button) {
+  color: #94a3b8;
+}
+
+:deep(.cloud-mail-secret-input .input-icon-button:hover) {
+  color: #475569;
+}
+
+:deep(.cloud-mail-secret-input .input-icon-button svg) {
+  width: 16px;
+  height: 16px;
 }
 
 :deep(.cloud-mail-config-strip-spec) {
