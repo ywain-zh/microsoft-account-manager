@@ -247,6 +247,37 @@
       </template>
     </n-modal>
 
+    <n-modal
+      v-model:show="remarkVisible"
+      preset="card"
+      :bordered="false"
+      class="console-modal microsoft-remark-modal"
+      title="编辑备注"
+    >
+      <n-form label-placement="top" autocomplete="off">
+        <n-form-item label="邮箱">
+          <n-input :value="remarkForm.account" readonly />
+        </n-form-item>
+        <n-form-item label="备注">
+          <n-input
+            v-model:value="remarkForm.remark"
+            type="textarea"
+            maxlength="500"
+            show-count
+            :autosize="{ minRows: 4, maxRows: 8 }"
+          />
+        </n-form-item>
+      </n-form>
+      <template #footer>
+        <n-space justify="end">
+          <n-button class="dialog-cancel-button" @click="closeRemarkModal">取消</n-button>
+          <n-button class="dialog-primary-button" type="primary" :loading="remarkSaving" @click="saveRemark">
+            保存备注
+          </n-button>
+        </n-space>
+      </template>
+    </n-modal>
+
     <MailInboxViewer
       :show="mailVisible"
       title="邮箱邮件"
@@ -305,6 +336,26 @@ const CopyGlyph = () =>
     ]
   );
 
+const PencilGlyph = () =>
+  h(
+    'svg',
+    { viewBox: '0 0 20 20', fill: 'none' },
+    [
+      h('path', {
+        d: 'M4.75 13.75 4 16l2.25-.75 8-8a1.59 1.59 0 0 0-2.25-2.25l-8 8Z',
+        stroke: 'currentColor',
+        'stroke-width': '1.5',
+        'stroke-linejoin': 'round'
+      }),
+      h('path', {
+        d: 'm10.75 4.75 2.5 2.5',
+        stroke: 'currentColor',
+        'stroke-width': '1.5',
+        'stroke-linecap': 'round'
+      })
+    ]
+  );
+
 const admin = useAdminConsole();
 const route = useRoute();
 const router = useRouter();
@@ -322,6 +373,8 @@ const {
   createVisible,
   importVisible,
   editVisible,
+  remarkSaving,
+  remarkVisible,
   mailVisible,
   mailLoading,
   mailAccount,
@@ -329,15 +382,19 @@ const {
   selectedMailId,
   createForm,
   editForm,
+  remarkForm,
   importText,
   loadAccounts,
   loadInitialData,
   openCreateModal,
   openImportModal,
   openEditModal,
+  openRemarkModal,
+  closeRemarkModal,
   handleCheckedRowKeysUpdate,
   createAccount,
   updateAccount,
+  saveRemark,
   deleteAccount,
   importAccountsText,
   refreshAccounts,
@@ -353,8 +410,6 @@ const {
   handleMicrosoftOauthMessage,
   resolveTokenStatusLabel,
   resolveTokenStatusTone,
-  resolveCountdownLabel,
-  resolveCountdownTone,
   formatMailDate,
   markMailAsRead,
   isAuthenticated,
@@ -364,6 +419,8 @@ const {
 
 const txtFileInputRef = ref<HTMLInputElement | null>(null);
 const tablePage = ref(1);
+const SEARCH_DEBOUNCE_MS = 300;
+let searchDebounceTimer: number | null = null;
 
 const rowKey = (row: AccountItem): number => row.id;
 
@@ -376,6 +433,7 @@ const pagedAccounts = computed(() => {
 
 watch(searchKeyword, () => {
   tablePage.value = 1;
+  scheduleSearch();
 });
 
 watch([accounts, tablePageSize], () => {
@@ -389,19 +447,24 @@ watch(tablePageSize, () => {
 });
 
 function handleSearch(): void {
+  clearSearchDebounce();
   tablePage.value = 1;
   void loadAccounts();
 }
 
-function truncateMiddle(value: string | null | undefined, start = 12, end = 8): string {
-  const text = (value ?? '').trim();
-  if (!text) {
-    return '-';
+function clearSearchDebounce(): void {
+  if (searchDebounceTimer !== null) {
+    window.clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = null;
   }
-  if (text.length <= start + end + 3) {
-    return text;
-  }
-  return `${text.slice(0, start)}...${text.slice(-end)}`;
+}
+
+function scheduleSearch(): void {
+  clearSearchDebounce();
+  searchDebounceTimer = window.setTimeout(() => {
+    searchDebounceTimer = null;
+    handleSearch();
+  }, SEARCH_DEBOUNCE_MS);
 }
 
 function resolveToneClass(tone: 'success' | 'error' | 'warning' | 'default'): string {
@@ -416,23 +479,6 @@ function resolveToneClass(tone: 'success' | 'error' | 'warning' | 'default'): st
   }
   return 'status-pill-default';
 }
-
-function renderCodeChip(value: string | null | undefined): ReturnType<typeof h> {
-  const text = (value ?? '').trim();
-  if (!text) {
-    return h('span', { class: 'code-chip code-chip-empty' }, '-');
-  }
-
-  return h(
-    'span',
-    {
-      class: 'code-chip',
-      title: text
-    },
-    truncateMiddle(text, 8, 5)
-  );
-}
-
 
 function renderEmailCell(row: AccountItem): ReturnType<typeof h> {
   return h('div', { class: 'account-cell' }, [
@@ -472,6 +518,27 @@ function renderAuthTypeCell(row: AccountItem): ReturnType<typeof h> {
   return h('span', { class: ['status-pill', toneClass] }, label);
 }
 
+function renderRemarkCell(row: AccountItem): ReturnType<typeof h> {
+  const remark = row.remark?.trim() || '-';
+  return h('div', { class: 'microsoft-remark-cell' }, [
+    h('div', { class: 'microsoft-remark-text', title: remark }, remark),
+    h(
+      'button',
+      {
+        type: 'button',
+        class: 'microsoft-remark-edit-button',
+        title: `编辑 ${row.account} 的备注`,
+        'aria-label': `编辑 ${row.account} 的备注`,
+        onClick: (event: MouseEvent) => {
+          event.stopPropagation();
+          openRemarkModal(row);
+        }
+      },
+      [h(PencilGlyph)]
+    )
+  ]);
+}
+
 const accountColumns: DataTableColumns<AccountItem> = [
   {
     type: 'selection',
@@ -482,6 +549,12 @@ const accountColumns: DataTableColumns<AccountItem> = [
     key: 'account',
     width: 250,
     render: (row) => renderEmailCell(row)
+  },
+  {
+    title: '备注',
+    key: 'remark',
+    width: 180,
+    render: (row) => renderRemarkCell(row)
   },
   {
     title: '来源',
@@ -498,18 +571,6 @@ const accountColumns: DataTableColumns<AccountItem> = [
       h('span', { class: 'plain-cell-text plain-cell-text-compact', title: row.password }, row.password)
   },
   {
-    title: 'Client ID',
-    key: 'clientId',
-    width: 150,
-    render: (row) => renderCodeChip(row.clientId)
-  },
-  {
-    title: 'Refresh Token',
-    key: 'refreshToken',
-    width: 166,
-    render: (row) => renderCodeChip(row.refreshToken)
-  },
-  {
     title: '邮箱状态',
     key: 'tokenStatus',
     width: 88,
@@ -521,20 +582,6 @@ const accountColumns: DataTableColumns<AccountItem> = [
           title: row.tokenMessage ?? resolveTokenStatusLabel(row)
         },
         resolveTokenStatusLabel(row)
-      )
-  },
-  {
-    title: '倒计时',
-    key: 'tokenCountdownDays',
-    width: 88,
-    render: (row) =>
-      h(
-        'span',
-        {
-          class: ['status-pill', resolveToneClass(resolveCountdownTone(row))],
-          title: row.tokenBaseAt ?? resolveCountdownLabel(row)
-        },
-        resolveCountdownLabel(row)
       )
   },
   {
@@ -624,6 +671,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  clearSearchDebounce();
   window.removeEventListener('message', handleMicrosoftOauthMessage);
 });
 </script>
@@ -841,7 +889,52 @@ onUnmounted(() => {
   background: #f8fafc !important;
 }
 
-:deep(.microsoft-account-table .n-data-table-td:nth-child(7) .status-pill) {
+:deep(.microsoft-account-table .microsoft-remark-cell) {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  vertical-align: middle;
+}
+
+:deep(.microsoft-account-table .microsoft-remark-text) {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:deep(.microsoft-account-table .microsoft-remark-edit-button) {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #64748b;
+  cursor: pointer;
+}
+
+:deep(.microsoft-account-table .microsoft-remark-edit-button:hover) {
+  background: #e2e8f0;
+  color: #334155;
+}
+
+:deep(.microsoft-account-table .microsoft-remark-edit-button svg) {
+  width: 14px;
+  height: 14px;
+}
+
+:deep(.microsoft-account-table .n-data-table-td:nth-child(6) .status-pill) {
   min-height: auto;
   padding: 0 !important;
   border-radius: 0 !important;
@@ -851,19 +944,19 @@ onUnmounted(() => {
   font-weight: 500;
 }
 
-:deep(.microsoft-account-table .n-data-table-td:nth-child(7) .status-pill-success) {
+:deep(.microsoft-account-table .n-data-table-td:nth-child(6) .status-pill-success) {
   color: #10b981 !important;
 }
 
-:deep(.microsoft-account-table .n-data-table-td:nth-child(7) .status-pill-warning) {
+:deep(.microsoft-account-table .n-data-table-td:nth-child(6) .status-pill-warning) {
   color: #f59e0b !important;
 }
 
-:deep(.microsoft-account-table .n-data-table-td:nth-child(7) .status-pill-error) {
+:deep(.microsoft-account-table .n-data-table-td:nth-child(6) .status-pill-error) {
   color: #f56c6c !important;
 }
 
-:deep(.microsoft-account-table .n-data-table-td:nth-child(7) .status-pill-default) {
+:deep(.microsoft-account-table .n-data-table-td:nth-child(6) .status-pill-default) {
   color: #94a3b8 !important;
 }
 
@@ -894,4 +987,3 @@ onUnmounted(() => {
   }
 }
 </style>
-

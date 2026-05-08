@@ -3,9 +3,9 @@
     <n-card :bordered="false" class="auth-card auth-card-login-spec login-card">
       <div class="auth-card-body auth-card-body-spec">
         <div class="login-header">
-          <div class="logo-icon" aria-hidden="true">M</div>
-          <h2 id="login-title">Microsoft Account Manager</h2>
-          <p>Welcome Back</p>
+          <WangyueLogo class="login-logo" />
+          <h2 id="login-title">望月工具箱</h2>
+          <p>欢迎回来</p>
         </div>
 
         <form class="auth-form-shell login-form" @submit.prevent="handleSubmit">
@@ -101,6 +101,7 @@
 import { reactive } from 'vue';
 import { NButton, NCard, NForm, NFormItem, NInput } from 'naive-ui';
 import { useRoute, useRouter } from 'vue-router';
+import WangyueLogo from '../components/WangyueLogo.vue';
 import { defaultConsoleRoute } from '../config/navigation';
 import { useAdminConsole } from '../state/admin-console';
 

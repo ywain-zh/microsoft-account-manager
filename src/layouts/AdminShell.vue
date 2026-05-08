@@ -2,8 +2,8 @@
   <div class="console-shell console-shell-flat">
     <aside class="console-sidebar-flat">
       <div class="console-brand-flat">
-        <span class="console-brand-mark" aria-hidden="true">M</span>
-        <span class="console-brand-name">Cloud Mail</span>
+        <WangyueLogo class="console-brand-logo" />
+        <span class="console-brand-name">望月工具箱</span>
       </div>
 
       <nav class="console-nav-flat" aria-label="主导航">
@@ -112,7 +112,7 @@
 
     <main class="console-main-flat">
       <header class="console-topbar-flat">
-        <div class="console-topbar-title">Mail Management Console</div>
+        <div class="console-topbar-title">望月工具箱</div>
         <div class="console-topbar-actions">
           <span class="console-user-copy">{{ currentUser }}</span>
           <n-button text class="header-logout-button-flat" :loading="logoutLoading" @click="handleLogout">
@@ -132,6 +132,7 @@
 import { watch } from 'vue';
 import { NButton } from 'naive-ui';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
+import WangyueLogo from '../components/WangyueLogo.vue';
 import { consoleNavigation, defaultConsoleRoute } from '../config/navigation';
 import { useAdminConsole } from '../state/admin-console';
 

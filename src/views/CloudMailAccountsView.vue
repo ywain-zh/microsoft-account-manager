@@ -16,7 +16,7 @@
               clearable
               class="toolbar-search search-input cloud-search-input"
               placeholder="按邮箱搜索 Cloud Mail 账号"
-              @keyup.enter="handleSearch"
+              @keyup.enter="handleSearchInputEnter"
             >
               <template #prefix>
                 <span class="toolbar-input-icon" aria-hidden="true">
@@ -80,25 +80,6 @@
         </div>
 
         <template v-if="hasConfiguredCloudMail">
-          <div class="cloud-mail-config-strip cloud-mail-config-strip-spec">
-            <div class="cloud-mail-config-item">
-              <span class="cloud-mail-summary-label">API URI</span>
-              <strong class="cloud-mail-summary-value">{{ storedConfig.apiBaseUrl }}</strong>
-            </div>
-            <div class="cloud-mail-config-item">
-              <span class="cloud-mail-summary-label">管理员邮箱</span>
-              <strong class="cloud-mail-summary-value">{{ storedConfig.adminEmail }}</strong>
-            </div>
-            <div class="cloud-mail-config-item">
-              <span class="cloud-mail-summary-label">管理员密码</span>
-              <strong class="cloud-mail-summary-value">{{ maskedAdminPassword }}</strong>
-            </div>
-            <div class="cloud-mail-config-item">
-              <span class="cloud-mail-summary-label">可用域名</span>
-              <strong class="cloud-mail-summary-value">{{ availableDomainsDisplay }}</strong>
-            </div>
-          </div>
-
           <div v-if="serviceErrorMessage" class="cloud-mail-service-alert">
             <div class="cloud-mail-service-alert-copy">
               <strong class="cloud-mail-service-alert-title">当前 Cloud Mail 配置不可用</strong>
@@ -324,7 +305,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted } from 'vue';
+import { computed, h, onMounted, onUnmounted, watch } from 'vue';
 import {
   NButton,
   NCard,
@@ -626,22 +607,32 @@ const localPartInputProps = {
 } as const;
 
 const rowKey = (row: CloudMailAccountItem): number => row.userId;
+const SEARCH_DEBOUNCE_MS = 300;
+let searchDebounceTimer: number | null = null;
 
-function openChatGpt(): void {
-  window.open('https://chatgpt.com/', '_blank', 'noopener,noreferrer');
+watch(searchKeyword, () => {
+  scheduleSearch();
+});
+
+function clearSearchDebounce(): void {
+  if (searchDebounceTimer !== null) {
+    window.clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = null;
+  }
 }
 
-const availableDomainsDisplay = computed(() => {
-  return availableDomains.value.length > 0 ? availableDomains.value.join(' / ') : '未配置';
-});
+function scheduleSearch(): void {
+  clearSearchDebounce();
+  searchDebounceTimer = window.setTimeout(() => {
+    searchDebounceTimer = null;
+    void handleSearch();
+  }, SEARCH_DEBOUNCE_MS);
+}
 
-const maskedAdminPassword = computed(() => {
-  const source = storedConfig.adminPassword.trim();
-  if (!source) {
-    return '未配置';
-  }
-  return '*'.repeat(Math.max(8, Math.min(source.length, 16)));
-});
+function handleSearchInputEnter(): void {
+  clearSearchDebounce();
+  void handleSearch();
+}
 
 const domainOptions = computed(() => {
   return availableDomains.value.map((domain) => ({
@@ -737,21 +728,9 @@ const columns: DataTableColumns<CloudMailAccountItem> = [
   {
     title: '操作',
     key: 'actions',
-    width: 110,
+    width: 72,
     render: (row) =>
       h('div', { class: 'action-cell action-cell-compact' }, [
-        h(
-          'button',
-          {
-            type: 'button',
-            class: 'table-action-button',
-            onClick: (event: MouseEvent) => {
-              event.stopPropagation();
-              openChatGpt();
-            }
-          },
-          'GPT'
-        ),
         h(
           'button',
           {
@@ -781,6 +760,10 @@ onMounted(async () => {
   if (!initialDataLoaded.value) {
     await loadInitialData();
   }
+});
+
+onUnmounted(() => {
+  clearSearchDebounce();
 });
 </script>
 

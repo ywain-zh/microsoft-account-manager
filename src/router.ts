@@ -16,7 +16,7 @@ const router = createRouter({
       meta: {
         guestOnly: true,
         title: '登录',
-        description: '登录邮箱管理台，进入邮箱列表。'
+        description: '登录望月工具箱，进入管理台。'
       }
     },
     {

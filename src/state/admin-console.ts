@@ -26,6 +26,12 @@ interface AccountFormState {
   refreshToken: string;
 }
 
+interface AccountRemarkFormState {
+  id: number | null;
+  account: string;
+  remark: string;
+}
+
 interface MicrosoftOauthResultPayload {
   source?: string;
   ok?: boolean;
@@ -52,6 +58,7 @@ const tableLoading = ref(false);
 const createLoading = ref(false);
 const editLoading = ref(false);
 const importLoading = ref(false);
+const remarkSaving = ref(false);
 const saveIngestLoading = ref(false);
 const syncLoading = ref(false);
 const batchDeleteLoading = ref(false);
@@ -59,6 +66,7 @@ const batchDeleteLoading = ref(false);
 const createVisible = ref(false);
 const importVisible = ref(false);
 const editVisible = ref(false);
+const remarkVisible = ref(false);
 const mailVisible = ref(false);
 const mailLoading = ref(false);
 
@@ -82,6 +90,12 @@ const editForm = reactive<AccountFormState & { id: number | null }>({
   password: '',
   clientId: '',
   refreshToken: ''
+});
+
+const remarkForm = reactive<AccountRemarkFormState>({
+  id: null,
+  account: '',
+  remark: ''
 });
 
 const ingestConfig = reactive<IngestConfig>({
@@ -168,6 +182,12 @@ function resetEditForm(): void {
   editForm.refreshToken = '';
 }
 
+function resetRemarkForm(): void {
+  remarkForm.id = null;
+  remarkForm.account = '';
+  remarkForm.remark = '';
+}
+
 function clearSessionState(): void {
   authChecked.value = true;
   initialDataLoaded.value = false;
@@ -179,6 +199,7 @@ function clearSessionState(): void {
   createVisible.value = false;
   importVisible.value = false;
   editVisible.value = false;
+  remarkVisible.value = false;
   mailVisible.value = false;
   mailLoading.value = false;
   mailAccountId.value = null;
@@ -188,6 +209,7 @@ function clearSessionState(): void {
   clearCreateForm();
   clearImportForm();
   resetEditForm();
+  resetRemarkForm();
 }
 
 function handleApiError(error: unknown, showAuthWarning = true): void {
@@ -366,6 +388,18 @@ function openEditModal(row: AccountItem): void {
   editVisible.value = true;
 }
 
+function openRemarkModal(row: AccountItem): void {
+  remarkForm.id = row.id;
+  remarkForm.account = row.account;
+  remarkForm.remark = row.remark ?? '';
+  remarkVisible.value = true;
+}
+
+function closeRemarkModal(): void {
+  remarkVisible.value = false;
+  resetRemarkForm();
+}
+
 function handleCheckedRowKeysUpdate(keys: Array<number | string>): void {
   checkedRowKeys.value = keys
     .map((value) => Number(value))
@@ -415,6 +449,26 @@ async function updateAccount(): Promise<void> {
     handleApiError(error);
   } finally {
     editLoading.value = false;
+  }
+}
+
+async function saveRemark(): Promise<void> {
+  if (!remarkForm.id) {
+    message.warning('请先选择需要备注的邮箱');
+    return;
+  }
+
+  remarkSaving.value = true;
+  try {
+    const response = await api.updateAccountRemark(remarkForm.id, remarkForm.remark);
+    accounts.value = accounts.value.map((item) => (item.id === response.item.id ? response.item : item));
+    remarkVisible.value = false;
+    resetRemarkForm();
+    message.success('备注已保存');
+  } catch (error) {
+    handleApiError(error);
+  } finally {
+    remarkSaving.value = false;
   }
 }
 
@@ -798,12 +852,14 @@ export function useAdminConsole() {
     createLoading,
     editLoading,
     importLoading,
+    remarkSaving,
     saveIngestLoading,
     syncLoading,
     batchDeleteLoading,
     createVisible,
     importVisible,
     editVisible,
+    remarkVisible,
     mailVisible,
     mailLoading,
     mailAccountId,
@@ -814,6 +870,7 @@ export function useAdminConsole() {
     importText,
     createForm,
     editForm,
+    remarkForm,
     ingestConfig,
     ingestEndpointPath,
     ingestTokenHeader,
@@ -827,9 +884,12 @@ export function useAdminConsole() {
     openCreateModal,
     openImportModal,
     openEditModal,
+    openRemarkModal,
+    closeRemarkModal,
     handleCheckedRowKeysUpdate,
     createAccount,
     updateAccount,
+    saveRemark,
     deleteAccount,
     importAccountsText,
     refreshAccounts,
