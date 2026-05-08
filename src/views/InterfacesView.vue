@@ -6,7 +6,7 @@
     </section>
 
     <div class="interface-grid interface-grid-balanced">
-      <n-card :bordered="false" size="small" class="content-card interface-card main-card">
+      <AppListPanel class="content-card interface-card main-card" tone="compact">
         <div class="card-section-stack">
           <div class="card-section-header">
             <p class="section-kicker">Upload Endpoint</p>
@@ -21,9 +21,9 @@
             <p><strong>鉴权头：</strong>{{ ingestTokenHeader }}: &lt;INGEST_TOKEN&gt;</p>
           </div>
         </div>
-      </n-card>
+      </AppListPanel>
 
-      <n-card :bordered="false" size="small" class="content-card interface-card main-card">
+      <AppListPanel class="content-card interface-card main-card" tone="compact">
         <div class="card-section-stack">
           <div class="card-section-header">
             <p class="section-kicker">Mapping Config</p>
@@ -72,10 +72,10 @@
             </n-button>
           </div>
         </div>
-      </n-card>
+      </AppListPanel>
     </div>
 
-    <n-card :bordered="false" size="small" class="content-card interface-card main-card">
+    <AppListPanel class="content-card interface-card main-card" tone="compact">
       <div class="card-section-stack">
         <div class="card-section-header">
           <p class="section-kicker">Examples</p>
@@ -92,9 +92,9 @@
           <n-code :code="curlExample" language="bash" word-wrap />
         </n-space>
       </div>
-    </n-card>
+    </AppListPanel>
 
-    <n-card :bordered="false" size="small" class="content-card interface-card main-card">
+    <AppListPanel class="content-card interface-card main-card" tone="compact">
       <div class="card-section-stack">
         <div class="card-section-header">
           <p class="section-kicker">Overview</p>
@@ -119,10 +119,10 @@
           <li><code>POST /api/auth/login</code>：后台登录，登录后可调用管理端 API。</li>
         </ul>
       </div>
-    </n-card>
+    </AppListPanel>
 
     <div class="interface-grid">
-      <n-card :bordered="false" size="small" class="content-card interface-card main-card">
+      <AppListPanel class="content-card interface-card main-card" tone="compact">
         <div class="card-section-stack">
           <div class="card-section-header">
             <p class="section-kicker">Open API</p>
@@ -147,9 +147,9 @@
             <n-code :code="openApiCurlDeleteAccount" language="bash" word-wrap />
           </n-space>
         </div>
-      </n-card>
+      </AppListPanel>
 
-      <n-card :bordered="false" size="small" class="content-card interface-card main-card">
+      <AppListPanel class="content-card interface-card main-card" tone="compact">
         <div class="card-section-stack">
           <div class="card-section-header">
             <p class="section-kicker">Admin API</p>
@@ -163,7 +163,7 @@
             <n-code :code="adminLoginCurl" language="bash" word-wrap />
           </n-space>
         </div>
-      </n-card>
+      </AppListPanel>
     </div>
   </div>
 </template>
@@ -172,7 +172,6 @@
 import { computed, onMounted } from 'vue';
 import {
   NButton,
-  NCard,
   NCode,
   NForm,
   NFormItem,

@@ -191,6 +191,7 @@ type TranslationProvider = 'openai' | 'deeplx';
 
 interface TranslationConfig {
   enabled: boolean;
+  preferredProvider: TranslationProvider;
   openaiBaseUrl: string;
   openaiApiKey: string;
   openaiModel: string;
@@ -388,6 +389,7 @@ const TRANSLATION_TEST_TEXT = 'Your personal access token is about to expire in 
 
 const DEFAULT_TRANSLATION_CONFIG: TranslationConfig = {
   enabled: false,
+  preferredProvider: 'openai',
   openaiBaseUrl: '',
   openaiApiKey: '',
   openaiModel: DEFAULT_TRANSLATION_MODEL,
@@ -2024,6 +2026,7 @@ function normalizeSub2ApiConfig(input: Partial<Sub2ApiConfig>): Sub2ApiConfig {
 function normalizeTranslationConfig(input: Partial<TranslationConfig>): TranslationConfig {
   return {
     enabled: input.enabled === true,
+    preferredProvider: normalizeTranslationProvider(input.preferredProvider) ?? 'openai',
     openaiBaseUrl: normalizeTranslationBaseUrl(input.openaiBaseUrl),
     openaiApiKey: asText(input.openaiApiKey).trim(),
     openaiModel: asText(input.openaiModel).trim() || DEFAULT_TRANSLATION_MODEL,
@@ -2339,20 +2342,21 @@ async function translateTextToChinese(
   }
 
   const errors: string[] = [];
+  const providers: TranslationProvider[] =
+    config.preferredProvider === 'deeplx' ? ['deeplx', 'openai'] : ['openai', 'deeplx'];
 
-  if (hasOpenAiTranslationConfig(config)) {
-    try {
-      return await translateWithOpenAi(config, text);
-    } catch (error) {
-      errors.push(`OpenAI: ${getErrorMessage(error)}`);
+  for (const provider of providers) {
+    const configured = provider === 'openai' ? hasOpenAiTranslationConfig(config) : hasDeepLxTranslationConfig(config);
+    if (!configured) {
+      continue;
     }
-  }
 
-  if (hasDeepLxTranslationConfig(config)) {
     try {
-      return await translateWithDeepLx(config, text);
+      return provider === 'openai'
+        ? await translateWithOpenAi(config, text)
+        : await translateWithDeepLx(config, text);
     } catch (error) {
-      errors.push(`DeepLX: ${getErrorMessage(error)}`);
+      errors.push(`${provider === 'openai' ? 'OpenAI' : 'DeepLX'}: ${getErrorMessage(error)}`);
     }
   }
 
@@ -2381,7 +2385,7 @@ async function translateWithOpenAi(
         {
           role: 'system',
           content:
-            '你是专业邮件翻译助手。只输出简体中文译文，不要解释，不要添加原文没有的信息。保留链接、验证码、金额、日期和专有名词。'
+            '你是专业邮件翻译助手。只输出简体中文译文，不要解释，不要添加原文没有的信息。保留链接、验证码、金额、日期、专有名词，以及形如 [[[MAIL_SEGMENT_0001]]] 的分段标记，标记必须原样输出且顺序不变。'
         },
         {
           role: 'user',

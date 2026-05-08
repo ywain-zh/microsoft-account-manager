@@ -136,9 +136,18 @@
 
     <main class="console-main-flat">
       <header class="console-topbar-flat">
-        <div class="console-topbar-title">望月工具箱</div>
+        <div class="console-topbar-copy">
+          <strong class="console-topbar-title">{{ pageTitle }}</strong>
+          <span class="console-topbar-subtitle">{{ pageDescription }}</span>
+        </div>
         <div class="console-topbar-actions">
-          <span class="console-user-copy">{{ currentUser }}</span>
+          <div class="console-admin-pill" aria-label="当前管理员">
+            <span class="console-admin-avatar">{{ userInitials }}</span>
+            <span class="console-user-copy">
+              <strong>{{ currentUser || 'admin' }}</strong>
+              <small>Admin</small>
+            </span>
+          </div>
           <n-button text class="header-logout-button-flat" :loading="logoutLoading" @click="handleLogout">
             退出登录
           </n-button>
@@ -153,7 +162,7 @@
 </template>
 
 <script setup lang="ts">
-import { watch } from 'vue';
+import { computed, watch } from 'vue';
 import { NButton } from 'naive-ui';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 import WangyueLogo from '../components/WangyueLogo.vue';
@@ -165,6 +174,12 @@ const { currentUser, isAuthenticated, logoutLoading } = admin;
 const route = useRoute();
 const router = useRouter();
 const navigation = consoleNavigation;
+const pageTitle = computed(() => String(route.meta.title ?? '望月工具箱'));
+const pageDescription = computed(() => String(route.meta.description ?? '管理后台工具与服务配置。'));
+const userInitials = computed(() => {
+  const normalized = (currentUser.value || 'admin').trim();
+  return normalized.slice(0, 2).toUpperCase();
+});
 
 async function handleLogout(): Promise<void> {
   await admin.logout();

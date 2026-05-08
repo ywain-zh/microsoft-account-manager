@@ -3040,30 +3040,90 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  min-height: 30px;
-  padding: 0 22px;
-  background: #ffffff;
-  border-bottom: 1px solid #e2e8f0;
+  min-height: 64px;
+  padding: 0 28px;
+  background: rgba(255, 255, 255, 0.92);
+  border-bottom: 1px solid rgba(226, 232, 240, 0.88);
+  box-shadow: 0 10px 32px rgba(15, 23, 42, 0.04);
+  backdrop-filter: blur(18px);
+}
+
+.console-topbar-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
 }
 
 .console-topbar-title {
   color: #0f172a;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 18px;
+  font-weight: 900;
   letter-spacing: 0;
+  line-height: 1.18;
+}
+
+.console-topbar-subtitle {
+  max-width: min(560px, 52vw);
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .console-topbar-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   color: #64748b;
   font-size: 12px;
   font-weight: 500;
 }
 
+.console-admin-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 42px;
+  padding: 6px 12px 6px 7px;
+  border: 1px solid rgba(226, 232, 240, 0.92);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+}
+
+.console-admin-avatar {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #14b8a6 0%, #06b6d4 100%);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
 .console-user-copy {
+  display: grid;
+  gap: 1px;
+  color: #0f172a;
+  line-height: 1.05;
   white-space: nowrap;
+}
+
+.console-user-copy strong {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.console-user-copy small {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .header-logout-button-flat.n-button {
@@ -3072,6 +3132,7 @@ body {
   --n-text-color-pressed: #64748b !important;
   --n-text-color-focus: #64748b !important;
   font-size: 12px;
+  font-weight: 700;
 }
 
 .console-content-flat {
@@ -3080,7 +3141,7 @@ body {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 28px 30px;
+  padding: 22px 30px 30px;
 }
 
 @media (max-width: 960px) {
@@ -3106,6 +3167,18 @@ body {
 
   .console-content-flat {
     overflow: visible;
+  }
+
+  .console-topbar-flat {
+    align-items: flex-start;
+    flex-direction: column;
+    min-height: 0;
+    padding: 14px 18px;
+  }
+
+  .console-topbar-subtitle {
+    max-width: 100%;
+    white-space: normal;
   }
 
   .console-nav-flat {

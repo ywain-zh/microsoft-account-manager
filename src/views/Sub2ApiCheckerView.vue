@@ -1,22 +1,8 @@
 <template>
   <div class="page-container sub2api-page">
-    <div class="page-header">
-      <div>
-        <div class="page-title">
-          <h1>Sub2API 检测</h1>
-          <span class="tag-pill blue">鉴权: x-api-key</span>
-          <span class="tag-pill green">模型: {{ modelId }}</span>
-        </div>
-        <p class="page-desc">通过管理员 API Key 批量检测 Sub2API 账户管理中的账号状态，固定模型为 gpt-5.4。</p>
-      </div>
-    </div>
-
-    <n-card
-      class="main-card"
-      :bordered="false"
-      content-style="padding: 24px; display: flex; flex-direction: column; gap: 20px;"
-    >
-      <div class="toolbar">
+    <AppListPanel class="main-card sub2api-main-panel" tone="roomy">
+      <template #toolbar>
+        <div class="toolbar">
         <button class="btn btn-default" type="button" @click="showConfigModal = true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="3"></circle>
@@ -59,6 +45,7 @@
           清空日志
         </button>
       </div>
+      </template>
 
       <div class="stats-grid">
         <div v-for="item in summaryCards" :key="item.key" class="stat-card" :class="[`c-${item.tone}`, item.clickable ? 'is-clickable' : '']">
@@ -106,9 +93,9 @@
           </div>
         </div>
       </div>
-    </n-card>
+    </AppListPanel>
 
-    <n-modal v-model:show="showConfigModal" preset="card" title="连接配置" style="width: 600px; border-radius: 12px;">
+    <AppModal v-model:show="showConfigModal" title="连接配置" size="sm">
       <p class="config-modal-desc">所有检测请求都由本项目后端发起，页面不会直接暴露 Sub2API 管理员 Key。</p>
       <n-form label-placement="top" autocomplete="off" class="config-modal-form">
         <div class="form-autofill-guard" aria-hidden="true">
@@ -142,13 +129,12 @@
           <n-button type="primary" :loading="configSaving" @click="handleSaveConfig">保存配置</n-button>
         </div>
       </template>
-    </n-modal>
+    </AppModal>
 
-    <n-modal
+    <AppModal
       v-model:show="showAbnormalAccountsModal"
-      preset="card"
       title="异常账号列表"
-      style="width: min(920px, 94vw); border-radius: 12px;"
+      size="lg"
     >
       <div class="abnormal-modal-body">
         <div class="abnormal-modal-summary">
@@ -199,13 +185,13 @@
           <n-button @click="closeAbnormalAccountsModal">关闭</n-button>
         </div>
       </template>
-    </n-modal>
+    </AppModal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { NButton, NCard, NForm, NFormItem, NInput, NModal, NPagination } from 'naive-ui';
+import { NButton, NForm, NFormItem, NInput, NPagination } from 'naive-ui';
 import { useSub2ApiConsole } from '../state/sub2api-console';
 import type { Sub2ApiDetectedIssueItem, Sub2ApiLogLevel } from '../types';
 

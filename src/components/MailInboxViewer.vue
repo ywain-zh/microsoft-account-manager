@@ -1,15 +1,14 @@
 <template>
-  <n-modal :show="show" class="inbox-modal" @update:show="handleShowUpdate">
-    <n-card
-      class="inbox-modal-card"
-      :bordered="false"
-      size="small"
-      role="dialog"
-      aria-modal="true"
-      style="width: 1000px; max-width: 95vw; height: 85vh; max-height: 90vh;"
-      content-style="padding: 0; display: flex; flex-direction: column; height: 100%; overflow: hidden;"
-      @click.stop
-    >
+  <AppModal
+    :show="show"
+    card-class="inbox-modal-card"
+    width="min(1120px, 96vw)"
+    height="85vh"
+    :closable="false"
+    :content-style="{ padding: 0, height: '100%', minHeight: 0, overflow: 'hidden' }"
+    @update:show="handleShowUpdate"
+  >
+    <div class="inbox-modal-layout">
       <div class="modal-header">
         <div class="modal-header-left">
           <h2>{{ title }}</h2>
@@ -138,19 +137,9 @@
 
           <div v-else class="mail-detail-container">
             <div class="mail-detail-header">
-              <div class="mail-detail-header-topline">
-                <div class="mail-detail-subject">{{ selectedMail.subject || '(无主题)' }}</div>
-                <div class="mail-detail-badges">
-                  <span class="mail-folder-badge" :class="`mail-folder-badge-${selectedMail.folderKind}`">
-                    {{ selectedMail.folderLabel }}
-                  </span>
-                  <span v-if="selectedMail.isRead === false" class="mail-state-badge mail-state-badge-unread">未读</span>
-                  <span v-else-if="selectedMail.isRead === true" class="mail-state-badge mail-state-badge-read">已读</span>
-                </div>
-              </div>
+              <div class="mail-detail-subject">{{ selectedMail.subject || '(无主题)' }}</div>
               <div class="mail-meta-info">
                 <div><strong>发件人:</strong> {{ selectedMail.from || '-' }}</div>
-                <div><strong>收件人:</strong> {{ account || '-' }}</div>
                 <div><strong>时 间:</strong> {{ formatDate(selectedMail.receivedAt) }}</div>
               </div>
             </div>
@@ -212,26 +201,38 @@
 
             <div class="mail-html-body">
               <iframe
+                ref="mailFrameRef"
                 class="mail-html-frame"
                 :title="selectedMail.subject || '邮件正文'"
                 :srcdoc="renderedMail.srcdoc"
+                :style="{ height: `${mailFrameHeight}px` }"
+                scrolling="auto"
                 sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin"
                 referrerpolicy="no-referrer"
+                @load="resizeMailFrame"
               />
             </div>
           </div>
         </section>
       </div>
-    </n-card>
-  </n-modal>
+    </div>
+  </AppModal>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { NCard, NEmpty, NModal, NSpin } from 'naive-ui';
+import { NEmpty, NSpin } from 'naive-ui';
 import { api } from '../api';
 import type { AccountMailItem, TranslationResponse } from '../types';
-import { buildMailPreview, extractMailSnippet, extractMailText } from '../utils/mail-preview';
+import {
+  buildMailPreview,
+  buildMailTranslationSource,
+  buildTranslatedMail,
+  defaultMailFrameHeight,
+  extractMailSnippet,
+  extractMailText,
+  maxMailFrameHeight
+} from '../utils/mail-preview';
 
 type TranslationCacheEntry = Pick<TranslationResponse, 'provider' | 'model' | 'translatedText'>;
 
@@ -267,8 +268,10 @@ const translatedEntry = computed(() => {
   const key = selectedMailKey.value;
   return key ? translationCache.value[key] ?? null : null;
 });
-const mailTextForTranslation = computed(() => extractMailText(selectedMail.value));
-const shouldOfferTranslation = computed(() => isProbablyNonChineseText(mailTextForTranslation.value));
+const mailTranslationSource = computed(() => buildMailTranslationSource(selectedMail.value));
+const mailTextForLanguageDetection = computed(() => extractMailText(selectedMail.value));
+const mailTextForTranslation = computed(() => mailTranslationSource.value.text);
+const shouldOfferTranslation = computed(() => isProbablyNonChineseText(mailTextForLanguageDetection.value));
 const translationBannerVisible = computed(() => {
   return Boolean(
     selectedMail.value &&
@@ -280,14 +283,11 @@ const displayedMail = computed<AccountMailItem | null>(() => {
     return selectedMail.value;
   }
 
-  return {
-    ...selectedMail.value,
-    contentType: 'text/plain',
-    content: translatedEntry.value.translatedText,
-    preview: translatedEntry.value.translatedText
-  };
+  return buildTranslatedMail(selectedMail.value, translatedEntry.value.translatedText);
 });
 const renderedMail = computed(() => buildMailPreview(displayedMail.value));
+const mailFrameRef = ref<HTMLIFrameElement | null>(null);
+const mailFrameHeight = ref(defaultMailFrameHeight);
 const copyFeedbackVisible = ref(false);
 const copyLoading = ref(false);
 let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
@@ -307,6 +307,13 @@ watch(selectedMailKey, (key) => {
   translationError.value = '';
   translationVisible.value = Boolean(key && translationCache.value[key]);
 });
+
+watch(
+  () => renderedMail.value.srcdoc,
+  () => {
+    mailFrameHeight.value = defaultMailFrameHeight;
+  }
+);
 
 function resolveSnippet(item: AccountMailItem): string {
   return extractMailSnippet(item);
@@ -372,6 +379,31 @@ function resetTranslationFeedback(): void {
   translationError.value = '';
 }
 
+function resizeMailFrame(): void {
+  const frame = mailFrameRef.value;
+  if (!frame) {
+    return;
+  }
+
+  window.requestAnimationFrame(() => {
+    const doc = frame.contentDocument;
+    if (!doc) {
+      return;
+    }
+
+    const html = doc.documentElement;
+    const body = doc.body;
+    const contentHeight = Math.max(
+      html?.scrollHeight ?? 0,
+      body?.scrollHeight ?? 0,
+      html?.offsetHeight ?? 0,
+      body?.offsetHeight ?? 0,
+      defaultMailFrameHeight
+    );
+    mailFrameHeight.value = Math.min(Math.max(contentHeight, defaultMailFrameHeight), maxMailFrameHeight);
+  });
+}
+
 function resolveTranslationProviderLabel(entry: TranslationCacheEntry): string {
   if (entry.provider === 'openai') {
     return entry.model ? `OpenAI · ${entry.model}` : 'OpenAI';
@@ -413,18 +445,45 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-:deep(.inbox-modal) {
-  width: auto !important;
-  max-width: none !important;
-}
-
-:deep(.inbox-modal .n-card) {
-  border-radius: 12px !important;
+:deep(.inbox-modal-card) {
+  display: flex;
+  flex-direction: column;
+  border: 0 !important;
+  border-radius: 20px !important;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(168, 85, 247, 0.1), transparent 30%),
+    radial-gradient(circle at 98% 5%, rgba(6, 182, 212, 0.12), transparent 36%),
+    rgba(255, 255, 255, 0.9) !important;
+  max-height: 90vh;
   overflow: hidden;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15) !important;
+  box-shadow: 0 28px 80px rgba(15, 23, 42, 0.2) !important;
+  backdrop-filter: blur(24px);
 }
 
-.inbox-modal-card {
+:deep(.inbox-modal-card > .n-card__content),
+:deep(.inbox-modal-card .app-modal-body) {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+:deep(.inbox-modal-card .app-modal-body) {
+  overflow: hidden;
+}
+
+:deep(.inbox-modal-card) {
+  overflow: hidden;
+}
+
+.inbox-modal-layout {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -434,8 +493,8 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 16px;
   padding: 16px 24px;
-  border-bottom: 1px solid #f1f5f9;
-  background: #ffffff;
+  border-bottom: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.44));
   flex-shrink: 0;
 }
 
@@ -560,37 +619,48 @@ onBeforeUnmount(() => {
 }
 
 .inbox-split-view {
-  display: flex;
-  flex: 1;
+  display: grid;
+  grid-template-columns: clamp(260px, 27%, 300px) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
   min-height: 0;
   overflow: hidden;
-  background: #ffffff;
+  background: rgba(255, 255, 255, 0.58);
 }
 
 .inbox-sider {
   display: flex;
   flex-direction: column;
-  width: 320px;
-  min-width: 300px;
+  width: auto;
+  min-width: 0;
+  height: 100%;
   min-height: 0;
-  background: #f8fafc;
-  border-right: 1px solid #f1f5f9;
+  overflow: hidden;
+  background: rgba(248, 250, 252, 0.7);
+  border-right: 0;
+  box-shadow: 12px 0 32px rgba(15, 23, 42, 0.04);
 }
 
 .inbox-spin,
+:deep(.inbox-spin .n-spin-container),
 :deep(.inbox-spin .n-spin-content) {
   display: flex;
   flex: 1;
   flex-direction: column;
   min-height: 0;
+  height: 100%;
 }
 
 .inbox-list {
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
+  height: 100%;
+  max-height: 100%;
   padding: 12px;
   overflow-y: auto;
   overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .inbox-mail-item {
@@ -600,10 +670,10 @@ onBeforeUnmount(() => {
   width: 100%;
   margin: 0 0 10px;
   padding: 14px 14px 12px;
-  border: 1px solid transparent;
+  border: 0;
   border-radius: 10px;
-  background: #ffffff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
   cursor: pointer;
   text-align: left;
   transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease,
@@ -611,20 +681,17 @@ onBeforeUnmount(() => {
 }
 
 .inbox-mail-item:hover {
-  border-color: #dbeafe;
-  background: #ffffff;
+  background: rgba(255, 255, 255, 0.96);
   box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
   transform: translateY(-1px);
 }
 
 .inbox-mail-item.active {
-  border-color: #409eff;
   background: linear-gradient(180deg, #eff6ff 0%, #ecf5ff 100%);
   box-shadow: none;
 }
 
 .inbox-mail-item-unread {
-  border-color: rgba(64, 158, 255, 0.14);
   background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
 }
 
@@ -685,13 +752,6 @@ onBeforeUnmount(() => {
 }
 
 .mail-item-badges,
-.mail-detail-badges {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
 .mail-folder-badge,
 .mail-state-badge {
   display: inline-flex;
@@ -755,11 +815,11 @@ onBeforeUnmount(() => {
 
 .inbox-content {
   display: flex;
-  flex: 1;
   flex-direction: column;
   min-width: 0;
+  height: 100%;
   min-height: 0;
-  padding: 24px;
+  padding: 14px 18px 18px;
   overflow: hidden;
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
 }
@@ -768,76 +828,83 @@ onBeforeUnmount(() => {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 18px;
+  gap: 10px;
   min-width: 0;
+  height: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 
 .mail-detail-header {
-  padding: 24px 28px;
-  border: 1px solid #e2e8f0;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.06);
-}
-
-.mail-detail-header-topline {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 18px;
+  flex: none;
+  padding: 6px 2px 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .mail-detail-subject {
   margin: 0;
+  max-width: 100%;
   color: #1e293b;
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 600;
-  line-height: 1.4;
+  line-height: 1.32;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mail-meta-info {
-  display: grid;
-  gap: 2px;
-  color: #475569;
-  font-size: 13px;
-  line-height: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.mail-meta-info div {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mail-meta-info strong {
-  display: inline-block;
-  width: 60px;
-  color: #1e293b;
+  margin-right: 8px;
+  color: #334155;
   font-weight: 600;
 }
 
 .translation-banner {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 14px 16px;
+  flex: none;
+  gap: 10px;
+  padding: 10px 12px;
   border: 1px solid #dbeafe;
-  border-radius: 14px;
+  border-radius: 12px;
   background: #f8fbff;
-  box-shadow: 0 8px 22px rgba(59, 130, 246, 0.08);
+  box-shadow: 0 8px 18px rgba(59, 130, 246, 0.06);
 }
 
 .translation-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
   background: #eff6ff;
   color: #2563eb;
   flex: none;
 }
 
 .translation-icon svg {
-  width: 22px;
-  height: 22px;
+  width: 19px;
+  height: 19px;
 }
 
 .translation-copy {
@@ -846,7 +913,7 @@ onBeforeUnmount(() => {
 
 .translation-title {
   color: #0f172a;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   line-height: 1.4;
 }
@@ -875,11 +942,11 @@ onBeforeUnmount(() => {
 }
 
 .translation-button {
-  min-height: 34px;
-  padding: 0 13px;
+  min-height: 32px;
+  padding: 0 12px;
   border-radius: 7px;
   font: inherit;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   cursor: pointer;
   transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease, opacity 0.2s ease;
@@ -913,11 +980,15 @@ onBeforeUnmount(() => {
 }
 
 .mail-html-body {
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
   min-height: 0;
+  height: auto;
   display: flex;
-  overflow: hidden;
+  align-items: stretch;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 14px;
   border: 1px solid #e2e8f0;
   border-radius: 20px;
@@ -927,10 +998,10 @@ onBeforeUnmount(() => {
 
 .mail-html-frame {
   display: block;
-  flex: 1;
+  flex: none;
   width: 100%;
-  height: 100%;
-  min-height: 0;
+  height: auto;
+  min-height: 100%;
   overflow: auto;
   border: 0;
   border-radius: 14px;
@@ -993,13 +1064,15 @@ onBeforeUnmount(() => {
   }
 
   .inbox-split-view {
-    flex-direction: column;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(180px, 320px) minmax(0, 1fr);
   }
 
   .inbox-sider {
     width: 100%;
     min-width: 0;
-    max-height: 320px;
+    height: 100%;
+    max-height: none;
     border-right: 0;
     border-bottom: 1px solid #f1f5f9;
   }
@@ -1026,8 +1099,8 @@ onBeforeUnmount(() => {
 
   .mail-detail-header,
   .mail-html-body {
-    padding-left: 18px;
-    padding-right: 18px;
+    padding-left: 14px;
+    padding-right: 14px;
   }
 }
 
@@ -1058,14 +1131,19 @@ onBeforeUnmount(() => {
     padding: 16px;
   }
 
-  .mail-item-topline,
-  .mail-detail-header-topline {
+  .mail-item-topline {
     flex-direction: column;
     align-items: flex-start;
   }
 
   .mail-detail-subject {
-    font-size: 20px;
+    font-size: 18px;
+    white-space: normal;
+  }
+
+  .mail-meta-info {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
   }
 }
 </style>

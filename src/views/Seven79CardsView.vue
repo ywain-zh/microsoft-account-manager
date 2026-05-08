@@ -315,7 +315,7 @@
       </article>
     </section>
 
-    <n-modal v-model:show="listModalVisible" preset="card" title="列表管理" style="width: min(1280px, 96vw);">
+    <AppModal v-model:show="listModalVisible" title="列表管理" size="full">
       <div class="list-modal">
         <div class="list-toolbar">
           <div class="list-switch">
@@ -414,9 +414,9 @@
           </section>
         </div>
       </div>
-    </n-modal>
+    </AppModal>
 
-    <n-modal v-model:show="importVisible" preset="card" title="批量导入 779 卡密" style="width: min(720px, 92vw);">
+    <AppModal v-model:show="importVisible" title="批量导入 779 卡密" size="md">
       <n-form label-placement="top">
         <n-form-item label="卡密列表">
           <n-input
@@ -433,9 +433,9 @@
           <n-button type="primary" :loading="importLoading" @click="handleImport">导入</n-button>
         </div>
       </template>
-    </n-modal>
+    </AppModal>
 
-    <n-modal v-model:show="ppImportVisible" preset="card" title="导入 PP 接码" style="width: min(760px, 92vw);">
+    <AppModal v-model:show="ppImportVisible" title="导入 PP 接码" size="md">
       <n-form label-placement="top">
         <n-form-item label="PP 接码列表">
           <n-input
@@ -452,7 +452,7 @@
           <n-button type="primary" :loading="ppImportLoading" @click="handleImportPp">导入</n-button>
         </div>
       </template>
-    </n-modal>
+    </AppModal>
   </div>
 </template>
 
@@ -466,7 +466,6 @@ import {
   NForm,
   NFormItem,
   NInput,
-  NModal,
   NSelect,
   NTag,
   type DataTableColumns
@@ -2557,9 +2556,10 @@ onMounted(async () => {
 
 .modal-panel {
   overflow: hidden;
-  border: 1px solid #e8eef6;
-  border-radius: 12px;
-  background: #f8fafc;
+  border: 0;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.64);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.04);
 }
 
 .table-shell {
@@ -2639,7 +2639,8 @@ onMounted(async () => {
 }
 
 :deep(.n-modal .n-card) {
-  border-radius: 16px;
+  border: 0 !important;
+  border-radius: 20px !important;
 }
 
 :deep(.seven79-table .n-data-table-base-table-header) {
