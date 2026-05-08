@@ -155,6 +155,61 @@
               </div>
             </div>
 
+            <div v-if="translationBannerVisible" class="translation-banner">
+              <div class="translation-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path
+                    d="M4.75 5.75h7.5M8.5 4.25v1.5M12 5.75c-.62 2.38-2.28 4.57-5.25 6.5"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="1.8"
+                  />
+                  <path
+                    d="M6.25 8.25c1.02 1.8 2.48 3.18 4.25 4"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="1.8"
+                  />
+                  <path
+                    d="M13 19.75l3.5-8.5 3.5 8.5M14.25 16.75h4.5"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="1.8"
+                  />
+                </svg>
+              </div>
+              <div class="translation-copy">
+                <div class="translation-title">
+                  {{ translationVisible && translatedEntry ? '已翻译为中文' : '此邮件似乎不是中文' }}
+                </div>
+                <div v-if="translationVisible && translatedEntry" class="translation-meta">
+                  {{ resolveTranslationProviderLabel(translatedEntry) }}
+                </div>
+                <div v-else-if="translationError" class="translation-error">{{ translationError }}</div>
+              </div>
+              <div class="translation-actions">
+                <button
+                  v-if="translatedEntry"
+                  class="translation-button translation-button-secondary"
+                  type="button"
+                  @click="translationVisible = !translationVisible"
+                >
+                  {{ translationVisible ? '查看原文' : '查看译文' }}
+                </button>
+                <button
+                  class="translation-button translation-button-primary"
+                  type="button"
+                  :disabled="translationLoading"
+                  @click="handleTranslate"
+                >
+                  {{ translationLoading ? '翻译中...' : translatedEntry ? '重新翻译' : '翻译成中文' }}
+                </button>
+              </div>
+            </div>
+
             <div class="mail-html-body">
               <iframe
                 class="mail-html-frame"
@@ -174,8 +229,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { NCard, NEmpty, NModal, NSpin } from 'naive-ui';
-import type { AccountMailItem } from '../types';
-import { buildMailPreview, extractMailSnippet } from '../utils/mail-preview';
+import { api } from '../api';
+import type { AccountMailItem, TranslationResponse } from '../types';
+import { buildMailPreview, extractMailSnippet, extractMailText } from '../utils/mail-preview';
+
+type TranslationCacheEntry = Pick<TranslationResponse, 'provider' | 'model' | 'translatedText'>;
 
 interface MailInboxViewerProps {
   show: boolean;
@@ -200,7 +258,36 @@ const selectedMail = computed(() => {
   return props.items.find((item) => item.id === props.selectedMailId) ?? null;
 });
 
-const renderedMail = computed(() => buildMailPreview(selectedMail.value));
+const selectedMailKey = computed(() => selectedMail.value?.id ?? '');
+const translationCache = ref<Record<string, TranslationCacheEntry>>({});
+const translationLoading = ref(false);
+const translationError = ref('');
+const translationVisible = ref(false);
+const translatedEntry = computed(() => {
+  const key = selectedMailKey.value;
+  return key ? translationCache.value[key] ?? null : null;
+});
+const mailTextForTranslation = computed(() => extractMailText(selectedMail.value));
+const shouldOfferTranslation = computed(() => isProbablyNonChineseText(mailTextForTranslation.value));
+const translationBannerVisible = computed(() => {
+  return Boolean(
+    selectedMail.value &&
+      (shouldOfferTranslation.value || translatedEntry.value || translationError.value || translationLoading.value)
+  );
+});
+const displayedMail = computed<AccountMailItem | null>(() => {
+  if (!selectedMail.value || !translatedEntry.value || !translationVisible.value) {
+    return selectedMail.value;
+  }
+
+  return {
+    ...selectedMail.value,
+    contentType: 'text/plain',
+    content: translatedEntry.value.translatedText,
+    preview: translatedEntry.value.translatedText
+  };
+});
+const renderedMail = computed(() => buildMailPreview(displayedMail.value));
 const copyFeedbackVisible = ref(false);
 const copyLoading = ref(false);
 let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
@@ -210,9 +297,16 @@ watch(
   (visible) => {
     if (!visible) {
       resetCopyFeedback();
+      resetTranslationFeedback();
     }
   }
 );
+
+watch(selectedMailKey, (key) => {
+  translationLoading.value = false;
+  translationError.value = '';
+  translationVisible.value = Boolean(key && translationCache.value[key]);
+});
 
 function resolveSnippet(item: AccountMailItem): string {
   return extractMailSnippet(item);
@@ -247,6 +341,61 @@ async function handleCopy(): Promise<void> {
   } finally {
     copyLoading.value = false;
   }
+}
+
+async function handleTranslate(): Promise<void> {
+  const key = selectedMailKey.value;
+  const text = mailTextForTranslation.value;
+  if (!key || !text || translationLoading.value) {
+    return;
+  }
+
+  translationLoading.value = true;
+  translationError.value = '';
+
+  try {
+    const result = await api.translateMailText({ text });
+    translationCache.value = {
+      ...translationCache.value,
+      [key]: result
+    };
+    translationVisible.value = true;
+  } catch (error) {
+    translationError.value = error instanceof Error ? error.message : '翻译失败';
+  } finally {
+    translationLoading.value = false;
+  }
+}
+
+function resetTranslationFeedback(): void {
+  translationLoading.value = false;
+  translationError.value = '';
+}
+
+function resolveTranslationProviderLabel(entry: TranslationCacheEntry): string {
+  if (entry.provider === 'openai') {
+    return entry.model ? `OpenAI · ${entry.model}` : 'OpenAI';
+  }
+  return 'DeepLX';
+}
+
+function isProbablyNonChineseText(text: string): boolean {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (normalized.length < 24) {
+    return false;
+  }
+
+  const chineseCount = (normalized.match(/[\u3400-\u9fff\uf900-\ufaff]/g) ?? []).length;
+  if (chineseCount >= 8) {
+    return false;
+  }
+
+  const letterCount = (normalized.match(/[A-Za-zÀ-ÖØ-öø-ÿĀ-žА-яЁё]/g) ?? []).length;
+  if (letterCount < 8) {
+    return false;
+  }
+
+  return chineseCount / Math.max(letterCount, 1) < 0.2;
 }
 
 function resetCopyFeedback(): void {
@@ -663,6 +812,106 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
+.translation-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid #dbeafe;
+  border-radius: 14px;
+  background: #f8fbff;
+  box-shadow: 0 8px 22px rgba(59, 130, 246, 0.08);
+}
+
+.translation-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: #eff6ff;
+  color: #2563eb;
+  flex: none;
+}
+
+.translation-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.translation-copy {
+  min-width: 0;
+}
+
+.translation-title {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.translation-meta,
+.translation-error {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.translation-meta {
+  color: #64748b;
+}
+
+.translation-error {
+  color: #dc2626;
+}
+
+.translation-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex: none;
+}
+
+.translation-button {
+  min-height: 34px;
+  padding: 0 13px;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease, opacity 0.2s ease;
+}
+
+.translation-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.translation-button-primary {
+  border: 1px solid #2563eb;
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.translation-button-primary:hover:not(:disabled) {
+  border-color: #1d4ed8;
+  background: #1d4ed8;
+}
+
+.translation-button-secondary {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #334155;
+}
+
+.translation-button-secondary:hover:not(:disabled) {
+  border-color: #93c5fd;
+  color: #2563eb;
+}
+
 .mail-html-body {
   flex: 1;
   min-width: 0;
@@ -757,6 +1006,22 @@ onBeforeUnmount(() => {
 
   .inbox-content {
     padding: 18px;
+  }
+
+  .translation-banner {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .translation-actions {
+    width: 100%;
+    margin-left: 0;
+    flex-wrap: wrap;
+  }
+
+  .translation-button {
+    flex: 1;
+    min-width: 120px;
   }
 
   .mail-detail-header,

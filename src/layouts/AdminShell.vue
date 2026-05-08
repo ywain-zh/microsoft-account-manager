@@ -55,6 +55,30 @@
                 stroke-width="1.7"
               />
             </svg>
+            <svg v-else-if="item.key === 'system-settings'" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M4.75 7.5h14.5"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-width="1.7"
+              />
+              <path
+                d="M4.75 16.5h14.5"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-width="1.7"
+              />
+              <path
+                d="M8.5 10a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"
+                stroke="currentColor"
+                stroke-width="1.7"
+              />
+              <path
+                d="M15.5 19a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"
+                stroke="currentColor"
+                stroke-width="1.7"
+              />
+            </svg>
             <svg v-else-if="item.key === '779-cards'" viewBox="0 0 24 24" fill="none">
               <rect
                 x="3.75"

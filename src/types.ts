@@ -77,6 +77,39 @@ export interface Sub2ApiConfig {
   adminApiKey: string;
 }
 
+export type TranslationProvider = 'openai' | 'deeplx';
+
+export interface TranslationConfig {
+  enabled: boolean;
+  openaiBaseUrl: string;
+  openaiApiKey: string;
+  openaiModel: string;
+  deeplxBaseUrl: string;
+  deeplxApiKey: string;
+}
+
+export interface TranslationResponse {
+  provider: TranslationProvider;
+  model?: string;
+  translatedText: string;
+}
+
+export interface TranslationTestResult {
+  provider: TranslationProvider;
+  ok: boolean;
+  message: string;
+  translatedText?: string;
+  model?: string;
+}
+
+export interface TranslationTestResponse {
+  results: TranslationTestResult[];
+}
+
+export interface OpenAiModelsResponse {
+  items: string[];
+}
+
 export type Sub2ApiPlanType = 'free' | 'plus' | 'team' | '';
 export type Sub2ApiDetectionOutcome = 'success' | 'quota' | 'unauthorized' | 'timeout' | 'abnormal';
 export type Sub2ApiLogLevel = 'info' | 'success' | 'warning' | 'error';

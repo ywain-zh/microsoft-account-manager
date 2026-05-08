@@ -89,6 +89,25 @@ export function extractMailSnippet(message: Pick<AccountMailItem, 'preview' | 'c
   return trimSnippet(collapseWhitespace(content));
 }
 
+export function extractMailText(
+  message: Pick<AccountMailItem, 'preview' | 'content' | 'contentType'> | null | undefined
+): string {
+  if (!message) {
+    return '';
+  }
+
+  const content = (message.content ?? '').trim();
+  if (content) {
+    if (isHtmlMail(message.contentType, content)) {
+      return collapseWhitespace(extractTextFromHtml(content));
+    }
+
+    return collapseWhitespace(content);
+  }
+
+  return collapseWhitespace(message.preview ?? '');
+}
+
 function isHtmlMail(contentType: string | null | undefined, content: string): boolean {
   const normalized = (contentType ?? '').trim().toLowerCase();
   if (normalized.includes('html')) {

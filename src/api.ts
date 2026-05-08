@@ -12,6 +12,7 @@ import type {
   IngestConfig,
   ImportResult,
   MailFetchMode,
+  OpenAiModelsResponse,
   PpSmsFetchCodeResponse,
   PpSmsImportResult,
   PpSmsItem,
@@ -20,7 +21,11 @@ import type {
   Seven79CheckResponse,
   Seven79ImportResult,
   Sub2ApiConfig,
-  Sub2ApiDeleteAccountsResponse
+  Sub2ApiDeleteAccountsResponse,
+  TranslationConfig,
+  TranslationProvider,
+  TranslationResponse,
+  TranslationTestResponse
 } from './types';
 
 interface ApiError {
@@ -218,6 +223,44 @@ export const api = {
   updateSub2ApiConfig(payload: Sub2ApiConfig): Promise<{ item: Sub2ApiConfig }> {
     return request<{ item: Sub2ApiConfig }>('/api/sub2api/config', {
       method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  getTranslationConfig(): Promise<{ item: TranslationConfig }> {
+    return request<{ item: TranslationConfig }>('/api/translation/config');
+  },
+
+  updateTranslationConfig(payload: TranslationConfig): Promise<{ item: TranslationConfig }> {
+    return request<{ item: TranslationConfig }>('/api/translation/config', {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  listTranslationOpenAiModels(payload?: TranslationConfig): Promise<OpenAiModelsResponse> {
+    if (payload) {
+      return request<OpenAiModelsResponse>('/api/translation/openai-models', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+    }
+
+    return request<OpenAiModelsResponse>('/api/translation/openai-models');
+  },
+
+  testTranslationConfig(
+    payload: TranslationConfig & { provider?: TranslationProvider }
+  ): Promise<TranslationTestResponse> {
+    return request<TranslationTestResponse>('/api/translation/test', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  translateMailText(payload: { text: string }): Promise<TranslationResponse> {
+    return request<TranslationResponse>('/api/translation/translate', {
+      method: 'POST',
       body: JSON.stringify(payload)
     });
   },

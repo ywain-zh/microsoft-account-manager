@@ -187,6 +187,31 @@ interface Sub2ApiConfig {
   adminApiKey: string;
 }
 
+type TranslationProvider = 'openai' | 'deeplx';
+
+interface TranslationConfig {
+  enabled: boolean;
+  openaiBaseUrl: string;
+  openaiApiKey: string;
+  openaiModel: string;
+  deeplxBaseUrl: string;
+  deeplxApiKey: string;
+}
+
+interface TranslationResponsePayload {
+  provider: TranslationProvider;
+  model?: string;
+  translatedText: string;
+}
+
+interface TranslationTestResult {
+  provider: TranslationProvider;
+  ok: boolean;
+  message: string;
+  translatedText?: string;
+  model?: string;
+}
+
 type Sub2ApiPlanType = 'free' | 'plus' | 'team' | '';
 type Sub2ApiDetectionOutcome = 'success' | 'quota' | 'unauthorized' | 'timeout' | 'abnormal';
 type Sub2ApiLogLevel = 'info' | 'success' | 'warning' | 'error';
@@ -353,6 +378,21 @@ const SUB2API_PAGE_SIZE = 100;
 const DEFAULT_SUB2API_CONFIG: Sub2ApiConfig = {
   baseUrl: '',
   adminApiKey: ''
+};
+
+const TRANSLATION_CONFIG_KEY = 'translation_config';
+const DEFAULT_TRANSLATION_MODEL = 'gpt-5.4-mini';
+const TRANSLATION_TIMEOUT_MS = 45000;
+const TRANSLATION_MAX_TEXT_LENGTH = 30000;
+const TRANSLATION_TEST_TEXT = 'Your personal access token is about to expire in 7 days.';
+
+const DEFAULT_TRANSLATION_CONFIG: TranslationConfig = {
+  enabled: false,
+  openaiBaseUrl: '',
+  openaiApiKey: '',
+  openaiModel: DEFAULT_TRANSLATION_MODEL,
+  deeplxBaseUrl: '',
+  deeplxApiKey: ''
 };
 
 const ACCOUNT_SELECT_SQL = `
@@ -1281,6 +1321,53 @@ app.put('/api/sub2api/config', async (c) => {
   return c.json({ item });
 });
 
+app.get('/api/translation/config', async (c) => {
+  const item = await getTranslationConfig(c.env.DB);
+  return c.json({ item });
+});
+
+app.put('/api/translation/config', async (c) => {
+  const body = await readJson<Partial<TranslationConfig>>(c);
+  const item = normalizeTranslationConfig(body);
+  validateTranslationConfig(item);
+  await setAppSetting(c.env.DB, TRANSLATION_CONFIG_KEY, JSON.stringify(item));
+  return c.json({ item });
+});
+
+app.get('/api/translation/openai-models', async (c) => {
+  const config = await getTranslationConfig(c.env.DB);
+  validateOpenAiTranslationConfig(config);
+  const items = await listOpenAiModels(config);
+  return c.json({ items });
+});
+
+app.post('/api/translation/openai-models', async (c) => {
+  const body = await readJson<Partial<TranslationConfig>>(c);
+  const config = normalizeTranslationConfig(body);
+  validateTranslationConfig(config);
+  validateOpenAiTranslationConfig(config);
+  const items = await listOpenAiModels(config);
+  return c.json({ items });
+});
+
+app.post('/api/translation/test', async (c) => {
+  const body = await readJson<Partial<TranslationConfig> & { provider?: unknown }>(c);
+  const config = normalizeTranslationConfig(body);
+  validateTranslationConfig(config);
+
+  const provider = normalizeTranslationProvider(body.provider);
+  const results = await testTranslationProviders(config, provider);
+  return c.json({ results });
+});
+
+app.post('/api/translation/translate', async (c) => {
+  const body = await readJson<{ text?: unknown }>(c);
+  const text = normalizeTranslationText(body.text);
+  const config = await getTranslationConfig(c.env.DB);
+  const result = await translateTextToChinese(config, text);
+  return c.json(result);
+});
+
 app.post('/api/sub2api/check', async (c) => {
   const config = await getSub2ApiConfig(c.env.DB);
   ensureSub2ApiConfigured(config);
@@ -1829,6 +1916,21 @@ async function getSub2ApiConfig(db: D1Database): Promise<Sub2ApiConfig> {
   }
 }
 
+async function getTranslationConfig(db: D1Database): Promise<TranslationConfig> {
+  const value = await getAppSetting(db, TRANSLATION_CONFIG_KEY);
+
+  if (!value) {
+    return DEFAULT_TRANSLATION_CONFIG;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as Partial<TranslationConfig>;
+    return normalizeTranslationConfig(parsed);
+  } catch {
+    return DEFAULT_TRANSLATION_CONFIG;
+  }
+}
+
 function normalizeIngestConfig(input: Partial<IngestConfig>): IngestConfig {
   return {
     delimiter: asText(input.delimiter).trim() || DEFAULT_INGEST_CONFIG.delimiter,
@@ -1919,6 +2021,17 @@ function normalizeSub2ApiConfig(input: Partial<Sub2ApiConfig>): Sub2ApiConfig {
   };
 }
 
+function normalizeTranslationConfig(input: Partial<TranslationConfig>): TranslationConfig {
+  return {
+    enabled: input.enabled === true,
+    openaiBaseUrl: normalizeTranslationBaseUrl(input.openaiBaseUrl),
+    openaiApiKey: asText(input.openaiApiKey).trim(),
+    openaiModel: asText(input.openaiModel).trim() || DEFAULT_TRANSLATION_MODEL,
+    deeplxBaseUrl: normalizeTranslationBaseUrl(input.deeplxBaseUrl),
+    deeplxApiKey: asText(input.deeplxApiKey).trim()
+  };
+}
+
 function validateCloudMailConfig(config: CloudMailConfig): void {
   if (!config.apiBaseUrl || !config.adminEmail || !config.adminPassword) {
     throw new HTTPException(400, { message: '请完整填写 API URI、管理员邮箱和管理员密码' });
@@ -1977,6 +2090,26 @@ function normalizeSub2ApiBaseUrl(value: unknown): string {
   }
 }
 
+function normalizeTranslationBaseUrl(value: unknown): string {
+  const raw = asText(value).trim();
+  if (!raw) {
+    return '';
+  }
+
+  const withProtocol = /^[a-z]+:\/\//i.test(raw) ? raw : `https://${raw}`;
+
+  try {
+    const url = new URL(withProtocol);
+    url.search = '';
+    url.hash = '';
+    const pathname = url.pathname.replace(/\/+$/, '');
+    const path = pathname === '/' ? '' : pathname;
+    return `${url.origin}${path}`;
+  } catch {
+    return raw;
+  }
+}
+
 function validateSub2ApiConfig(config: Sub2ApiConfig): void {
   if (!config.baseUrl || !config.adminApiKey) {
     throw new HTTPException(400, { message: '请完整填写 Sub2API 地址和管理员 API Key' });
@@ -2002,6 +2135,54 @@ function validateSub2ApiConfig(config: Sub2ApiConfig): void {
   }
 }
 
+function validateTranslationConfig(config: TranslationConfig): void {
+  const urlEntries: Array<[string, string]> = [
+    ['OpenAI Base URL', config.openaiBaseUrl],
+    ['DeepLX 请求地址', config.deeplxBaseUrl]
+  ];
+
+  for (const [label, value] of urlEntries) {
+    if (!value) {
+      continue;
+    }
+
+    if (value.length > 500) {
+      throw new HTTPException(400, { message: `${label} 长度不能超过 500 个字符` });
+    }
+
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(value);
+    } catch {
+      throw new HTTPException(400, { message: `${label} 格式不合法` });
+    }
+
+    if (!/^https?:$/.test(parsedUrl.protocol)) {
+      throw new HTTPException(400, { message: `${label} 必须以 http:// 或 https:// 开头` });
+    }
+  }
+
+  if (config.openaiApiKey.length > 2048 || config.deeplxApiKey.length > 2048) {
+    throw new HTTPException(400, { message: 'API Key 长度不能超过 2048 个字符' });
+  }
+
+  if (config.openaiModel.length > 120) {
+    throw new HTTPException(400, { message: 'OpenAI 模型名长度不能超过 120 个字符' });
+  }
+}
+
+function validateOpenAiTranslationConfig(config: TranslationConfig): void {
+  if (!config.openaiBaseUrl || !config.openaiApiKey || !config.openaiModel) {
+    throw new HTTPException(400, { message: '请完整填写 OpenAI Base URL、API Key 和模型' });
+  }
+}
+
+function validateDeepLxTranslationConfig(config: TranslationConfig): void {
+  if (!config.deeplxBaseUrl) {
+    throw new HTTPException(400, { message: '请填写 DeepLX 完整请求地址' });
+  }
+}
+
 function ensureCloudMailConfigured(config: CloudMailConfig): void {
   if (!config.apiBaseUrl || !config.adminEmail || !config.adminPassword) {
     throw new HTTPException(400, { message: '请先完成 Cloud Mail 配置' });
@@ -2012,6 +2193,35 @@ function ensureSub2ApiConfigured(config: Sub2ApiConfig): void {
   if (!config.baseUrl || !config.adminApiKey) {
     throw new HTTPException(400, { message: '请先完成 Sub2API 配置' });
   }
+}
+
+function normalizeTranslationProvider(value: unknown): TranslationProvider | null {
+  const provider = asText(value).trim().toLowerCase();
+  if (provider === 'openai' || provider === 'deeplx') {
+    return provider;
+  }
+  return null;
+}
+
+function normalizeTranslationText(value: unknown): string {
+  const text = asText(value).replace(/\u0000/g, '').trim();
+  if (!text) {
+    throw new HTTPException(400, { message: '请提供需要翻译的正文' });
+  }
+  if (text.length > TRANSLATION_MAX_TEXT_LENGTH) {
+    throw new HTTPException(400, {
+      message: `邮件正文过长，最多支持 ${TRANSLATION_MAX_TEXT_LENGTH} 个字符`
+    });
+  }
+  return text;
+}
+
+function hasOpenAiTranslationConfig(config: TranslationConfig): boolean {
+  return Boolean(config.openaiBaseUrl && config.openaiApiKey && config.openaiModel);
+}
+
+function hasDeepLxTranslationConfig(config: TranslationConfig): boolean {
+  return Boolean(config.deeplxBaseUrl);
 }
 
 function parsePageNumber(
@@ -2055,6 +2265,291 @@ function normalizeCloudMailCreatePayload(
 async function validateCloudMailConnection(config: CloudMailConfig): Promise<void> {
   await getCloudMailAdminToken(config);
   await getCloudMailPublicToken(config);
+}
+
+async function listOpenAiModels(config: TranslationConfig): Promise<string[]> {
+  const payload = await requestTranslationJson(buildOpenAiUrl(config.openaiBaseUrl, '/models'), {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${config.openaiApiKey}`
+    }
+  });
+
+  const record = asRecord(payload);
+  const rawItems = Array.isArray(record.data) ? record.data : Array.isArray(payload) ? payload : [];
+  const ids = rawItems
+    .map((item) => {
+      if (typeof item === 'string') {
+        return item;
+      }
+      const model = toRecord(item);
+      return asText(model?.id).trim();
+    })
+    .filter(Boolean);
+
+  return Array.from(new Set(ids));
+}
+
+async function testTranslationProviders(
+  config: TranslationConfig,
+  provider: TranslationProvider | null
+): Promise<TranslationTestResult[]> {
+  const providers: TranslationProvider[] = provider
+    ? [provider]
+    : (['openai', 'deeplx'] as TranslationProvider[]).filter((item) =>
+        item === 'openai' ? hasOpenAiTranslationConfig(config) : hasDeepLxTranslationConfig(config)
+      );
+
+  if (providers.length === 0) {
+    throw new HTTPException(400, { message: '请至少配置一个翻译服务' });
+  }
+
+  const results: TranslationTestResult[] = [];
+  for (const item of providers) {
+    try {
+      const result =
+        item === 'openai'
+          ? await translateWithOpenAi(config, TRANSLATION_TEST_TEXT)
+          : await translateWithDeepLx(config, TRANSLATION_TEST_TEXT);
+      results.push({
+        provider: item,
+        ok: true,
+        message: '测试翻译成功',
+        translatedText: result.translatedText,
+        model: result.model
+      });
+    } catch (error) {
+      results.push({
+        provider: item,
+        ok: false,
+        message: getErrorMessage(error)
+      });
+    }
+  }
+
+  return results;
+}
+
+async function translateTextToChinese(
+  config: TranslationConfig,
+  text: string
+): Promise<TranslationResponsePayload> {
+  if (!config.enabled) {
+    throw new HTTPException(400, { message: '请先在系统设置中启用翻译功能' });
+  }
+
+  const errors: string[] = [];
+
+  if (hasOpenAiTranslationConfig(config)) {
+    try {
+      return await translateWithOpenAi(config, text);
+    } catch (error) {
+      errors.push(`OpenAI: ${getErrorMessage(error)}`);
+    }
+  }
+
+  if (hasDeepLxTranslationConfig(config)) {
+    try {
+      return await translateWithDeepLx(config, text);
+    } catch (error) {
+      errors.push(`DeepLX: ${getErrorMessage(error)}`);
+    }
+  }
+
+  if (errors.length === 0) {
+    throw new HTTPException(400, { message: '请先配置 OpenAI 或 DeepLX 翻译服务' });
+  }
+
+  throw new HTTPException(502, { message: `翻译失败：${errors.join('；')}` });
+}
+
+async function translateWithOpenAi(
+  config: TranslationConfig,
+  text: string
+): Promise<TranslationResponsePayload> {
+  validateOpenAiTranslationConfig(config);
+
+  const payload = await requestTranslationJson(buildOpenAiUrl(config.openaiBaseUrl, '/chat/completions'), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.openaiApiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: config.openaiModel,
+      messages: [
+        {
+          role: 'system',
+          content:
+            '你是专业邮件翻译助手。只输出简体中文译文，不要解释，不要添加原文没有的信息。保留链接、验证码、金额、日期和专有名词。'
+        },
+        {
+          role: 'user',
+          content: text
+        }
+      ],
+      temperature: 0
+    })
+  });
+
+  const translatedText = extractOpenAiTranslatedText(payload);
+  if (!translatedText) {
+    throw new HTTPException(502, { message: 'OpenAI 未返回译文' });
+  }
+
+  return {
+    provider: 'openai',
+    model: config.openaiModel,
+    translatedText
+  };
+}
+
+async function translateWithDeepLx(
+  config: TranslationConfig,
+  text: string
+): Promise<TranslationResponsePayload> {
+  validateDeepLxTranslationConfig(config);
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json'
+  };
+  if (config.deeplxApiKey) {
+    headers.Authorization = `Bearer ${config.deeplxApiKey}`;
+  }
+
+  const payload = await requestTranslationJson(config.deeplxBaseUrl, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      text,
+      source_lang: 'auto',
+      target_lang: 'ZH'
+    })
+  });
+
+  const translatedText = extractDeepLxTranslatedText(payload);
+  if (!translatedText) {
+    throw new HTTPException(502, { message: 'DeepLX 未返回译文' });
+  }
+
+  return {
+    provider: 'deeplx',
+    translatedText
+  };
+}
+
+async function requestTranslationJson(url: string, init: RequestInit): Promise<unknown> {
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => {
+    abortController.abort();
+  }, TRANSLATION_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: abortController.signal
+    });
+    const rawText = await response.text();
+
+    if (!response.ok) {
+      throw new HTTPException(response.status >= 500 ? 502 : 400, {
+        message: resolveTranslationRemoteError(response.status, rawText)
+      });
+    }
+
+    if (!rawText.trim()) {
+      return {};
+    }
+
+    try {
+      return JSON.parse(rawText) as unknown;
+    } catch {
+      throw new HTTPException(502, { message: '翻译服务返回的数据格式不正确' });
+    }
+  } catch (error) {
+    if (error instanceof HTTPException) {
+      throw error;
+    }
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new HTTPException(504, { message: '翻译服务请求超时' });
+    }
+    throw new HTTPException(502, { message: `翻译服务连接失败：${getErrorMessage(error)}` });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function buildOpenAiUrl(baseUrl: string, path: string): string {
+  const normalizedBase = baseUrl.replace(/\/+$/, '');
+  const baseWithVersion = /\/v1$/i.test(normalizedBase) ? normalizedBase : `${normalizedBase}/v1`;
+  return `${baseWithVersion}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+function extractOpenAiTranslatedText(payload: unknown): string {
+  const record = asRecord(payload);
+  const choices = Array.isArray(record.choices) ? record.choices : [];
+  for (const choice of choices) {
+    const item = toRecord(choice);
+    const message = toRecord(item?.message);
+    const content = asText(message?.content).trim();
+    if (content) {
+      return content;
+    }
+  }
+  return '';
+}
+
+function extractDeepLxTranslatedText(payload: unknown): string {
+  const record = asRecord(payload);
+  const code = asText(record.code).trim();
+  if (code && code !== '200' && code !== '0') {
+    const message = asText(record.message ?? record.msg ?? record.error).trim();
+    throw new HTTPException(502, { message: message || `DeepLX 返回异常 (${code})` });
+  }
+
+  const candidates = [
+    record.data,
+    record.translation,
+    record.translated_text,
+    record.translatedText,
+    toRecord(record.data)?.text
+  ];
+
+  for (const candidate of candidates) {
+    const text = asText(candidate).trim();
+    if (text && !/^https?:\/\//i.test(text)) {
+      return text;
+    }
+  }
+
+  return '';
+}
+
+function resolveTranslationRemoteError(status: number, rawText: string): string {
+  const trimmed = rawText.trim();
+  if (!trimmed) {
+    return `翻译服务请求失败 (${status})`;
+  }
+
+  try {
+    const payload = JSON.parse(trimmed) as unknown;
+    const record = asRecord(payload);
+    const message = asText(
+      record.error ??
+        record.message ??
+        record.msg ??
+        record.detail ??
+        toRecord(record.error)?.message ??
+        toRecord(record.data)?.message
+    ).trim();
+    if (message) {
+      return `翻译服务请求失败 (${status})：${truncate(message, 180)}`;
+    }
+  } catch {
+    // Ignore non-JSON error payloads and use a truncated text fallback.
+  }
+
+  return `翻译服务请求失败 (${status})：${truncate(trimmed, 180)}`;
 }
 
 function buildCloudMailUrl(

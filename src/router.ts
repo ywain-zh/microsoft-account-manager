@@ -57,6 +57,16 @@ const router = createRouter({
           }
         },
         {
+          path: 'services/system/settings',
+          name: 'system-settings',
+          component: () => import('./views/SystemSettingsView.vue'),
+          meta: {
+            requiresAuth: true,
+            title: '系统设置',
+            description: '维护翻译服务配置。'
+          }
+        },
+        {
           path: 'services/microsoft-mail/accounts',
           name: 'microsoft-mail-accounts',
           component: () => import('./views/AccountsView.vue'),
