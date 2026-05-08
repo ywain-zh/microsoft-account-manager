@@ -113,6 +113,13 @@ git push origin 2026.04.16-1
 docker manifest inspect ghcr.io/ywain-zh/microsoft-account-manager:2026.04.16-1
 ```
 
+稳健检查要求：
+- 执行本地 `docker manifest inspect` 前，必须先确认本机存在 `docker` 命令，例如 `docker --version`。
+- 如果本机没有 `docker` 命令，不允许启动本地长时间轮询循环；否则会出现每轮都因 `docker: command not found` 失败、但仍继续等待的空转。
+- 本机无 `docker` 时，优先用 GitHub Actions 状态确认 tag 镜像构建是否成功，再到服务器侧执行 `docker manifest inspect ghcr.io/ywain-zh/microsoft-account-manager:<tag>` 做最终镜像可见性确认。
+- 如果本机匿名访问 GHCR 返回 `403 Forbidden`，不要直接判定镜像未发布；应结合 GitHub Actions 成功状态与服务器侧 Docker/GHCR 登录态检查结果判断。
+- 服务器侧 manifest 检查只用于确认镜像可见，不允许在镜像确认阶段执行 `docker compose pull`、`docker compose up -d` 或替换线上服务。
+
 发布阶段硬约束：
 - 只有在 tag push 成功、GHCR 已存在本次固定 tag 镜像后，才允许进入服务器部署阶段。
 - 如果 release 文档未写完，或 tag 镜像尚未发布成功，立即停止，不允许部署。
@@ -122,6 +129,8 @@ docker manifest inspect ghcr.io/ywain-zh/microsoft-account-manager:2026.04.16-1
 - 前提：release 文档已完成、用户已明确审核通过并批准部署、固定 tag 已 push。
 - 如果 GHCR 固定 tag 镜像检查仍返回 `manifest unknown`、`not found` 或其他“镜像未就绪”结果，不允许把部署流程视为结束，也不允许中途停下等待用户再次催促。
 - 必须继续按固定间隔重复检查镜像是否可用，推荐每 2 分钟检查一次；检查命令固定为 `docker manifest inspect ghcr.io/ywain-zh/microsoft-account-manager:<tag>` 或等价的远端 manifest 检查方式。
+- 开始任何等待循环前，必须先单次执行并确认检查命令本身可用；如果失败原因是本机缺少 `docker`、`gh` 等工具，必须立即切换到可用的稳健检查方式，不允许带着错误命令继续 sleep 轮询。
+- 如果本机没有 `docker`，推荐流程是：先通过 GitHub API 或 Actions 页面确认 `Publish GHCR Image` 工作流完成且结论为 `success`，再通过服务器侧 `docker manifest inspect` 确认固定 tag 可见。
 - 一旦镜像可用，必须立即继续执行服务器侧标准部署命令：检查部署目录、备份 `.env`、更新 `APP_IMAGE`、执行 `docker compose pull`、`docker compose up -d`、状态检查、日志检查、资源检查与健康检查。
 - 只有在以下情况之一出现时，才允许结束本次部署流程：部署成功；出现明确失败且需要用户做额外决策；用户主动取消本次部署。
 
