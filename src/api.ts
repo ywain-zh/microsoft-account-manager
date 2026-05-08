@@ -193,6 +193,13 @@ export const api = {
     return request<AccountMessagesResponse>(`/api/accounts/${id}/messages?${params.toString()}`);
   },
 
+  markAccountMailAsRead(id: number, messageId: string): Promise<{ ok: true }> {
+    return request<{ ok: true }>(`/api/accounts/${id}/messages/read`, {
+      method: 'POST',
+      body: JSON.stringify({ messageId })
+    });
+  },
+
   getCloudMailConfig(): Promise<{ item: CloudMailConfig }> {
     return request<{ item: CloudMailConfig }>('/api/cloud-mail/config');
   },
@@ -245,6 +252,13 @@ export const api = {
 
   getCloudMailMessages(email: string): Promise<CloudMailMessagesResponse> {
     return request<CloudMailMessagesResponse>(`/api/cloud-mail/messages${buildQuery({ email })}`);
+  },
+
+  markCloudMailMessageAsRead(email: string, messageId: string): Promise<{ ok: true }> {
+    return request<{ ok: true }>('/api/cloud-mail/messages/read', {
+      method: 'POST',
+      body: JSON.stringify({ email, messageId })
+    });
   },
 
   createCloudMailAccount(payload: CloudMailCreatePayload): Promise<{ ok: true; email: string }> {

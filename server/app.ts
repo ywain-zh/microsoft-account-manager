@@ -29,6 +29,7 @@ type Variables = {
 type MailFetchMode = 'auto' | 'graph' | 'imap';
 type ResolvedMailFetchMode = 'graph' | 'imap';
 type TokenStatus = 'unknown' | 'valid' | 'invalid';
+type MailReadService = 'microsoft' | 'cloud-mail';
 
 interface AccountRow {
   id: number;
@@ -1117,14 +1118,29 @@ app.get('/api/accounts/:id/messages', async (c) => {
   if (!result.ok) {
     throw new HTTPException(400, { message: result.message });
   }
+  const messages = await applyMailReadMarks(c.env.DB, 'microsoft', account.account, result.messages);
 
   return c.json({
     accountId: account.id,
     account: account.account,
     mode,
     resolvedMode: result.resolvedMode,
-    messages: result.messages
+    messages
   });
+});
+
+app.post('/api/accounts/:id/messages/read', async (c) => {
+  const id = parseNumericId(c.req.param('id'));
+  const account = await fetchAccountById(c.env.DB, id);
+
+  if (!account) {
+    throw new HTTPException(404, { message: '账号不存在' });
+  }
+
+  const body = await readJson<{ messageId?: unknown }>(c);
+  await markMailMessageRead(c.env.DB, 'microsoft', account.account, body.messageId);
+
+  return c.json({ ok: true as const });
 });
 
 app.get('/api/open/accounts/:id/messages', async (c) => {
@@ -1142,13 +1158,14 @@ app.get('/api/open/accounts/:id/messages', async (c) => {
   if (!result.ok) {
     throw new HTTPException(400, { message: result.message });
   }
+  const messages = await applyMailReadMarks(c.env.DB, 'microsoft', account.account, result.messages);
 
   return c.json({
     accountId: account.id,
     account: account.account,
     mode,
     resolvedMode: result.resolvedMode,
-    messages: result.messages
+    messages
   });
 });
 
@@ -1173,13 +1190,14 @@ app.post('/api/open/messages', async (c) => {
   if (!result.ok) {
     throw new HTTPException(400, { message: result.message });
   }
+  const messages = await applyMailReadMarks(c.env.DB, 'microsoft', account.account, result.messages);
 
   return c.json({
     accountId: account.id,
     account: account.account,
     mode,
     resolvedMode: result.resolvedMode,
-    messages: result.messages
+    messages
   });
 });
 
@@ -1442,12 +1460,30 @@ app.get('/api/cloud-mail/messages', async (c) => {
     throw new HTTPException(400, { message: '请传入需要查询的邮箱' });
   }
 
-  const messages = await listCloudMailMessages(config, email);
+  const messages = await applyMailReadMarks(
+    c.env.DB,
+    'cloud-mail',
+    email,
+    await listCloudMailMessages(config, email)
+  );
 
   return c.json({
     account: email,
     messages
   });
+});
+
+app.post('/api/cloud-mail/messages/read', async (c) => {
+  const body = await readJson<{ email?: unknown; messageId?: unknown }>(c);
+  const email = asText(body.email).trim().toLowerCase();
+
+  if (!email) {
+    throw new HTTPException(400, { message: '请传入需要标记已读的邮箱' });
+  }
+
+  await markMailMessageRead(c.env.DB, 'cloud-mail', email, body.messageId);
+
+  return c.json({ ok: true as const });
 });
 
 app.post('/api/cloud-mail/accounts', async (c) => {
@@ -4566,6 +4602,89 @@ async function deleteCloudMailAccountRemarks(db: D1Database, userIds: number[]):
     .prepare(`DELETE FROM cloud_mail_account_remarks WHERE user_id IN (${placeholders})`)
     .bind(...userIds)
     .run();
+}
+
+function normalizeMailReadAccount(account: string): string {
+  return account.trim().toLowerCase();
+}
+
+function normalizeMailReadMessageId(messageId: unknown): string {
+  return asText(messageId).trim();
+}
+
+async function markMailMessageRead(
+  db: D1Database,
+  service: MailReadService,
+  account: string,
+  messageId: unknown
+): Promise<void> {
+  const normalizedAccount = normalizeMailReadAccount(account);
+  const normalizedMessageId = normalizeMailReadMessageId(messageId);
+
+  if (!normalizedAccount) {
+    throw new HTTPException(400, { message: '邮箱不能为空' });
+  }
+  if (!normalizedMessageId) {
+    throw new HTTPException(400, { message: '邮件 ID 不能为空' });
+  }
+
+  await db
+    .prepare(
+      `INSERT INTO mail_read_marks (service, account, message_id, marked_at)
+       VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(service, account, message_id)
+       DO UPDATE SET marked_at = CURRENT_TIMESTAMP`
+    )
+    .bind(service, normalizedAccount, normalizedMessageId)
+    .run();
+}
+
+async function queryMailReadMessageIds(
+  db: D1Database,
+  service: MailReadService,
+  account: string,
+  messageIds: string[]
+): Promise<Set<string>> {
+  const normalizedAccount = normalizeMailReadAccount(account);
+  const uniqueMessageIds = Array.from(new Set(messageIds.map((id) => id.trim()).filter(Boolean)));
+
+  if (!normalizedAccount || uniqueMessageIds.length === 0) {
+    return new Set();
+  }
+
+  const placeholders = uniqueMessageIds.map(() => '?').join(',');
+  const { results } = await db
+    .prepare(
+      `SELECT message_id AS messageId
+       FROM mail_read_marks
+       WHERE service = ?
+         AND account = ?
+         AND message_id IN (${placeholders})`
+    )
+    .bind(service, normalizedAccount, ...uniqueMessageIds)
+    .all<{ messageId: string }>();
+
+  return new Set((results ?? []).map((item) => item.messageId));
+}
+
+async function applyMailReadMarks(
+  db: D1Database,
+  service: MailReadService,
+  account: string,
+  messages: AccountMailItem[]
+): Promise<AccountMailItem[]> {
+  const readMessageIds = await queryMailReadMessageIds(
+    db,
+    service,
+    account,
+    messages.map((item) => item.id)
+  );
+
+  if (readMessageIds.size === 0) {
+    return messages;
+  }
+
+  return messages.map((item) => (readMessageIds.has(item.id) ? { ...item, isRead: true } : item));
 }
 
 async function fetchAllCloudMailAccounts(

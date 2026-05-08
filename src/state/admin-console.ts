@@ -115,9 +115,18 @@ const selectedMail = computed(() => {
   return mailItems.value.find((item) => item.id === selectedMailId.value) ?? null;
 });
 
-function markMailAsRead(id: string): void {
+async function markMailAsRead(id: string): Promise<void> {
+  const target = mailItems.value.find((item) => item.id === id);
+  if (!target || target.isRead === true) {
+    return;
+  }
+
+  if (!mailAccountId.value) {
+    return;
+  }
+
   mailItems.value = mailItems.value.map((item) => {
-    if (item.id !== id || item.isRead === true) {
+    if (item.id !== id) {
       return item;
     }
     return {
@@ -125,6 +134,12 @@ function markMailAsRead(id: string): void {
       isRead: true
     };
   });
+
+  try {
+    await api.markAccountMailAsRead(mailAccountId.value, id);
+  } catch (error) {
+    handleApiError(error, false);
+  }
 }
 
 let authCheckPromise: Promise<boolean> | null = null;

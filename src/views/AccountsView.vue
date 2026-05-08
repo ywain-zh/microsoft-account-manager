@@ -650,7 +650,7 @@ async function handleImportText(): Promise<void> {
 
 function selectMail(id: string): void {
   selectedMailId.value = id;
-  markMailAsRead(id);
+  void markMailAsRead(id);
 }
 
 function handleMailVisibleChange(value: boolean): void {

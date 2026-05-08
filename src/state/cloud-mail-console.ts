@@ -253,9 +253,15 @@ const selectedMail = computed(() => {
   return mailItems.value.find((item) => item.id === selectedMailId.value) ?? null;
 });
 
-function markMailAsRead(id: string): void {
+async function markMailAsRead(id: string): Promise<void> {
+  const target = mailItems.value.find((item) => item.id === id);
+  const account = mailAccount.value.trim();
+  if (!target || target.isRead === true || !account) {
+    return;
+  }
+
   mailItems.value = mailItems.value.map((item) => {
-    if (item.id !== id || item.isRead === true) {
+    if (item.id !== id) {
       return item;
     }
     return {
@@ -264,6 +270,13 @@ function markMailAsRead(id: string): void {
     };
   });
   cacheCurrentMailMessages();
+
+  try {
+    await api.markCloudMailMessageAsRead(account, id);
+  } catch (error) {
+    rememberCloudMailServiceError(error);
+    handleApiError(error);
+  }
 }
 
 let initialLoadPromise: Promise<void> | null = null;
