@@ -191,7 +191,6 @@ type TranslationProvider = 'openai' | 'deeplx';
 
 interface TranslationConfig {
   enabled: boolean;
-  preferredProvider: TranslationProvider;
   openaiBaseUrl: string;
   openaiApiKey: string;
   openaiModel: string;
@@ -203,6 +202,12 @@ interface TranslationResponsePayload {
   provider: TranslationProvider;
   model?: string;
   translatedText: string;
+  translatedHtml?: string;
+}
+
+interface HtmlTranslationSegment {
+  marker: string;
+  text: string;
 }
 
 interface TranslationTestResult {
@@ -389,7 +394,6 @@ const TRANSLATION_TEST_TEXT = 'Your personal access token is about to expire in 
 
 const DEFAULT_TRANSLATION_CONFIG: TranslationConfig = {
   enabled: false,
-  preferredProvider: 'openai',
   openaiBaseUrl: '',
   openaiApiKey: '',
   openaiModel: DEFAULT_TRANSLATION_MODEL,
@@ -1363,10 +1367,11 @@ app.post('/api/translation/test', async (c) => {
 });
 
 app.post('/api/translation/translate', async (c) => {
-  const body = await readJson<{ text?: unknown }>(c);
+  const body = await readJson<{ html?: unknown; text?: unknown }>(c);
   const text = normalizeTranslationText(body.text);
+  const html = asText(body.html).trim();
   const config = await getTranslationConfig(c.env.DB);
-  const result = await translateTextToChinese(config, text);
+  const result = html ? await translateHtmlToChinese(config, html, text) : await translateTextToChinese(config, text);
   return c.json(result);
 });
 
@@ -2026,7 +2031,6 @@ function normalizeSub2ApiConfig(input: Partial<Sub2ApiConfig>): Sub2ApiConfig {
 function normalizeTranslationConfig(input: Partial<TranslationConfig>): TranslationConfig {
   return {
     enabled: input.enabled === true,
-    preferredProvider: normalizeTranslationProvider(input.preferredProvider) ?? 'openai',
     openaiBaseUrl: normalizeTranslationBaseUrl(input.openaiBaseUrl),
     openaiApiKey: asText(input.openaiApiKey).trim(),
     openaiModel: asText(input.openaiModel).trim() || DEFAULT_TRANSLATION_MODEL,
@@ -2342,21 +2346,20 @@ async function translateTextToChinese(
   }
 
   const errors: string[] = [];
-  const providers: TranslationProvider[] =
-    config.preferredProvider === 'deeplx' ? ['deeplx', 'openai'] : ['openai', 'deeplx'];
 
-  for (const provider of providers) {
-    const configured = provider === 'openai' ? hasOpenAiTranslationConfig(config) : hasDeepLxTranslationConfig(config);
-    if (!configured) {
-      continue;
-    }
-
+  if (hasOpenAiTranslationConfig(config)) {
     try {
-      return provider === 'openai'
-        ? await translateWithOpenAi(config, text)
-        : await translateWithDeepLx(config, text);
+      return await translateWithOpenAi(config, text);
     } catch (error) {
-      errors.push(`${provider === 'openai' ? 'OpenAI' : 'DeepLX'}: ${getErrorMessage(error)}`);
+      errors.push(`OpenAI: ${getErrorMessage(error)}`);
+    }
+  }
+
+  if (hasDeepLxTranslationConfig(config)) {
+    try {
+      return await translateWithDeepLx(config, text);
+    } catch (error) {
+      errors.push(`DeepLX: ${getErrorMessage(error)}`);
     }
   }
 
@@ -2367,9 +2370,139 @@ async function translateTextToChinese(
   throw new HTTPException(502, { message: `翻译失败：${errors.join('；')}` });
 }
 
+async function translateHtmlToChinese(
+  config: TranslationConfig,
+  html: string,
+  fallbackText: string
+): Promise<TranslationResponsePayload> {
+  const prepared = prepareHtmlForSegmentTranslation(html);
+  if (prepared.segments.length === 0) {
+    return translateTextToChinese(config, fallbackText);
+  }
+
+  const markedText = prepared.segments.map((segment) => `${segment.marker}\n${segment.text}`).join('\n\n');
+  const result = await translateTextToChineseWithPrompt(
+    config,
+    markedText,
+    '你是专业邮件翻译助手。请把每个标记下面的内容翻译成简体中文。必须原样保留形如 [[[MAIL_SEGMENT_0001]]] 的标记、标记顺序和分段数量。不要解释，不要添加原文没有的信息。保留链接、验证码、金额、日期和专有名词。'
+  );
+  const translations = parseSegmentTranslations(result.translatedText, prepared.segments);
+  const translatedHtml = applyHtmlSegmentTranslations(prepared.html, translations);
+
+  return {
+    ...result,
+    translatedText: Array.from(translations.values()).join('\n\n').trim() || result.translatedText,
+    translatedHtml
+  };
+}
+
+async function translateTextToChineseWithPrompt(
+  config: TranslationConfig,
+  text: string,
+  systemPrompt: string
+): Promise<TranslationResponsePayload> {
+  const errors: string[] = [];
+
+  if (hasOpenAiTranslationConfig(config)) {
+    try {
+      return await translateWithOpenAi(config, text, systemPrompt);
+    } catch (error) {
+      errors.push(`OpenAI: ${getErrorMessage(error)}`);
+    }
+  }
+
+  if (hasDeepLxTranslationConfig(config)) {
+    try {
+      return await translateWithDeepLx(config, text);
+    } catch (error) {
+      errors.push(`DeepLX: ${getErrorMessage(error)}`);
+    }
+  }
+
+  if (errors.length === 0) {
+    throw new HTTPException(400, { message: '请先配置 OpenAI 或 DeepLX 翻译服务' });
+  }
+
+  throw new HTTPException(502, { message: `翻译失败：${errors.join('；')}` });
+}
+
+function prepareHtmlForSegmentTranslation(html: string): { html: string; segments: HtmlTranslationSegment[] } {
+  const segments: HtmlTranslationSegment[] = [];
+  const preparedHtml = html.replace(/>([^<>]+)</g, (match, rawText: string) => {
+    const text = decodeHtmlEntities(rawText.replace(/\s+/g, ' ').trim());
+    if (!shouldTranslateHtmlText(text)) {
+      return match;
+    }
+
+    const marker = `[[[MAIL_SEGMENT_${String(segments.length + 1).padStart(4, '0')}]]]`;
+    segments.push({ marker, text });
+    return `>${marker}<`;
+  });
+
+  return { html: preparedHtml, segments };
+}
+
+function shouldTranslateHtmlText(text: string): boolean {
+  if (text.length < 2) {
+    return false;
+  }
+  if (/^https?:\/\//i.test(text) || /^[\w.+-]+@[\w.-]+\.[a-z]{2,}$/i.test(text)) {
+    return false;
+  }
+  if (!/[A-Za-z]/.test(text)) {
+    return false;
+  }
+  return true;
+}
+
+function parseSegmentTranslations(text: string, segments: HtmlTranslationSegment[]): Map<string, string> {
+  const translations = new Map<string, string>();
+  const markerPattern = /\[\[\[MAIL_SEGMENT_\d{4}\]\]\]/g;
+  const matches = Array.from(text.matchAll(markerPattern));
+
+  for (let index = 0; index < matches.length; index += 1) {
+    const marker = matches[index][0];
+    const start = (matches[index].index ?? 0) + marker.length;
+    const end = index + 1 < matches.length ? matches[index + 1].index ?? text.length : text.length;
+    const translated = text.slice(start, end).trim();
+    if (translated) {
+      translations.set(marker, translated);
+    }
+  }
+
+  for (const segment of segments) {
+    if (!translations.has(segment.marker)) {
+      translations.set(segment.marker, segment.text);
+    }
+  }
+
+  return translations;
+}
+
+function applyHtmlSegmentTranslations(html: string, translations: Map<string, string>): string {
+  let translatedHtml = html;
+  for (const [marker, translated] of translations) {
+    translatedHtml = translatedHtml.replaceAll(marker, escapeHtml(translated));
+  }
+  return translatedHtml;
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([\da-f]+);/gi, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 16)));
+}
+
 async function translateWithOpenAi(
   config: TranslationConfig,
-  text: string
+  text: string,
+  systemPrompt = '你是专业邮件翻译助手。只输出简体中文译文，不要解释，不要添加原文没有的信息。保留链接、验证码、金额、日期和专有名词。'
 ): Promise<TranslationResponsePayload> {
   validateOpenAiTranslationConfig(config);
 
@@ -2384,8 +2517,7 @@ async function translateWithOpenAi(
       messages: [
         {
           role: 'system',
-          content:
-            '你是专业邮件翻译助手。只输出简体中文译文，不要解释，不要添加原文没有的信息。保留链接、验证码、金额、日期、专有名词，以及形如 [[[MAIL_SEGMENT_0001]]] 的分段标记，标记必须原样输出且顺序不变。'
+          content: systemPrompt
         },
         {
           role: 'user',

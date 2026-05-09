@@ -1,12 +1,5 @@
 <template>
   <div class="page-stack page-container seven79-page">
-    <section class="page-header seven79-page-header">
-      <div class="page-title-wrap">
-        <h1 class="main-title">验卡工作台</h1>
-      </div>
-      <p class="page-desc">实时处理卡片数据提取与短信验证码同步</p>
-    </section>
-
     <section class="action-bar">
       <div class="action-bar-main">
         <div class="action-group action-group-left">
@@ -315,7 +308,7 @@
       </article>
     </section>
 
-    <AppModal v-model:show="listModalVisible" title="列表管理" size="full">
+    <n-modal v-model:show="listModalVisible" preset="card" title="列表管理" style="width: min(1280px, 96vw);">
       <div class="list-modal">
         <div class="list-toolbar">
           <div class="list-switch">
@@ -414,9 +407,9 @@
           </section>
         </div>
       </div>
-    </AppModal>
+    </n-modal>
 
-    <AppModal v-model:show="importVisible" title="批量导入 779 卡密" size="md">
+    <n-modal v-model:show="importVisible" preset="card" title="批量导入 779 卡密" style="width: min(720px, 92vw);">
       <n-form label-placement="top">
         <n-form-item label="卡密列表">
           <n-input
@@ -433,9 +426,9 @@
           <n-button type="primary" :loading="importLoading" @click="handleImport">导入</n-button>
         </div>
       </template>
-    </AppModal>
+    </n-modal>
 
-    <AppModal v-model:show="ppImportVisible" title="导入 PP 接码" size="md">
+    <n-modal v-model:show="ppImportVisible" preset="card" title="导入 PP 接码" style="width: min(760px, 92vw);">
       <n-form label-placement="top">
         <n-form-item label="PP 接码列表">
           <n-input
@@ -452,7 +445,7 @@
           <n-button type="primary" :loading="ppImportLoading" @click="handleImportPp">导入</n-button>
         </div>
       </template>
-    </AppModal>
+    </n-modal>
   </div>
 </template>
 
@@ -466,6 +459,7 @@ import {
   NForm,
   NFormItem,
   NInput,
+  NModal,
   NSelect,
   NTag,
   type DataTableColumns
@@ -2556,10 +2550,9 @@ onMounted(async () => {
 
 .modal-panel {
   overflow: hidden;
-  border: 0;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.64);
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.04);
+  border: 1px solid #e8eef6;
+  border-radius: 12px;
+  background: #f8fafc;
 }
 
 .table-shell {
@@ -2639,8 +2632,7 @@ onMounted(async () => {
 }
 
 :deep(.n-modal .n-card) {
-  border: 0 !important;
-  border-radius: 20px !important;
+  border-radius: 16px;
 }
 
 :deep(.seven79-table .n-data-table-base-table-header) {

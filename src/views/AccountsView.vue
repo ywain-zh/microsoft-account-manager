@@ -1,7 +1,7 @@
 <template>
   <div class="page-stack page-stack-compact page-container mailbox-page mailbox-page-microsoft">
-    <AppListPanel class="content-card account-list-card main-card mailbox-card">
-      <template #toolbar>
+    <n-card :bordered="false" size="small" class="content-card account-list-card main-card mailbox-card">
+      <div class="mailbox-card-shell mailbox-card-shell-microsoft">
         <div class="list-toolbar list-toolbar-spec list-toolbar-left-aligned microsoft-toolbar">
           <div class="list-toolbar-block list-toolbar-block-search">
             <n-input
@@ -81,7 +81,6 @@
             </n-button>
           </div>
         </div>
-      </template>
 
         <div class="mailbox-table-shell mailbox-table-shell-microsoft">
           <n-data-table
@@ -99,7 +98,6 @@
           />
         </div>
 
-      <template #footer>
         <div class="list-footer list-footer-card">
           <div class="list-footer-meta">共 {{ accounts.length }} 条</div>
           <n-pagination
@@ -112,13 +110,15 @@
             show-quick-jumper
           />
         </div>
-      </template>
-    </AppListPanel>
+      </div>
+    </n-card>
 
-    <AppModal
+    <n-modal
       v-model:show="createVisible"
+      preset="card"
+      :bordered="false"
+      class="console-modal"
       title="新增账户"
-      size="lg"
     >
       <n-form label-placement="top">
         <n-grid :cols="24" :x-gap="14" :y-gap="8">
@@ -158,12 +158,14 @@
           </n-button>
         </n-space>
       </template>
-    </AppModal>
+    </n-modal>
 
-    <AppModal
+    <n-modal
       v-model:show="importVisible"
+      preset="card"
+      :bordered="false"
+      class="console-modal"
       title="批量导入"
-      size="md"
     >
       <div class="import-modal-body">
         <n-input
@@ -194,12 +196,14 @@
           </n-space>
         </div>
       </template>
-    </AppModal>
+    </n-modal>
 
-    <AppModal
+    <n-modal
       v-model:show="editVisible"
+      preset="card"
+      :bordered="false"
+      class="console-modal"
       title="编辑账户"
-      size="lg"
     >
       <n-form label-placement="top">
         <n-grid :cols="24" :x-gap="14" :y-gap="8">
@@ -234,13 +238,14 @@
           </n-button>
         </n-space>
       </template>
-    </AppModal>
+    </n-modal>
 
-    <AppModal
+    <n-modal
       v-model:show="remarkVisible"
+      preset="card"
+      :bordered="false"
+      class="console-modal microsoft-remark-modal"
       title="编辑备注"
-      size="sm"
-      card-class="microsoft-remark-modal"
     >
       <n-form label-placement="top" autocomplete="off">
         <n-form-item label="邮箱">
@@ -264,7 +269,7 @@
           </n-button>
         </n-space>
       </template>
-    </AppModal>
+    </n-modal>
 
     <MailInboxViewer
       :show="mailVisible"
@@ -287,12 +292,14 @@ import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
   NButton,
+  NCard,
   NDataTable,
   NForm,
   NFormItem,
   NGi,
   NGrid,
   NInput,
+  NModal,
   NPagination,
   NSpace,
   NTag,

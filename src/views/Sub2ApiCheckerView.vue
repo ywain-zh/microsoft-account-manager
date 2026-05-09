@@ -1,8 +1,13 @@
 <template>
   <div class="page-container sub2api-page">
-    <AppListPanel class="main-card sub2api-main-panel" tone="roomy">
-      <template #toolbar>
-        <div class="toolbar">
+    <n-card
+      class="main-card"
+      :bordered="false"
+      content-style="padding: 24px; display: flex; flex-direction: column; gap: 20px;"
+    >
+      <div class="toolbar">
+        <span class="tag-pill blue">鉴权: x-api-key</span>
+        <span class="tag-pill green">模型: {{ modelId }}</span>
         <button class="btn btn-default" type="button" @click="showConfigModal = true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="3"></circle>
@@ -45,7 +50,6 @@
           清空日志
         </button>
       </div>
-      </template>
 
       <div class="stats-grid">
         <div v-for="item in summaryCards" :key="item.key" class="stat-card" :class="[`c-${item.tone}`, item.clickable ? 'is-clickable' : '']">
@@ -93,9 +97,9 @@
           </div>
         </div>
       </div>
-    </AppListPanel>
+    </n-card>
 
-    <AppModal v-model:show="showConfigModal" title="连接配置" size="sm">
+    <n-modal v-model:show="showConfigModal" preset="card" title="连接配置" style="width: 600px; border-radius: 12px;">
       <p class="config-modal-desc">所有检测请求都由本项目后端发起，页面不会直接暴露 Sub2API 管理员 Key。</p>
       <n-form label-placement="top" autocomplete="off" class="config-modal-form">
         <div class="form-autofill-guard" aria-hidden="true">
@@ -129,12 +133,13 @@
           <n-button type="primary" :loading="configSaving" @click="handleSaveConfig">保存配置</n-button>
         </div>
       </template>
-    </AppModal>
+    </n-modal>
 
-    <AppModal
+    <n-modal
       v-model:show="showAbnormalAccountsModal"
+      preset="card"
       title="异常账号列表"
-      size="lg"
+      style="width: min(920px, 94vw); border-radius: 12px;"
     >
       <div class="abnormal-modal-body">
         <div class="abnormal-modal-summary">
@@ -185,13 +190,13 @@
           <n-button @click="closeAbnormalAccountsModal">关闭</n-button>
         </div>
       </template>
-    </AppModal>
+    </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { NButton, NForm, NFormItem, NInput, NPagination } from 'naive-ui';
+import { NButton, NCard, NForm, NFormItem, NInput, NModal, NPagination } from 'naive-ui';
 import { useSub2ApiConsole } from '../state/sub2api-console';
 import type { Sub2ApiDetectedIssueItem, Sub2ApiLogLevel } from '../types';
 

@@ -1,7 +1,7 @@
 <template>
   <div class="page-stack page-stack-compact page-container mailbox-page mailbox-page-cloud">
-    <AppListPanel class="content-card cloud-mail-card main-card mailbox-card">
-      <template #toolbar>
+    <n-card :bordered="false" size="small" class="content-card cloud-mail-card main-card mailbox-card">
+      <div class="mailbox-card-shell mailbox-card-shell-cloud">
         <div class="list-toolbar list-toolbar-spec list-toolbar-left-aligned cloud-toolbar">
           <div class="list-toolbar-block list-toolbar-block-search list-toolbar-block-search-wide">
             <n-input
@@ -71,7 +71,6 @@
             </n-button>
           </div>
         </div>
-      </template>
 
         <template v-if="hasConfiguredCloudMail">
           <div v-if="serviceErrorMessage" class="cloud-mail-service-alert">
@@ -100,6 +99,20 @@
             />
           </div>
 
+          <div class="list-footer list-footer-card">
+            <div class="list-footer-meta">共 {{ total }} 条</div>
+            <n-pagination
+              :page="tablePage"
+              :page-size="tablePageSize"
+              size="small"
+              :item-count="total"
+              :page-sizes="[10, 20, 50, 100]"
+              show-size-picker
+              show-quick-jumper
+              @update:page="handlePageChange"
+              @update:page-size="handlePageSizeChange"
+            />
+          </div>
         </template>
 
         <div v-else class="cloud-mail-empty-shell">
@@ -117,29 +130,15 @@
             保存 API URI、管理员邮箱、管理员密码与可用域名后，就可以直接在这里拉取邮箱列表、新增邮箱和批量删除。
           </p>
         </div>
+      </div>
+    </n-card>
 
-      <template #footer>
-        <div v-if="hasConfiguredCloudMail" class="list-footer list-footer-card">
-          <div class="list-footer-meta">共 {{ total }} 条</div>
-          <n-pagination
-            :page="tablePage"
-            :page-size="tablePageSize"
-            size="small"
-            :item-count="total"
-            :page-sizes="[10, 20, 50, 100]"
-            show-size-picker
-            show-quick-jumper
-            @update:page="handlePageChange"
-            @update:page-size="handlePageSizeChange"
-          />
-        </div>
-      </template>
-    </AppListPanel>
-
-    <AppModal
+    <n-modal
       v-model:show="configVisible"
+      preset="card"
+      :bordered="false"
+      class="console-modal"
       title="Cloud Mail 配置信息"
-      size="lg"
     >
       <n-form label-placement="top" autocomplete="off">
         <div class="form-autofill-guard" aria-hidden="true">
@@ -203,13 +202,14 @@
           </n-button>
         </n-space>
       </template>
-    </AppModal>
+    </n-modal>
 
-    <AppModal
+    <n-modal
       v-model:show="createVisible"
+      preset="card"
+      :bordered="false"
+      class="console-modal cloud-mail-create-modal"
       title="新增邮箱"
-      size="md"
-      card-class="cloud-mail-create-modal"
     >
       <n-form label-placement="top" autocomplete="off">
         <div class="form-autofill-guard" aria-hidden="true">
@@ -261,13 +261,14 @@
           </n-button>
         </n-space>
       </template>
-    </AppModal>
+    </n-modal>
 
-    <AppModal
+    <n-modal
       v-model:show="remarkVisible"
+      preset="card"
+      :bordered="false"
+      class="console-modal cloud-mail-remark-modal"
       title="编辑备注"
-      size="sm"
-      card-class="cloud-mail-remark-modal"
     >
       <n-form label-placement="top" autocomplete="off">
         <n-form-item label="邮箱">
@@ -292,7 +293,7 @@
           </n-button>
         </n-space>
       </template>
-    </AppModal>
+    </n-modal>
 
     <MailInboxViewer
       :show="mailVisible"
@@ -314,12 +315,14 @@
 import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue';
 import {
   NButton,
+  NCard,
   NDataTable,
   NForm,
   NFormItem,
   NGi,
   NGrid,
   NInput,
+  NModal,
   NPagination,
   NSelect,
   NSpace,

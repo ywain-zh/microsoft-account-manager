@@ -1,12 +1,7 @@
 <template>
   <div class="page-stack page-stack-compact interface-page interface-page-compact page-container">
-    <section class="page-header">
-      <h1 class="main-title">接口配置与调用文档</h1>
-      <p class="page-desc">统一维护上传映射配置，并查看开放 API 与管理端 API 说明。</p>
-    </section>
-
     <div class="interface-grid interface-grid-balanced">
-      <AppListPanel class="content-card interface-card main-card" tone="compact">
+      <n-card :bordered="false" size="small" class="content-card interface-card main-card">
         <div class="card-section-stack">
           <div class="card-section-header">
             <p class="section-kicker">Upload Endpoint</p>
@@ -21,9 +16,9 @@
             <p><strong>鉴权头：</strong>{{ ingestTokenHeader }}: &lt;INGEST_TOKEN&gt;</p>
           </div>
         </div>
-      </AppListPanel>
+      </n-card>
 
-      <AppListPanel class="content-card interface-card main-card" tone="compact">
+      <n-card :bordered="false" size="small" class="content-card interface-card main-card">
         <div class="card-section-stack">
           <div class="card-section-header">
             <p class="section-kicker">Mapping Config</p>
@@ -72,10 +67,10 @@
             </n-button>
           </div>
         </div>
-      </AppListPanel>
+      </n-card>
     </div>
 
-    <AppListPanel class="content-card interface-card main-card" tone="compact">
+    <n-card :bordered="false" size="small" class="content-card interface-card main-card">
       <div class="card-section-stack">
         <div class="card-section-header">
           <p class="section-kicker">Examples</p>
@@ -92,9 +87,9 @@
           <n-code :code="curlExample" language="bash" word-wrap />
         </n-space>
       </div>
-    </AppListPanel>
+    </n-card>
 
-    <AppListPanel class="content-card interface-card main-card" tone="compact">
+    <n-card :bordered="false" size="small" class="content-card interface-card main-card">
       <div class="card-section-stack">
         <div class="card-section-header">
           <p class="section-kicker">Overview</p>
@@ -119,10 +114,10 @@
           <li><code>POST /api/auth/login</code>：后台登录，登录后可调用管理端 API。</li>
         </ul>
       </div>
-    </AppListPanel>
+    </n-card>
 
     <div class="interface-grid">
-      <AppListPanel class="content-card interface-card main-card" tone="compact">
+      <n-card :bordered="false" size="small" class="content-card interface-card main-card">
         <div class="card-section-stack">
           <div class="card-section-header">
             <p class="section-kicker">Open API</p>
@@ -147,9 +142,9 @@
             <n-code :code="openApiCurlDeleteAccount" language="bash" word-wrap />
           </n-space>
         </div>
-      </AppListPanel>
+      </n-card>
 
-      <AppListPanel class="content-card interface-card main-card" tone="compact">
+      <n-card :bordered="false" size="small" class="content-card interface-card main-card">
         <div class="card-section-stack">
           <div class="card-section-header">
             <p class="section-kicker">Admin API</p>
@@ -163,7 +158,7 @@
             <n-code :code="adminLoginCurl" language="bash" word-wrap />
           </n-space>
         </div>
-      </AppListPanel>
+      </n-card>
     </div>
   </div>
 </template>
@@ -172,6 +167,7 @@
 import { computed, onMounted } from 'vue';
 import {
   NButton,
+  NCard,
   NCode,
   NForm,
   NFormItem,

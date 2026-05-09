@@ -265,6 +265,13 @@ export const api = {
     });
   },
 
+  translateMailHtml(payload: { html: string; text: string }): Promise<TranslationResponse> {
+    return request<TranslationResponse>('/api/translation/translate', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
   startSub2ApiCheck(signal?: AbortSignal): Promise<Response> {
     return requestStream('/api/sub2api/check', {
       method: 'POST',

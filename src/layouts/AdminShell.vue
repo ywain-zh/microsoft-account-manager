@@ -13,7 +13,6 @@
           :to="item.path"
           class="console-nav-link-flat"
           :class="{ 'console-nav-link-flat-active': route.path === item.path }"
-          :aria-current="route.path === item.path ? 'page' : undefined"
         >
           <span class="console-nav-link-icon" aria-hidden="true">
             <svg v-if="item.key === 'cloud-mail'" viewBox="0 0 24 24" fill="none">
@@ -137,21 +136,21 @@
 
     <main class="console-main-flat">
       <header class="console-topbar-flat">
-        <div class="console-topbar-copy">
-          <strong class="console-topbar-title">{{ pageTitle }}</strong>
-          <span class="console-topbar-subtitle">{{ pageDescription }}</span>
+        <div class="console-page-heading">
+          <h1 class="console-page-title">{{ pageTitle }}</h1>
+          <p class="console-page-desc">{{ pageDescription }}</p>
         </div>
         <div class="console-topbar-actions">
-          <div class="console-admin-pill" aria-label="当前管理员">
-            <span class="console-admin-avatar">{{ userInitials }}</span>
-            <span class="console-user-copy">
-              <strong>{{ currentUser || 'admin' }}</strong>
-              <small>Admin</small>
-            </span>
-          </div>
-          <n-button text class="header-logout-button-flat" :loading="logoutLoading" @click="handleLogout">
-            退出登录
-          </n-button>
+          <n-dropdown :options="userMenuOptions" trigger="click" @select="handleUserMenuSelect">
+            <button class="console-admin-profile" type="button" aria-label="当前管理员菜单">
+              <span class="console-admin-avatar">{{ userInitials }}</span>
+              <span class="console-admin-copy">
+                <strong>{{ currentUser || 'admin' }}</strong>
+                <small>Admin</small>
+              </span>
+              <span class="console-admin-caret" aria-hidden="true">▼</span>
+            </button>
+          </n-dropdown>
         </div>
       </header>
 
@@ -164,25 +163,30 @@
 
 <script setup lang="ts">
 import { computed, watch } from 'vue';
-import { NButton } from 'naive-ui';
+import { NDropdown } from 'naive-ui';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 import WangyueLogo from '../components/WangyueLogo.vue';
 import { consoleNavigation, defaultConsoleRoute } from '../config/navigation';
 import { useAdminConsole } from '../state/admin-console';
 
 const admin = useAdminConsole();
-const { currentUser, isAuthenticated, logoutLoading } = admin;
+const { currentUser, isAuthenticated } = admin;
 const route = useRoute();
 const router = useRouter();
 const navigation = consoleNavigation;
 const pageTitle = computed(() => String(route.meta.title ?? '望月工具箱'));
 const pageDescription = computed(() => String(route.meta.description ?? '管理后台工具与服务配置。'));
+const userMenuOptions = [{ label: '退出登录', key: 'logout' }];
 const userInitials = computed(() => {
   const normalized = (currentUser.value || 'admin').trim();
   return normalized.slice(0, 2).toUpperCase();
 });
 
-async function handleLogout(): Promise<void> {
+async function handleUserMenuSelect(key: string): Promise<void> {
+  if (key !== 'logout') {
+    return;
+  }
+
   await admin.logout();
   await router.replace('/login');
 }
