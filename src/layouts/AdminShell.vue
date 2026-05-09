@@ -13,6 +13,7 @@
           :to="item.path"
           class="console-nav-link-flat"
           :class="{ 'console-nav-link-flat-active': route.path === item.path }"
+          :aria-current="route.path === item.path ? 'page' : undefined"
         >
           <span class="console-nav-link-icon" aria-hidden="true">
             <svg v-if="item.key === 'cloud-mail'" viewBox="0 0 24 24" fill="none">

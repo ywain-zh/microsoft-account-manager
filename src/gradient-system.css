@@ -1412,3 +1412,883 @@ a:focus-visible,
     transition-duration: 0.001ms !important;
   }
 }
+
+:root {
+  --wg-navy: #1e3a5f;
+  --wg-navy-strong: #0f2747;
+  --wg-blue: #2563eb;
+  --wg-blue-soft: #dbeafe;
+  --wg-accent: #059669;
+  --wg-accent-soft: #d1fae5;
+  --wg-page: #f8fafc;
+  --wg-page-warm: #f3f7fb;
+  --wg-ink: #0f172a;
+  --wg-ink-strong: #020617;
+  --wg-muted: #475569;
+  --wg-subtle: #64748b;
+  --wg-disabled: #94a3b8;
+  --wg-line: rgba(30, 58, 95, 0.12);
+  --wg-line-strong: rgba(37, 99, 235, 0.24);
+  --wg-surface: rgba(255, 255, 255, 0.82);
+  --wg-surface-strong: rgba(255, 255, 255, 0.96);
+  --wg-surface-soft: rgba(241, 245, 249, 0.78);
+  --wg-danger: #dc2626;
+  --wg-danger-soft: #fee2e2;
+  --wg-warning: #d97706;
+  --wg-warning-soft: #fef3c7;
+  --wg-success: #059669;
+  --wg-success-soft: #d1fae5;
+  --wg-primary: var(--wg-navy);
+  --wg-primary-dark: var(--wg-navy-strong);
+  --wg-cyan: var(--wg-blue);
+  --wg-emerald: var(--wg-accent);
+  --wg-aurora: linear-gradient(135deg, #1e3a5f 0%, #2563eb 54%, #059669 100%);
+  --wg-aurora-soft: linear-gradient(135deg, rgba(30, 58, 95, 0.1) 0%, rgba(37, 99, 235, 0.1) 52%, rgba(5, 150, 105, 0.09) 100%);
+  --wg-sunset: linear-gradient(135deg, #f59e0b 0%, #2563eb 48%, #059669 100%);
+  --wg-deep: linear-gradient(135deg, #0f2747 0%, #1e3a5f 52%, #2563eb 100%);
+  --wg-radius-xs: 8px;
+  --wg-radius-sm: 10px;
+  --wg-radius: 14px;
+  --wg-radius-md: 16px;
+  --wg-radius-lg: 20px;
+  --wg-radius-xl: 26px;
+  --wg-radius-pill: 999px;
+  --wg-shadow-sm: 0 8px 20px rgba(15, 23, 42, 0.05);
+  --wg-shadow-soft: 0 14px 36px rgba(15, 23, 42, 0.08);
+  --wg-shadow-card: 0 18px 48px rgba(15, 23, 42, 0.09);
+  --wg-shadow-lg: 0 28px 80px rgba(15, 23, 42, 0.16);
+  --wg-shadow-glow: 0 16px 34px rgba(37, 99, 235, 0.18);
+  --wg-focus: 0 0 0 3px rgba(37, 99, 235, 0.18);
+  --wg-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --wg-duration-fast: 140ms;
+  --wg-duration-base: 200ms;
+  --wg-duration-slow: 280ms;
+}
+
+html,
+body,
+#app {
+  color: var(--wg-ink);
+  background: var(--wg-page);
+  font-family: "Manrope", "Noto Sans SC", "Plus Jakarta Sans", "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button,
+a,
+[role="button"],
+.n-button,
+.n-checkbox,
+.n-radio,
+.n-switch,
+.n-base-selection,
+.n-input {
+  touch-action: manipulation;
+}
+
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+.n-button:focus-visible,
+.n-checkbox:focus-within,
+.n-radio:focus-within,
+.n-switch:focus-within,
+.n-input:focus-within,
+.n-base-selection:focus-within {
+  outline: 2px solid rgba(37, 99, 235, 0.72) !important;
+  outline-offset: 2px !important;
+  box-shadow: var(--wg-focus) !important;
+}
+
+.gradient-text,
+.console-content-flat .main-title,
+.console-content-flat .page-title h1,
+.console-content-flat .page-header h1,
+.console-content-flat .mailbox-page-title h1,
+.console-content-flat .settings-page h1,
+.console-content-flat .sub2api-page .page-title h1 {
+  color: var(--wg-navy) !important;
+  background: none !important;
+  -webkit-text-fill-color: currentColor !important;
+}
+
+.console-content-flat .page-desc,
+.console-content-flat .mailbox-page-title p,
+.console-content-flat .settings-subtitle,
+.console-content-flat .page-title p,
+.console-topbar-subtitle {
+  color: var(--wg-subtle) !important;
+}
+
+.console-shell-flat {
+  background:
+    radial-gradient(circle at 10% 8%, rgba(37, 99, 235, 0.12), transparent 30%),
+    radial-gradient(circle at 92% 16%, rgba(5, 150, 105, 0.13), transparent 32%),
+    linear-gradient(180deg, #fbfdff 0%, #f3f7fb 48%, #eef5f9 100%) !important;
+}
+
+.console-shell-flat::before {
+  background:
+    radial-gradient(circle at 36% 18%, rgba(30, 58, 95, 0.12), transparent 30%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0.86)) !important;
+  animation: none !important;
+}
+
+.console-shell-flat::after {
+  background-image:
+    linear-gradient(rgba(30, 58, 95, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(30, 58, 95, 0.045) 1px, transparent 1px) !important;
+  background-size: 36px 36px !important;
+}
+
+.console-sidebar-flat {
+  width: 244px !important;
+  flex: 0 0 244px !important;
+  background: rgba(255, 255, 255, 0.82) !important;
+  border-right: 1px solid var(--wg-line) !important;
+  box-shadow: 14px 0 38px rgba(15, 23, 42, 0.05) !important;
+}
+
+.console-sidebar-flat::after {
+  background: linear-gradient(180deg, transparent, rgba(30, 58, 95, 0.22), transparent) !important;
+  opacity: 1 !important;
+}
+
+.console-brand-flat {
+  min-height: 76px !important;
+  padding: 18px 20px !important;
+  border-bottom: 1px solid var(--wg-line) !important;
+}
+
+.console-brand-logo {
+  border-radius: 12px !important;
+  box-shadow: 0 14px 28px rgba(30, 58, 95, 0.16) !important;
+}
+
+.console-brand-name,
+.console-topbar-title,
+.app-modal-title,
+.section-title span,
+.stat-card-value,
+.metric-value {
+  color: var(--wg-ink) !important;
+}
+
+.console-brand-name,
+.console-topbar-title {
+  font-weight: 850 !important;
+}
+
+.console-nav-flat {
+  padding: 18px 14px !important;
+  gap: 8px !important;
+}
+
+.console-nav-link-flat {
+  min-height: 46px !important;
+  padding: 0 14px !important;
+  border-radius: 13px !important;
+  color: var(--wg-muted) !important;
+  font-weight: 760 !important;
+  border: 1px solid transparent !important;
+}
+
+.console-nav-link-flat svg {
+  width: 18px !important;
+  height: 18px !important;
+  color: var(--wg-subtle) !important;
+}
+
+.console-nav-link-flat:hover {
+  color: var(--wg-navy) !important;
+  background: rgba(248, 250, 252, 0.9) !important;
+  border-color: rgba(37, 99, 235, 0.16) !important;
+  box-shadow: var(--wg-shadow-sm) !important;
+  transform: translateX(2px) !important;
+}
+
+.console-nav-link-flat:hover svg {
+  color: var(--wg-blue) !important;
+}
+
+.console-nav-link-flat-active {
+  color: #ffffff !important;
+  background: var(--wg-deep) !important;
+  border-color: transparent !important;
+  box-shadow: 0 14px 30px rgba(30, 58, 95, 0.2) !important;
+}
+
+.console-nav-link-flat-active::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  width: 3px;
+  height: 20px;
+  border-radius: var(--wg-radius-pill);
+  background: rgba(255, 255, 255, 0.88);
+  transform: translateY(-50%);
+}
+
+.console-nav-link-flat-active svg {
+  color: #ffffff !important;
+}
+
+.console-topbar-flat {
+  min-height: 72px !important;
+  padding: 0 32px !important;
+  background: rgba(255, 255, 255, 0.88) !important;
+  border-bottom: 1px solid var(--wg-line) !important;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.04) !important;
+}
+
+.console-admin-pill {
+  min-height: 42px !important;
+  border: 1px solid var(--wg-line) !important;
+  border-radius: var(--wg-radius-pill) !important;
+  background: rgba(255, 255, 255, 0.82) !important;
+  box-shadow: var(--wg-shadow-sm) !important;
+}
+
+.console-admin-avatar,
+.login-logo,
+.auth-logo {
+  background: var(--wg-deep) !important;
+  box-shadow: 0 12px 24px rgba(30, 58, 95, 0.2) !important;
+}
+
+.header-logout-button-flat,
+.console-logout {
+  color: var(--wg-muted) !important;
+  border-radius: var(--wg-radius-pill) !important;
+}
+
+.header-logout-button-flat:hover,
+.console-logout:hover {
+  color: var(--wg-danger) !important;
+  background: rgba(254, 226, 226, 0.5) !important;
+}
+
+.console-content-flat {
+  padding: 26px 32px 36px !important;
+}
+
+.main-card,
+.content-card,
+.account-list-card,
+.cloud-mail-card,
+.mailbox-card,
+.interface-card,
+.settings-card,
+.list-footer-card,
+.sub2api-page .main-card,
+.mailbox-card-shell,
+.cloud-mail-config-strip,
+.modal-section,
+.account-detail-section,
+.mail-viewer-shell,
+.mail-viewer-reading-panel,
+.mail-viewer-sidebar,
+.console-modal,
+.n-modal .n-card,
+.app-list-panel {
+  border: 1px solid var(--wg-line) !important;
+  border-radius: var(--wg-radius-lg) !important;
+  background: linear-gradient(180deg, var(--wg-surface-strong), var(--wg-surface)) !important;
+  box-shadow: var(--wg-shadow-card) !important;
+  backdrop-filter: blur(18px);
+}
+
+.app-list-panel,
+.app-list-panel.main-card,
+.app-list-panel.content-card,
+.app-list-panel.interface-card,
+.app-list-panel.settings-card,
+.app-list-panel.mailbox-card,
+.app-list-panel.account-list-card,
+.app-list-panel.cloud-mail-card,
+.app-list-panel.sub2api-main-panel {
+  padding: 18px !important;
+  border: 1px solid var(--wg-line) !important;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.82)),
+    var(--wg-aurora-soft) !important;
+  box-shadow: var(--wg-shadow-card) !important;
+}
+
+.app-list-panel-compact {
+  padding: 14px !important;
+}
+
+.app-list-panel-roomy {
+  padding: 26px !important;
+}
+
+.app-list-panel-toolbar {
+  margin-bottom: 18px !important;
+}
+
+.app-list-panel-footer {
+  margin-top: 14px !important;
+  padding-top: 14px;
+  border-top: 1px solid rgba(30, 58, 95, 0.08);
+}
+
+.config-item,
+.detail-card,
+.stat-card,
+.metric-card,
+.section-card,
+.test-result,
+.mailbox-summary-card,
+.mail-empty-card,
+.empty-state-card,
+.info-panel,
+.sms-block,
+.modal-panel,
+.quick-check-strip {
+  border: 1px solid var(--wg-line) !important;
+  border-radius: var(--wg-radius-md) !important;
+  background: rgba(255, 255, 255, 0.84) !important;
+  box-shadow: var(--wg-shadow-sm) !important;
+}
+
+.stat-card:hover,
+.metric-card:hover,
+.detail-card:hover,
+.work-card:hover {
+  transform: translateY(-2px) !important;
+  border-color: var(--wg-line-strong) !important;
+  box-shadow: var(--wg-shadow-soft) !important;
+}
+
+.app-modal-card,
+.console-modal,
+.n-modal .n-card.app-modal-card,
+.n-modal .n-card.console-modal,
+.inbox-modal-card {
+  border: 1px solid rgba(226, 232, 240, 0.9) !important;
+  border-radius: var(--wg-radius-xl) !important;
+  background: rgba(255, 255, 255, 0.96) !important;
+  box-shadow: var(--wg-shadow-lg) !important;
+}
+
+.app-modal-header,
+.modal-header,
+.mail-detail-header {
+  border-bottom: 1px solid rgba(30, 58, 95, 0.08) !important;
+}
+
+.app-modal-header {
+  padding: 22px 26px 16px !important;
+}
+
+.app-modal-body {
+  padding: 18px 26px 24px !important;
+}
+
+.app-modal-footer {
+  padding: 16px 26px 24px !important;
+  border-top: 1px solid rgba(30, 58, 95, 0.08) !important;
+  background: rgba(248, 250, 252, 0.74) !important;
+}
+
+.app-modal-close,
+.btn-close,
+.copy-button,
+.copy-icon-button,
+.remark-edit-button,
+.virtual-line-copy-button {
+  min-width: 34px;
+  min-height: 34px;
+  border: 1px solid rgba(30, 58, 95, 0.1) !important;
+  border-radius: var(--wg-radius-sm) !important;
+  color: var(--wg-muted) !important;
+  background: rgba(248, 250, 252, 0.9) !important;
+}
+
+.app-modal-close:hover,
+.btn-close:hover,
+.copy-button:hover,
+.copy-icon-button:hover,
+.remark-edit-button:hover,
+.virtual-line-copy-button:hover {
+  color: var(--wg-blue) !important;
+  border-color: rgba(37, 99, 235, 0.24) !important;
+  background: rgba(219, 234, 254, 0.72) !important;
+  transform: translateY(-1px) !important;
+}
+
+.n-button,
+.btn,
+.translation-button,
+.action-button-primary,
+.action-button-secondary,
+.action-button-ghost,
+.subscription-link-button,
+.refresh-button,
+.switch-button {
+  min-height: 38px;
+  border-radius: 11px !important;
+  font-weight: 760 !important;
+  letter-spacing: 0 !important;
+}
+
+.toolbar-button-primary.n-button,
+.toolbar-button-secondary-primary.n-button,
+.toolbar-button-import.n-button,
+.toolbar-button-oauth.n-button,
+.dialog-primary-button.n-button,
+.auth-primary-button.n-button,
+.empty-primary-button.n-button,
+.section-primary-button.n-button,
+.settings-page .n-button--primary-type,
+.btn-success,
+.translation-button-primary,
+.action-button-primary.n-button,
+.refresh-button.n-button:not(.refresh-button-inline) {
+  --n-color: transparent !important;
+  --n-color-hover: transparent !important;
+  --n-color-pressed: transparent !important;
+  --n-color-focus: transparent !important;
+  --n-border: 0 !important;
+  --n-border-hover: 0 !important;
+  --n-border-pressed: 0 !important;
+  --n-border-focus: 0 !important;
+  --n-text-color: #ffffff !important;
+  --n-text-color-hover: #ffffff !important;
+  --n-text-color-pressed: #ffffff !important;
+  --n-text-color-focus: #ffffff !important;
+  color: #ffffff !important;
+  border: 0 !important;
+  background: var(--wg-deep) !important;
+  box-shadow: var(--wg-shadow-glow) !important;
+}
+
+.toolbar-button-primary.n-button:not(.n-button--disabled):hover,
+.toolbar-button-secondary-primary.n-button:not(.n-button--disabled):hover,
+.toolbar-button-import.n-button:not(.n-button--disabled):hover,
+.toolbar-button-oauth.n-button:not(.n-button--disabled):hover,
+.dialog-primary-button.n-button:not(.n-button--disabled):hover,
+.auth-primary-button.n-button:not(.n-button--disabled):hover,
+.empty-primary-button.n-button:not(.n-button--disabled):hover,
+.section-primary-button.n-button:not(.n-button--disabled):hover,
+.settings-page .n-button--primary-type:not(.n-button--disabled):hover,
+.btn-success:not(:disabled):hover,
+.translation-button-primary:not(:disabled):hover,
+.action-button-primary.n-button:not(.n-button--disabled):hover {
+  filter: brightness(1.05) !important;
+}
+
+.toolbar-button.n-button,
+.dialog-secondary-button.n-button,
+.toolbar-button-default.n-button,
+.toolbar-button-refresh.n-button,
+.toolbar-button-muted.n-button,
+.toolbar-button-test.n-button,
+.section-secondary-button.n-button,
+.btn-default,
+.translation-button-secondary,
+.settings-page .n-button:not(.n-button--primary-type):not(.n-button--error-type),
+.action-button-secondary.n-button,
+.action-button-ghost.n-button,
+.subscription-link-button.n-button,
+.refresh-button-inline.n-button {
+  --n-color: rgba(255, 255, 255, 0.88) !important;
+  --n-color-hover: #ffffff !important;
+  --n-color-pressed: rgba(248, 250, 252, 0.96) !important;
+  --n-color-focus: #ffffff !important;
+  --n-border: 1px solid var(--wg-line) !important;
+  --n-border-hover: 1px solid var(--wg-line-strong) !important;
+  --n-border-pressed: 1px solid rgba(30, 58, 95, 0.34) !important;
+  --n-border-focus: 1px solid rgba(37, 99, 235, 0.46) !important;
+  --n-text-color: var(--wg-muted) !important;
+  --n-text-color-hover: var(--wg-navy) !important;
+  --n-text-color-pressed: var(--wg-navy) !important;
+  --n-text-color-focus: var(--wg-navy) !important;
+  color: var(--wg-muted) !important;
+  border: 1px solid var(--wg-line) !important;
+  background: rgba(255, 255, 255, 0.88) !important;
+  box-shadow: var(--wg-shadow-sm) !important;
+}
+
+.toolbar-button-danger.n-button,
+.toolbar-button-delete.n-button,
+.batch-delete-button.n-button,
+.delete-button.n-button,
+.btn-danger,
+.btn-danger-ghost {
+  --n-color: rgba(254, 242, 242, 0.95) !important;
+  --n-color-hover: #fee2e2 !important;
+  --n-border: 1px solid rgba(220, 38, 38, 0.24) !important;
+  --n-border-hover: 1px solid rgba(220, 38, 38, 0.42) !important;
+  --n-text-color: var(--wg-danger) !important;
+  --n-text-color-hover: #991b1b !important;
+  color: var(--wg-danger) !important;
+  border: 1px solid rgba(220, 38, 38, 0.24) !important;
+  background: rgba(254, 242, 242, 0.95) !important;
+  box-shadow: none !important;
+}
+
+.n-button.n-button--disabled,
+.btn:disabled,
+.translation-button:disabled,
+.action-button-secondary.n-button--disabled,
+.copy-icon-button:disabled,
+.virtual-line-copy-button:disabled,
+.code-display-button:disabled {
+  color: var(--wg-disabled) !important;
+  border-color: rgba(148, 163, 184, 0.18) !important;
+  background: rgba(241, 245, 249, 0.72) !important;
+  box-shadow: none !important;
+  opacity: 0.7 !important;
+  transform: none !important;
+}
+
+.n-input,
+.n-base-selection,
+.search-input,
+.toolbar-search,
+.action-input,
+.seven79-search,
+.settings-page .n-input,
+.settings-page .n-base-selection {
+  --n-border: 1px solid var(--wg-line) !important;
+  --n-border-hover: 1px solid var(--wg-line-strong) !important;
+  --n-border-focus: 1px solid rgba(37, 99, 235, 0.56) !important;
+  --n-box-shadow-focus: var(--wg-focus) !important;
+  --n-color: rgba(255, 255, 255, 0.9) !important;
+  --n-color-focus: #ffffff !important;
+  --n-text-color: var(--wg-ink) !important;
+  --n-placeholder-color: var(--wg-disabled) !important;
+  border-radius: 11px !important;
+}
+
+.n-input-wrapper,
+.n-base-selection-label {
+  border-radius: 11px !important;
+}
+
+.n-data-table,
+.account-table-modern,
+.cloud-mail-account-table,
+.microsoft-account-table,
+.abnormal-table,
+.seven79-table {
+  --n-td-color: rgba(255, 255, 255, 0.76) !important;
+  --n-td-color-hover: rgba(219, 234, 254, 0.42) !important;
+  --n-th-color: rgba(248, 250, 252, 0.94) !important;
+  --n-border-color: rgba(30, 58, 95, 0.09) !important;
+  color: var(--wg-ink) !important;
+}
+
+.n-data-table-th,
+.account-table-modern .n-data-table-th,
+.seven79-table .n-data-table-th {
+  color: var(--wg-muted) !important;
+  font-size: 12px !important;
+  font-weight: 850 !important;
+  letter-spacing: 0.02em !important;
+}
+
+.table-shell,
+.mailbox-table-shell,
+.table-container,
+.interface-card .api-box,
+.interface-card .n-code {
+  border: 1px solid rgba(30, 58, 95, 0.08) !important;
+  border-radius: var(--wg-radius-md) !important;
+  background: rgba(255, 255, 255, 0.78) !important;
+  box-shadow: var(--wg-shadow-sm) !important;
+}
+
+.n-tag,
+.status-tag,
+.source-tag,
+.badge,
+.tag-pill,
+.settings-tab,
+.count-badge,
+.status-badge,
+.mail-folder-badge,
+.mail-state-badge,
+.log-level,
+.log-tag {
+  border-radius: var(--wg-radius-pill) !important;
+  font-weight: 800 !important;
+  letter-spacing: 0 !important;
+}
+
+.tag-pill,
+.count-badge,
+.settings-tab.is-active,
+.switch-button-active {
+  color: var(--wg-navy) !important;
+  background: var(--wg-aurora-soft) !important;
+  border: 1px solid var(--wg-line-strong) !important;
+}
+
+.list-toolbar,
+.cloud-toolbar,
+.microsoft-toolbar,
+.sub2api-page .toolbar,
+.action-bar,
+.toolbar-actions,
+.action-group {
+  gap: 12px !important;
+}
+
+.action-bar,
+.quick-check-strip,
+.work-card,
+.modal-panel,
+.sms-block,
+.info-panel,
+.list-modal {
+  border: 1px solid var(--wg-line) !important;
+  border-radius: var(--wg-radius-lg) !important;
+  background: rgba(255, 255, 255, 0.84) !important;
+  box-shadow: var(--wg-shadow-card) !important;
+}
+
+.work-card,
+.payment-work-card,
+.sms-work-card {
+  overflow: hidden;
+}
+
+.work-card-header,
+.sms-block-header,
+.section-head,
+.list-toolbar {
+  border-bottom-color: rgba(30, 58, 95, 0.08) !important;
+}
+
+.virtual-detail-row,
+.phone-row,
+.code-panel,
+.pp-phone-select-row {
+  border-color: rgba(30, 58, 95, 0.08) !important;
+  background: rgba(248, 250, 252, 0.78) !important;
+}
+
+.code-display,
+.mono-text,
+.log-terminal {
+  font-variant-numeric: tabular-nums;
+}
+
+.code-display-button {
+  border: 1px solid rgba(37, 99, 235, 0.16) !important;
+  border-radius: var(--wg-radius-md) !important;
+  background: rgba(219, 234, 254, 0.48) !important;
+  color: var(--wg-navy) !important;
+}
+
+.code-display-clickable:hover {
+  border-color: rgba(37, 99, 235, 0.34) !important;
+  background: rgba(219, 234, 254, 0.78) !important;
+}
+
+.status-badge-success,
+.status-dot.success,
+.run-status-dot.available,
+.status-dot-pulse {
+  color: var(--wg-success) !important;
+}
+
+.status-dot.success,
+.run-status-dot.available,
+.status-dot-pulse,
+.stat-card::before,
+.section-title span::after {
+  background: var(--wg-aurora) !important;
+}
+
+.mail-viewer-sidebar,
+.inbox-sider {
+  background: rgba(248, 250, 252, 0.76) !important;
+}
+
+.mail-viewer-item,
+.inbox-mail-item {
+  border: 1px solid transparent !important;
+  border-radius: var(--wg-radius-md) !important;
+}
+
+.mail-viewer-item:hover,
+.inbox-mail-item:hover {
+  border-color: var(--wg-line) !important;
+  background: rgba(255, 255, 255, 0.96) !important;
+  box-shadow: var(--wg-shadow-sm) !important;
+}
+
+.mail-viewer-item-active,
+.inbox-mail-item-active {
+  border-color: var(--wg-line-strong) !important;
+  background: rgba(219, 234, 254, 0.55) !important;
+}
+
+.mail-unread-dot {
+  background: var(--wg-blue) !important;
+}
+
+.mail-viewer-reading-panel,
+.mail-viewer-reading-surface,
+.mail-html-body,
+.mail-viewer-frame-shell,
+.inbox-content,
+.mail-detail-container {
+  background: rgba(255, 255, 255, 0.9) !important;
+}
+
+.translation-banner {
+  border: 1px solid rgba(37, 99, 235, 0.18) !important;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(239, 246, 255, 0.82)) !important;
+  box-shadow: var(--wg-shadow-sm) !important;
+}
+
+.translation-icon {
+  background: var(--wg-deep) !important;
+}
+
+.log-terminal {
+  border: 1px solid rgba(15, 23, 42, 0.88) !important;
+  background: radial-gradient(circle at 12% 0%, rgba(37, 99, 235, 0.28), transparent 34%), linear-gradient(135deg, #06121f 0%, #0f172a 52%, #0f2747 100%) !important;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.22) !important;
+}
+
+.log-line,
+.log-text {
+  color: #dbeafe !important;
+}
+
+.settings-tabs {
+  border: 1px solid var(--wg-line) !important;
+  background: rgba(255, 255, 255, 0.82) !important;
+  box-shadow: var(--wg-shadow-sm) !important;
+}
+
+.settings-head {
+  background: linear-gradient(135deg, rgba(219, 234, 254, 0.64), rgba(209, 250, 229, 0.44)) !important;
+}
+
+.settings-section {
+  border-top-color: rgba(30, 58, 95, 0.08) !important;
+}
+
+.test-result.success {
+  border-color: rgba(5, 150, 105, 0.22) !important;
+  background: linear-gradient(180deg, rgba(209, 250, 229, 0.62), rgba(255, 255, 255, 0.92)) !important;
+}
+
+.test-result.error {
+  border-color: rgba(220, 38, 38, 0.22) !important;
+  background: linear-gradient(180deg, rgba(254, 226, 226, 0.64), rgba(255, 255, 255, 0.92)) !important;
+}
+
+.auth-page,
+.login-container {
+  background:
+    radial-gradient(circle at 16% 16%, rgba(37, 99, 235, 0.16), transparent 32%),
+    radial-gradient(circle at 84% 12%, rgba(5, 150, 105, 0.14), transparent 30%),
+    linear-gradient(135deg, #f8fafc 0%, #eff6ff 52%, #f0fdf4 100%) !important;
+}
+
+.auth-page::before,
+.login-container::before {
+  animation: none !important;
+  opacity: 0.65 !important;
+}
+
+.auth-card,
+.login-card,
+.auth-page .auth-card.login-card,
+.login-container .auth-card.login-card {
+  border: 1px solid rgba(255, 255, 255, 0.86) !important;
+  border-radius: var(--wg-radius-xl) !important;
+  background: rgba(255, 255, 255, 0.86) !important;
+  box-shadow: var(--wg-shadow-lg) !important;
+}
+
+.login-header h2,
+.auth-title {
+  color: var(--wg-navy) !important;
+  background: none !important;
+  -webkit-text-fill-color: currentColor !important;
+}
+
+.interface-card .code-block,
+.interface-card pre,
+.interface-card .n-code {
+  border-color: rgba(30, 58, 95, 0.1) !important;
+}
+
+@media (max-width: 1180px) {
+  .console-sidebar-flat {
+    width: 224px !important;
+    flex-basis: 224px !important;
+  }
+
+  .console-content-flat {
+    padding: 24px 24px 32px !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .console-sidebar-flat {
+    width: 76px !important;
+    flex-basis: 76px !important;
+  }
+
+  .console-nav-link-flat-active::before {
+    left: 6px;
+  }
+
+  .console-content-flat {
+    padding: 18px 14px 28px !important;
+  }
+
+  .console-topbar-flat {
+    padding: 14px 16px !important;
+  }
+
+  .list-toolbar,
+  .cloud-toolbar,
+  .microsoft-toolbar,
+  .sub2api-page .toolbar,
+  .action-bar-main,
+  .action-group {
+    align-items: stretch !important;
+  }
+
+  .toolbar-search,
+  .search-input,
+  .action-input,
+  .seven79-search,
+  .n-input {
+    width: 100% !important;
+  }
+
+  .main-card,
+  .content-card,
+  .account-list-card,
+  .cloud-mail-card,
+  .mailbox-card,
+  .settings-card,
+  .sub2api-page .main-card,
+  .work-card,
+  .action-bar {
+    border-radius: var(--wg-radius-md) !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
