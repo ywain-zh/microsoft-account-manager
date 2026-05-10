@@ -131,9 +131,9 @@
             <n-form-item label="密码">
               <n-input
                 v-model:value="createForm.password"
-                type="password"
-                show-password-on="click"
+                type="text"
                 placeholder="请输入密码"
+                class="microsoft-secret-input"
                 :input-props="accountPasswordInputProps"
               />
             </n-form-item>
@@ -217,8 +217,8 @@
             <n-form-item label="密码">
               <n-input
                 v-model:value="editForm.password"
-                type="password"
-                show-password-on="click"
+                type="text"
+                class="microsoft-secret-input"
                 :input-props="accountPasswordInputProps"
               />
             </n-form-item>
@@ -408,6 +408,7 @@ const {
   beginMicrosoftOauthLogin,
   consumeMicrosoftOauthResult,
   handleMicrosoftOauthMessage,
+  handleMicrosoftOauthStorage,
   resolveTokenStatusLabel,
   resolveTokenStatusTone,
   formatMailDate,
@@ -423,6 +424,7 @@ const txtFileInputRef = ref<HTMLInputElement | null>(null);
 const tablePage = ref(1);
 const passwordDrafts = reactive<Record<number, string>>({});
 const passwordSavingIds = ref<number[]>([]);
+const passwordPendingValues = reactive<Record<number, string>>({});
 const SEARCH_DEBOUNCE_MS = 300;
 let searchDebounceTimer: number | null = null;
 
@@ -464,7 +466,8 @@ const remarkInputProps = {
 const accountPasswordInputProps = {
   ...noCredentialInputProps,
   autocomplete: 'new-password',
-  name: 'microsoft-mail-account-secret'
+  name: 'microsoft-mail-account-secret',
+  'aria-autocomplete': 'none'
 } as const;
 
 const rowKey = (row: AccountItem): number => row.id;
@@ -619,7 +622,11 @@ async function saveInlinePassword(row: AccountItem): Promise<void> {
     passwordDrafts[row.id] = row.password ?? '';
     return;
   }
+  if (passwordPendingValues[row.id] === nextPassword) {
+    return;
+  }
 
+  passwordPendingValues[row.id] = nextPassword;
   setPasswordSaving(row.id, true);
   try {
     const updated = await updateAccountPassword(row.id, nextPassword);
@@ -627,6 +634,7 @@ async function saveInlinePassword(row: AccountItem): Promise<void> {
       passwordDrafts[row.id] = updated.password;
     }
   } finally {
+    delete passwordPendingValues[row.id];
     setPasswordSaving(row.id, false);
   }
 }
@@ -637,10 +645,9 @@ function renderPasswordCell(row: AccountItem): ReturnType<typeof h> {
     h(NInput, {
       value: draftValue,
       size: 'small',
-      type: 'password',
-      showPasswordOn: 'click',
+      type: 'text',
       placeholder: '输入密码',
-      class: 'microsoft-password-input',
+      class: ['microsoft-password-input', 'microsoft-secret-input'],
       inputProps: getPasswordCellInputProps(row),
       loading: isPasswordSaving(row.id),
       disabled: isPasswordSaving(row.id),
@@ -797,6 +804,7 @@ function handleMailVisibleChange(value: boolean): void {
 
 onMounted(async () => {
   window.addEventListener('message', handleMicrosoftOauthMessage);
+  window.addEventListener('storage', handleMicrosoftOauthStorage);
 
   if (!initialDataLoaded.value && isAuthenticated.value) {
     await loadInitialData();
@@ -811,6 +819,7 @@ onMounted(async () => {
 onUnmounted(() => {
   clearSearchDebounce();
   window.removeEventListener('message', handleMicrosoftOauthMessage);
+  window.removeEventListener('storage', handleMicrosoftOauthStorage);
 });
 </script>
 
@@ -1088,6 +1097,10 @@ onUnmounted(() => {
   font-family: 'Fira Code', 'SFMono-Regular', Consolas, monospace;
   font-size: 12px;
   letter-spacing: 0;
+}
+
+:deep(.microsoft-secret-input .n-input__input-el) {
+  -webkit-text-security: disc;
 }
 
 :deep(.microsoft-account-table .microsoft-password-copy-button) {

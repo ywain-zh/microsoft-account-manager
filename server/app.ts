@@ -6712,14 +6712,17 @@ function buildMicrosoftOauthPopupHtml(c: Context<{ Bindings: Bindings; Variables
   message?: string;
   account?: string;
 }): string {
+  const eventId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   const payload = JSON.stringify({
     source: 'microsoft-oauth',
     ok: params.ok,
     message: params.message ?? '',
-    account: params.account ?? ''
+    account: params.account ?? '',
+    eventId
   });
   const fallbackUrl = JSON.stringify(new URL(buildMicrosoftOauthResultUrl(params), c.req.url).toString());
   const targetOrigin = JSON.stringify(new URL(c.req.url).origin);
+  const storageKey = JSON.stringify('microsoft-oauth-result');
   const title = params.ok ? 'OAuth 登录成功' : 'OAuth 登录失败';
   const detail = params.ok ? '授权结果已回传，窗口即将关闭。' : (params.message || '授权失败，请返回原页面查看。');
 
@@ -6737,7 +6740,12 @@ function buildMicrosoftOauthPopupHtml(c: Context<{ Bindings: Bindings; Variables
         var payload = ${payload};
         var targetOrigin = ${targetOrigin};
         var fallbackUrl = ${fallbackUrl};
+        var storageKey = ${storageKey};
         var delivered = false;
+        try {
+          window.localStorage.setItem(storageKey, JSON.stringify(payload));
+        } catch (error) {
+        }
         try {
           if (window.opener && !window.opener.closed) {
             window.opener.postMessage(payload, targetOrigin);

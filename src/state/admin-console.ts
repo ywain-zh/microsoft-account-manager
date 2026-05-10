@@ -20,6 +20,7 @@ const MICROSOFT_OAUTH_POPUP_NAME = 'microsoft-oauth-login';
 const MICROSOFT_OAUTH_POPUP_FEATURES = 'popup=yes,width=560,height=760,left=120,top=80,resizable=yes,scrollbars=yes';
 const MICROSOFT_OAUTH_POPUP_POLL_MS = 800;
 const MICROSOFT_OAUTH_POPUP_TIMEOUT_MS = 120_000;
+const MICROSOFT_OAUTH_RESULT_STORAGE_KEY = 'microsoft-oauth-result';
 
 interface AccountFormState {
   account: string;
@@ -39,6 +40,7 @@ interface MicrosoftOauthResultPayload {
   ok?: boolean;
   message?: string;
   account?: string;
+  eventId?: string;
 }
 
 const authChecked = ref(false);
@@ -53,6 +55,7 @@ const oauthPopupLoading = ref(false);
 let microsoftOauthPopup: Window | null = null;
 let microsoftOauthPopupPollTimer: number | null = null;
 let microsoftOauthPopupTimeoutTimer: number | null = null;
+let lastMicrosoftOauthEventId = '';
 
 const accounts = ref<AccountItem[]>([]);
 const searchKeyword = ref(readPersistedSearchKeyword());
@@ -347,6 +350,30 @@ function watchMicrosoftOauthPopup(popup: Window): void {
     void loadAccounts();
     message.warning('OAuth 登录等待超时，已自动刷新列表');
   }, MICROSOFT_OAUTH_POPUP_TIMEOUT_MS);
+}
+
+function shouldConsumeMicrosoftOauthPayload(payload: Record<string, unknown> | MicrosoftOauthResultPayload): boolean {
+  const eventId = typeof payload.eventId === 'string' ? payload.eventId.trim() : '';
+  if (!eventId) {
+    return true;
+  }
+  if (eventId === lastMicrosoftOauthEventId) {
+    return false;
+  }
+  lastMicrosoftOauthEventId = eventId;
+  return true;
+}
+
+function clearMicrosoftOauthStorageResult(): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.localStorage.removeItem(MICROSOFT_OAUTH_RESULT_STORAGE_KEY);
+  } catch {
+    // Ignore storage cleanup failures.
+  }
 }
 
 async function loadIngestConfig(): Promise<void> {
@@ -793,6 +820,7 @@ function beginMicrosoftOauthLogin(): void {
     return;
   }
 
+  clearMicrosoftOauthStorageResult();
   oauthPopupLoading.value = true;
   const popup = window.open(
     `${MICROSOFT_OAUTH_LOGIN_PATH}?mode=popup`,
@@ -817,8 +845,13 @@ async function consumeMicrosoftOauthResult(
     return;
   }
 
+  if (!shouldConsumeMicrosoftOauthPayload(payload)) {
+    return;
+  }
+
   clearMicrosoftOauthPopupWatch();
   oauthPopupLoading.value = false;
+  clearMicrosoftOauthStorageResult();
   const isPopupMessage = payload.source === 'microsoft-oauth';
   const queryOauth = typeof (payload as Record<string, unknown>).oauth === 'string'
     ? ((payload as Record<string, unknown>).oauth as string).trim()
@@ -879,6 +912,26 @@ function handleMicrosoftOauthMessage(event: MessageEvent<MicrosoftOauthResultPay
   }
 
   void consumeMicrosoftOauthResult(event.data);
+}
+
+function handleMicrosoftOauthStorage(event: StorageEvent): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  if (event.storageArea !== window.localStorage || event.key !== MICROSOFT_OAUTH_RESULT_STORAGE_KEY || !event.newValue) {
+    return;
+  }
+
+  try {
+    const payload = JSON.parse(event.newValue) as MicrosoftOauthResultPayload;
+    if (!payload || payload.source !== 'microsoft-oauth') {
+      return;
+    }
+    void consumeMicrosoftOauthResult(payload);
+  } catch {
+    // Ignore malformed popup relay payloads.
+  }
 }
 
 function resolveTokenStatusLabel(row: AccountItem): string {
@@ -1023,6 +1076,7 @@ export function useAdminConsole() {
     beginMicrosoftOauthLogin,
     consumeMicrosoftOauthResult,
     handleMicrosoftOauthMessage,
+    handleMicrosoftOauthStorage,
     resolveTokenStatusLabel,
     resolveTokenStatusTone,
     resolveCountdownLabel,
