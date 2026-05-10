@@ -89,6 +89,7 @@ export type TranslationProvider = 'openai' | 'deeplx';
 
 export interface TranslationConfig {
   enabled: boolean;
+  priorityProvider: TranslationProvider;
   openaiBaseUrl: string;
   openaiApiKey: string;
   openaiModel: string;

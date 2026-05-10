@@ -8,14 +8,7 @@
       <div class="settings-head">
         <div>
           <h2>翻译配置</h2>
-          <p>非中文邮件会在详情中显示翻译入口，优先使用 OpenAI，失败后自动切换 DeepLX。</p>
-        </div>
-        <div class="settings-switch-wrap">
-          <span>{{ form.enabled ? '启用' : '停用' }}</span>
-          <n-switch v-model:value="form.enabled" size="large">
-            <template #checked>启用</template>
-            <template #unchecked>停用</template>
-          </n-switch>
+          <p>非中文邮件会在详情中默认显示翻译入口。你可以在这里设置优先使用的翻译服务，失败后自动切换到另一项。</p>
         </div>
       </div>
 
@@ -27,8 +20,27 @@
 
         <section class="settings-section">
           <div class="section-title">
+            <h3>调用优先级</h3>
+            <span>默认启用</span>
+          </div>
+          <div class="priority-panel">
+            <div class="priority-copy">
+              <strong>优先翻译服务</strong>
+              <p>邮件翻译会先尝试这里选中的服务，失败后再自动切换到另一项。</p>
+            </div>
+            <n-select
+              v-model:value="form.priorityProvider"
+              class="priority-select"
+              :options="priorityOptions"
+              placeholder="选择优先服务"
+            />
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <div class="section-title">
             <h3>OpenAI 翻译</h3>
-            <span>优先调用</span>
+            <span>{{ form.priorityProvider === 'openai' ? '当前优先' : '备用服务' }}</span>
           </div>
           <div class="form-grid">
             <n-form-item label="Base URL">
@@ -59,7 +71,7 @@
           </div>
           <div class="section-actions">
             <n-button :loading="modelLoading" @click="refreshModels">刷新模型列表</n-button>
-            <n-button type="primary" ghost :loading="testingProvider === 'openai'" @click="testProvider('openai')">
+            <n-button class="translator-test-button" :loading="testingProvider === 'openai'" @click="testProvider('openai')">
               测试 OpenAI
             </n-button>
           </div>
@@ -68,7 +80,7 @@
         <section class="settings-section">
           <div class="section-title">
             <h3>DeepLX 翻译</h3>
-            <span>失败兜底</span>
+            <span>{{ form.priorityProvider === 'deeplx' ? '当前优先' : '备用服务' }}</span>
           </div>
           <div class="form-grid two-cols">
             <n-form-item label="完整请求地址">
@@ -89,7 +101,7 @@
             </n-form-item>
           </div>
           <div class="section-actions">
-            <n-button type="primary" ghost :loading="testingProvider === 'deeplx'" @click="testProvider('deeplx')">
+            <n-button class="translator-test-button" :loading="testingProvider === 'deeplx'" @click="testProvider('deeplx')">
               测试 DeepLX
             </n-button>
           </div>
@@ -129,7 +141,6 @@ import {
   NFormItem,
   NInput,
   NSelect,
-  NSwitch,
   createDiscreteApi
 } from 'naive-ui';
 import { api } from '../api';
@@ -140,7 +151,8 @@ const { message } = createDiscreteApi(['message']);
 const DEFAULT_MODEL = 'gpt-5.4-mini';
 
 const form = reactive<TranslationConfig>({
-  enabled: false,
+  enabled: true,
+  priorityProvider: 'openai',
   openaiBaseUrl: '',
   openaiApiKey: '',
   openaiModel: DEFAULT_MODEL,
@@ -154,6 +166,10 @@ const modelLoading = ref(false);
 const testingProvider = ref<TranslationProvider | ''>('');
 const modelItems = ref<string[]>([]);
 const testResults = ref<TranslationTestResult[]>([]);
+const priorityOptions = [
+  { label: 'OpenAI 优先', value: 'openai' },
+  { label: 'DeepLX 优先', value: 'deeplx' }
+] satisfies Array<{ label: string; value: TranslationProvider }>;
 
 const urlInputProps = {
   spellcheck: false,
@@ -252,6 +268,7 @@ async function testProvider(provider: TranslationProvider): Promise<void> {
 
 function assignForm(config: TranslationConfig): void {
   form.enabled = config.enabled;
+  form.priorityProvider = config.priorityProvider;
   form.openaiBaseUrl = config.openaiBaseUrl;
   form.openaiApiKey = config.openaiApiKey;
   form.openaiModel = config.openaiModel || DEFAULT_MODEL;
@@ -262,6 +279,7 @@ function assignForm(config: TranslationConfig): void {
 function normalizeForm(): TranslationConfig {
   return {
     enabled: form.enabled,
+    priorityProvider: form.priorityProvider,
     openaiBaseUrl: form.openaiBaseUrl.trim(),
     openaiApiKey: form.openaiApiKey.trim(),
     openaiModel: form.openaiModel.trim() || DEFAULT_MODEL,
@@ -323,15 +341,6 @@ function getErrorMessage(error: unknown): string {
   color: #475569;
   font-size: 13px;
   line-height: 1.5;
-}
-
-.settings-switch-wrap {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  color: #10b981;
-  font-size: 14px;
-  font-weight: 700;
 }
 
 .settings-form {
@@ -396,6 +405,40 @@ function getErrorMessage(error: unknown): string {
   border-bottom: 1px solid #e5e7eb;
 }
 
+.priority-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 20px;
+  border: 1px solid #dbe7f5;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #f8fbff 0%, #eef6ff 100%);
+}
+
+.priority-copy {
+  min-width: 0;
+}
+
+.priority-copy strong {
+  display: block;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.priority-copy p {
+  margin: 6px 0 0;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.priority-select {
+  width: 220px;
+  flex: 0 0 220px;
+}
+
 .section-title {
   display: flex;
   align-items: center;
@@ -438,6 +481,21 @@ function getErrorMessage(error: unknown): string {
 
 .section-actions {
   margin-top: 16px;
+}
+
+.settings-card :deep(.translator-test-button) {
+  --n-color: #ecf5ff !important;
+  --n-color-hover: #dbeafe !important;
+  --n-color-pressed: #bfdbfe !important;
+  --n-color-focus: #dbeafe !important;
+  --n-text-color: #1d4ed8 !important;
+  --n-text-color-hover: #1d4ed8 !important;
+  --n-text-color-pressed: #1e40af !important;
+  --n-text-color-focus: #1d4ed8 !important;
+  --n-border: 1px solid #93c5fd !important;
+  --n-border-hover: 1px solid #60a5fa !important;
+  --n-border-pressed: 1px solid #3b82f6 !important;
+  --n-border-focus: 1px solid #60a5fa !important;
 }
 
 .settings-footer {
@@ -489,6 +547,16 @@ function getErrorMessage(error: unknown): string {
 }
 
 @media (max-width: 980px) {
+  .priority-panel {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .priority-select {
+    width: 100%;
+    flex-basis: auto;
+  }
+
   .settings-head,
   .section-actions,
   .settings-footer {

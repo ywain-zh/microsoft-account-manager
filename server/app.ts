@@ -212,6 +212,7 @@ type TranslationProvider = 'openai' | 'deeplx';
 
 interface TranslationConfig {
   enabled: boolean;
+  priorityProvider: TranslationProvider;
   openaiBaseUrl: string;
   openaiApiKey: string;
   openaiModel: string;
@@ -414,7 +415,8 @@ const TRANSLATION_MAX_TEXT_LENGTH = 30000;
 const TRANSLATION_TEST_TEXT = 'Your personal access token is about to expire in 7 days.';
 
 const DEFAULT_TRANSLATION_CONFIG: TranslationConfig = {
-  enabled: false,
+  enabled: true,
+  priorityProvider: 'openai',
   openaiBaseUrl: '',
   openaiApiKey: '',
   openaiModel: DEFAULT_TRANSLATION_MODEL,
@@ -2087,7 +2089,8 @@ function normalizeSub2ApiConfig(input: Partial<Sub2ApiConfig>): Sub2ApiConfig {
 
 function normalizeTranslationConfig(input: Partial<TranslationConfig>): TranslationConfig {
   return {
-    enabled: input.enabled === true,
+    enabled: input.enabled !== false,
+    priorityProvider: normalizeTranslationProvider(input.priorityProvider) ?? 'openai',
     openaiBaseUrl: normalizeTranslationBaseUrl(input.openaiBaseUrl),
     openaiApiKey: asText(input.openaiApiKey).trim(),
     openaiModel: asText(input.openaiModel).trim() || DEFAULT_TRANSLATION_MODEL,
@@ -2403,20 +2406,21 @@ async function translateTextToChinese(
   }
 
   const errors: string[] = [];
-
-  if (hasOpenAiTranslationConfig(config)) {
-    try {
-      return await translateWithOpenAi(config, text);
-    } catch (error) {
-      errors.push(`OpenAI: ${getErrorMessage(error)}`);
+  for (const provider of resolveTranslationProviderOrder(config)) {
+    if (provider === 'openai' && hasOpenAiTranslationConfig(config)) {
+      try {
+        return await translateWithOpenAi(config, text);
+      } catch (error) {
+        errors.push(`OpenAI: ${getErrorMessage(error)}`);
+      }
     }
-  }
 
-  if (hasDeepLxTranslationConfig(config)) {
-    try {
-      return await translateWithDeepLx(config, text);
-    } catch (error) {
-      errors.push(`DeepLX: ${getErrorMessage(error)}`);
+    if (provider === 'deeplx' && hasDeepLxTranslationConfig(config)) {
+      try {
+        return await translateWithDeepLx(config, text);
+      } catch (error) {
+        errors.push(`DeepLX: ${getErrorMessage(error)}`);
+      }
     }
   }
 
@@ -2459,20 +2463,21 @@ async function translateTextToChineseWithPrompt(
   systemPrompt: string
 ): Promise<TranslationResponsePayload> {
   const errors: string[] = [];
-
-  if (hasOpenAiTranslationConfig(config)) {
-    try {
-      return await translateWithOpenAi(config, text, systemPrompt);
-    } catch (error) {
-      errors.push(`OpenAI: ${getErrorMessage(error)}`);
+  for (const provider of resolveTranslationProviderOrder(config)) {
+    if (provider === 'openai' && hasOpenAiTranslationConfig(config)) {
+      try {
+        return await translateWithOpenAi(config, text, systemPrompt);
+      } catch (error) {
+        errors.push(`OpenAI: ${getErrorMessage(error)}`);
+      }
     }
-  }
 
-  if (hasDeepLxTranslationConfig(config)) {
-    try {
-      return await translateWithDeepLx(config, text);
-    } catch (error) {
-      errors.push(`DeepLX: ${getErrorMessage(error)}`);
+    if (provider === 'deeplx' && hasDeepLxTranslationConfig(config)) {
+      try {
+        return await translateWithDeepLx(config, text);
+      } catch (error) {
+        errors.push(`DeepLX: ${getErrorMessage(error)}`);
+      }
     }
   }
 
@@ -2481,6 +2486,12 @@ async function translateTextToChineseWithPrompt(
   }
 
   throw new HTTPException(502, { message: `翻译失败：${errors.join('；')}` });
+}
+
+function resolveTranslationProviderOrder(config: TranslationConfig): TranslationProvider[] {
+  return config.priorityProvider === 'deeplx'
+    ? ['deeplx', 'openai']
+    : ['openai', 'deeplx'];
 }
 
 function prepareHtmlForSegmentTranslation(html: string): { html: string; segments: HtmlTranslationSegment[] } {
