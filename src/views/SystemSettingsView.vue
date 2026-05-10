@@ -6,9 +6,14 @@
       content-style="padding: 0; display: flex; flex-direction: column;"
     >
       <div class="settings-head">
-        <div>
-          <h2>翻译配置</h2>
-          <p>非中文邮件会在详情中默认显示翻译入口。你可以在这里设置优先使用的翻译服务，失败后自动切换到另一项。</p>
+        <div class="settings-toolbar">
+          <span class="settings-toolbar-label">翻译服务首选项</span>
+          <n-select
+            v-model:value="form.priorityProvider"
+            class="toolbar-priority-select"
+            :options="priorityOptions"
+            placeholder="选择优先服务"
+          />
         </div>
       </div>
 
@@ -17,25 +22,6 @@
           <input type="text" tabindex="-1" autocomplete="username" />
           <input type="password" tabindex="-1" autocomplete="new-password" />
         </div>
-
-        <section class="settings-section">
-          <div class="section-title">
-            <h3>调用优先级</h3>
-            <span>默认启用</span>
-          </div>
-          <div class="priority-panel">
-            <div class="priority-copy">
-              <strong>优先翻译服务</strong>
-              <p>邮件翻译会先尝试这里选中的服务，失败后再自动切换到另一项。</p>
-            </div>
-            <n-select
-              v-model:value="form.priorityProvider"
-              class="priority-select"
-              :options="priorityOptions"
-              placeholder="选择优先服务"
-            />
-          </div>
-        </section>
 
         <section class="settings-section">
           <div class="section-title">
@@ -306,7 +292,7 @@ function getErrorMessage(error: unknown): string {
 }
 
 .settings-card {
-  width: min(1040px, 100%);
+  width: min(1000px, 100%);
   overflow: hidden;
   border: 1px solid #dfe4ea !important;
   border-radius: 8px !important;
@@ -315,32 +301,29 @@ function getErrorMessage(error: unknown): string {
 }
 
 .settings-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  min-height: 92px;
-  padding: 22px 24px;
+  padding: 16px 20px;
   border-bottom: 1px solid #e5e7eb;
   background: #ffffff;
 }
 
-.settings-head h2,
+.settings-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.settings-toolbar-label,
 .section-title h3 {
-  margin: 0;
   color: #0f172a;
   font-weight: 700;
 }
 
-.settings-head h2 {
-  font-size: 16px;
+.settings-toolbar-label {
+  font-size: 13px;
 }
 
-.settings-head p {
-  margin: 6px 0 0;
-  color: #475569;
-  font-size: 13px;
-  line-height: 1.5;
+.toolbar-priority-select {
+  width: 200px;
 }
 
 .settings-form {
@@ -396,7 +379,7 @@ function getErrorMessage(error: unknown): string {
 }
 
 .settings-section {
-  padding: 25px 24px 24px;
+  padding: 18px 20px 16px;
   border-bottom: 1px solid #e5e7eb;
   background: #ffffff;
 }
@@ -405,60 +388,27 @@ function getErrorMessage(error: unknown): string {
   border-bottom: 1px solid #e5e7eb;
 }
 
-.priority-panel {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 18px 20px;
-  border: 1px solid #dbe7f5;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #f8fbff 0%, #eef6ff 100%);
-}
-
-.priority-copy {
-  min-width: 0;
-}
-
-.priority-copy strong {
-  display: block;
-  color: #0f172a;
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.priority-copy p {
-  margin: 6px 0 0;
-  color: #475569;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.priority-select {
-  width: 220px;
-  flex: 0 0 220px;
-}
-
 .section-title {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 18px;
+  margin-bottom: 14px;
 }
 
 .section-title h3 {
-  font-size: 15px;
+  margin: 0;
+  font-size: 14px;
 }
 
 .section-title span {
   display: inline-flex;
   align-items: center;
-  min-height: 22px;
-  padding: 0 8px;
+  min-height: 20px;
+  padding: 0 7px;
   border-radius: 999px;
-  background: #eef6ff;
-  color: #2563eb;
-  font-size: 12px;
+  background: #f3f4f6;
+  color: #475569;
+  font-size: 11px;
   font-weight: 600;
 }
 
@@ -480,26 +430,26 @@ function getErrorMessage(error: unknown): string {
 }
 
 .section-actions {
-  margin-top: 16px;
+  margin-top: 12px;
 }
 
 .settings-card :deep(.translator-test-button) {
-  --n-color: #ecf5ff !important;
-  --n-color-hover: #dbeafe !important;
-  --n-color-pressed: #bfdbfe !important;
-  --n-color-focus: #dbeafe !important;
-  --n-text-color: #1d4ed8 !important;
+  --n-color: #ffffff !important;
+  --n-color-hover: #f8fbff !important;
+  --n-color-pressed: #eff6ff !important;
+  --n-color-focus: #f8fbff !important;
+  --n-text-color: #2563eb !important;
   --n-text-color-hover: #1d4ed8 !important;
-  --n-text-color-pressed: #1e40af !important;
+  --n-text-color-pressed: #1d4ed8 !important;
   --n-text-color-focus: #1d4ed8 !important;
-  --n-border: 1px solid #93c5fd !important;
-  --n-border-hover: 1px solid #60a5fa !important;
-  --n-border-pressed: 1px solid #3b82f6 !important;
-  --n-border-focus: 1px solid #60a5fa !important;
+  --n-border: 1px solid #60a5fa !important;
+  --n-border-hover: 1px solid #3b82f6 !important;
+  --n-border-pressed: 1px solid #2563eb !important;
+  --n-border-focus: 1px solid #3b82f6 !important;
 }
 
 .settings-footer {
-  padding: 18px 24px 16px;
+  padding: 12px 20px;
   border-top: 0;
   background: #ffffff;
 }
@@ -547,21 +497,20 @@ function getErrorMessage(error: unknown): string {
 }
 
 @media (max-width: 980px) {
-  .priority-panel {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .priority-select {
-    width: 100%;
-    flex-basis: auto;
-  }
-
   .settings-head,
   .section-actions,
   .settings-footer {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .settings-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .toolbar-priority-select {
+    width: 100%;
   }
 
   .form-grid,
