@@ -1183,7 +1183,11 @@ app.post('/api/accounts/refresh', async (c) => {
   }
 
   const details = await mapWithConcurrency(accounts, DEFAULT_REFRESH_CONCURRENCY, (account) =>
-    refreshAccountToken({ MS_CLIENT_SECRET: c.env.MS_CLIENT_SECRET }, c.env.DB, account)
+    refreshAccountToken(
+      { MS_CLIENT_ID: c.env.MS_CLIENT_ID, MS_CLIENT_SECRET: c.env.MS_CLIENT_SECRET },
+      c.env.DB,
+      account
+    )
   );
   const success = details.filter((item) => item.ok).length;
   return c.json({
@@ -1203,7 +1207,13 @@ app.get('/api/accounts/:id/messages', async (c) => {
     throw new HTTPException(404, { message: '账号不存在' });
   }
 
-  const result = await fetchAccountMessages({ MS_CLIENT_SECRET: c.env.MS_CLIENT_SECRET }, c.env.DB, account, mode, true);
+  const result = await fetchAccountMessages(
+    { MS_CLIENT_ID: c.env.MS_CLIENT_ID, MS_CLIENT_SECRET: c.env.MS_CLIENT_SECRET },
+    c.env.DB,
+    account,
+    mode,
+    true
+  );
   if (!result.ok) {
     throw new HTTPException(400, { message: result.message });
   }
@@ -1243,7 +1253,13 @@ app.get('/api/open/accounts/:id/messages', async (c) => {
     throw new HTTPException(404, { message: '账号不存在' });
   }
 
-  const result = await fetchAccountMessages({ MS_CLIENT_SECRET: c.env.MS_CLIENT_SECRET }, c.env.DB, account, mode, true);
+  const result = await fetchAccountMessages(
+    { MS_CLIENT_ID: c.env.MS_CLIENT_ID, MS_CLIENT_SECRET: c.env.MS_CLIENT_SECRET },
+    c.env.DB,
+    account,
+    mode,
+    true
+  );
   if (!result.ok) {
     throw new HTTPException(400, { message: result.message });
   }
@@ -1275,7 +1291,13 @@ app.post('/api/open/messages', async (c) => {
     throw new HTTPException(400, { message: '请传入有效的 id 或 account' });
   }
 
-  const result = await fetchAccountMessages({ MS_CLIENT_SECRET: c.env.MS_CLIENT_SECRET }, c.env.DB, account, mode, true);
+  const result = await fetchAccountMessages(
+    { MS_CLIENT_ID: c.env.MS_CLIENT_ID, MS_CLIENT_SECRET: c.env.MS_CLIENT_SECRET },
+    c.env.DB,
+    account,
+    mode,
+    true
+  );
   if (!result.ok) {
     throw new HTTPException(400, { message: result.message });
   }
@@ -5782,7 +5804,7 @@ function sortMailMessages(messages: AccountMailItem[]): AccountMailItem[] {
 }
 
 async function refreshAccountToken(
-  env: Pick<Bindings, 'MS_CLIENT_SECRET'>,
+  env: Pick<Bindings, 'MS_CLIENT_ID' | 'MS_CLIENT_SECRET'>,
   db: D1Database,
   account: AccountRow
 ): Promise<BatchActionDetail> {
@@ -5862,7 +5884,7 @@ async function refreshAccountToken(
 }
 
 async function fetchAccountMessages(
-  env: Pick<Bindings, 'MS_CLIENT_SECRET'>,
+  env: Pick<Bindings, 'MS_CLIENT_ID' | 'MS_CLIENT_SECRET'>,
   db: D1Database,
   account: AccountRow,
   mode: MailFetchMode,
@@ -5965,7 +5987,7 @@ async function fetchAccountMessages(
 }
 
 async function attemptMailFetch(
-  env: Pick<Bindings, 'MS_CLIENT_SECRET'>,
+  env: Pick<Bindings, 'MS_CLIENT_ID' | 'MS_CLIENT_SECRET'>,
   clientId: string,
   clientSecret: string | null,
   refreshToken: string,
@@ -6027,7 +6049,7 @@ async function attemptMailFetch(
 }
 
 async function exchangeMicrosoftToken(
-  env: Pick<Bindings, 'MS_CLIENT_SECRET'>,
+  env: Pick<Bindings, 'MS_CLIENT_ID' | 'MS_CLIENT_SECRET'>,
   refreshToken: string,
   clientId: string,
   accountClientSecret: string | null,
