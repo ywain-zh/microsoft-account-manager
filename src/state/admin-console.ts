@@ -26,6 +26,7 @@ interface AccountFormState {
   account: string;
   password: string;
   clientId: string;
+  clientSecret: string;
   refreshToken: string;
 }
 
@@ -89,6 +90,7 @@ const createForm = reactive<AccountFormState>({
   account: '',
   password: '',
   clientId: '',
+  clientSecret: '',
   refreshToken: ''
 });
 
@@ -97,6 +99,7 @@ const editForm = reactive<AccountFormState & { id: number | null }>({
   account: '',
   password: '',
   clientId: '',
+  clientSecret: '',
   refreshToken: ''
 });
 
@@ -112,6 +115,7 @@ const ingestConfig = reactive<IngestConfig>({
   accountField: 'a',
   passwordField: 'p',
   clientIdField: 'c',
+  clientSecretField: 's',
   tokenField: 't'
 });
 
@@ -190,6 +194,7 @@ function clearCreateForm(): void {
   createForm.account = '';
   createForm.password = '';
   createForm.clientId = '';
+  createForm.clientSecret = '';
   createForm.refreshToken = '';
 }
 
@@ -202,6 +207,7 @@ function resetEditForm(): void {
   editForm.account = '';
   editForm.password = '';
   editForm.clientId = '';
+  editForm.clientSecret = '';
   editForm.refreshToken = '';
 }
 
@@ -268,6 +274,7 @@ function normalizePayload(payload: AccountFormState): AccountPayload {
     account: payload.account.trim(),
     password: payload.password.trim(),
     clientId: payload.clientId.trim(),
+    clientSecret: payload.clientSecret.trim(),
     refreshToken: payload.refreshToken.trim()
   };
 }
@@ -384,6 +391,7 @@ async function loadIngestConfig(): Promise<void> {
     ingestConfig.accountField = response.item.accountField;
     ingestConfig.passwordField = response.item.passwordField;
     ingestConfig.clientIdField = response.item.clientIdField;
+    ingestConfig.clientSecretField = response.item.clientSecretField;
     ingestConfig.tokenField = response.item.tokenField;
     ingestEndpointPath.value = response.endpointPath;
     ingestTokenHeader.value = response.tokenHeader;
@@ -498,6 +506,7 @@ function openEditModal(row: AccountItem): void {
   editForm.account = row.account;
   editForm.password = row.password;
   editForm.clientId = row.clientId ?? '';
+  editForm.clientSecret = row.clientSecret ?? '';
   editForm.refreshToken = row.refreshToken ?? '';
   editVisible.value = true;
 }
@@ -799,6 +808,7 @@ async function saveIngestConfig(): Promise<void> {
       accountField: ingestConfig.accountField.trim(),
       passwordField: ingestConfig.passwordField.trim(),
       clientIdField: ingestConfig.clientIdField.trim(),
+      clientSecretField: ingestConfig.clientSecretField.trim(),
       tokenField: ingestConfig.tokenField.trim()
     });
     ingestConfig.delimiter = response.item.delimiter;
@@ -806,6 +816,7 @@ async function saveIngestConfig(): Promise<void> {
     ingestConfig.accountField = response.item.accountField;
     ingestConfig.passwordField = response.item.passwordField;
     ingestConfig.clientIdField = response.item.clientIdField;
+    ingestConfig.clientSecretField = response.item.clientSecretField;
     ingestConfig.tokenField = response.item.tokenField;
     message.success('上传映射配置已保存');
   } catch (error) {

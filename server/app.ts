@@ -36,6 +36,7 @@ interface AccountRow {
   account: string;
   password: string;
   clientId: string | null;
+  clientSecret: string | null;
   refreshToken: string | null;
   authType: 'manual' | 'microsoft_oauth';
   remark: string | null;
@@ -132,6 +133,7 @@ interface AccountPayload {
   account: string;
   password: string;
   clientId?: string;
+  clientSecret?: string;
   refreshToken?: string;
   remark?: string;
 }
@@ -142,6 +144,7 @@ interface IngestConfig {
   accountField: string;
   passwordField: string;
   clientIdField: string;
+  clientSecretField: string;
   tokenField: string;
 }
 
@@ -387,6 +390,7 @@ const DEFAULT_INGEST_CONFIG: IngestConfig = {
   accountField: 'a',
   passwordField: 'p',
   clientIdField: 'c',
+  clientSecretField: 's',
   tokenField: 't'
 };
 
@@ -430,6 +434,7 @@ const ACCOUNT_SELECT_SQL = `
     account,
     password,
     client_id AS clientId,
+    client_secret AS clientSecret,
     refresh_token AS refreshToken,
     IFNULL(auth_type, 'manual') AS authType,
     remark,
@@ -688,6 +693,7 @@ app.get('/auth/microsoft/callback', async (c) => {
     await upsertMicrosoftOauthAccount(c.env.DB, {
       account: me.result.account,
       clientId: getMicrosoftClientId(c.env),
+      clientSecret: getMicrosoftClientSecret(c.env),
       refreshToken: exchanged.result.refreshToken
     });
   } catch (error) {
@@ -750,13 +756,14 @@ app.post('/api/accounts', async (c) => {
   try {
     insertResult = await c.env.DB
       .prepare(
-        `INSERT INTO accounts (account, password, client_id, refresh_token, auth_type, remark)
-         VALUES (?, ?, ?, ?, ?, ?)`
+        `INSERT INTO accounts (account, password, client_id, client_secret, refresh_token, auth_type, remark)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
       )
       .bind(
         payload.account,
         payload.password,
         payload.clientId,
+        payload.clientSecret,
         payload.refreshToken,
         'manual',
         payload.remark
@@ -792,13 +799,14 @@ app.put('/api/accounts/:id', async (c) => {
     result = await c.env.DB
       .prepare(
         `UPDATE accounts
-         SET account = ?, password = ?, client_id = ?, refresh_token = ?, auth_type = ?, remark = ?
+         SET account = ?, password = ?, client_id = ?, client_secret = ?, refresh_token = ?, auth_type = ?, remark = ?
          WHERE id = ?`
       )
       .bind(
         payload.account,
         payload.password,
         payload.clientId,
+        payload.clientSecret,
         payload.refreshToken,
         'manual',
         payload.remark,
@@ -918,13 +926,14 @@ app.post('/api/accounts/import', async (c) => {
     try {
       const result = await c.env.DB
         .prepare(
-          `INSERT OR IGNORE INTO accounts (account, password, client_id, refresh_token, auth_type, remark)
-           VALUES (?, ?, ?, ?, ?, ?)`
+          `INSERT OR IGNORE INTO accounts (account, password, client_id, client_secret, refresh_token, auth_type, remark)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
         )
         .bind(
           payload.account,
           payload.password,
           toNullableText(payload.clientId),
+          toNullableText(payload.clientSecret),
           toNullableText(payload.refreshToken),
           'manual',
           toNullableText(payload.remark)
@@ -1716,13 +1725,14 @@ app.post('/api/upload/ingest', async (c) => {
       const payload = normalizeAccountPayload(record.payload, true);
       const result = await c.env.DB
         .prepare(
-          `INSERT OR IGNORE INTO accounts (account, password, client_id, refresh_token, auth_type, remark)
-           VALUES (?, ?, ?, ?, ?, ?)`
+          `INSERT OR IGNORE INTO accounts (account, password, client_id, client_secret, refresh_token, auth_type, remark)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
         )
         .bind(
           payload.account,
           payload.password,
           toNullableText(payload.clientId),
+          toNullableText(payload.clientSecret),
           toNullableText(payload.refreshToken),
           'manual',
           toNullableText(payload.remark)
@@ -1864,6 +1874,7 @@ function normalizeAccountPayload(input: Partial<AccountPayload>, requireBase: bo
     account,
     password,
     clientId: asText(input.clientId).trim(),
+    clientSecret: asText(input.clientSecret).trim(),
     refreshToken: asText(input.refreshToken).trim(),
     remark: asText(input.remark).trim()
   };
@@ -1896,13 +1907,13 @@ function normalizeRemark(input: unknown): string | null {
 
 function parseCaptchaLine(line: string, delimiter: string): AccountPayload {
   const parts = line.split(delimiter).map((item) => item.trim());
-  if (parts.length < 2 || parts.length > 4) {
+  if (parts.length < 2 || parts.length > 5) {
     throw new Error(
-      `格式应为 账号${delimiter}密码 或 账号${delimiter}密码${delimiter}client_id${delimiter}refresh_token`
+      `格式应为 账号${delimiter}密码 或 账号${delimiter}密码${delimiter}client_id${delimiter}refresh_token${delimiter}client_secret`
     );
   }
 
-  const [account, password, clientId = '', refreshToken = ''] = parts;
+  const [account, password, clientId = '', refreshToken = '', clientSecret = ''] = parts;
   if (!account || !password) {
     throw new Error('账号和密码不能为空');
   }
@@ -1911,6 +1922,7 @@ function parseCaptchaLine(line: string, delimiter: string): AccountPayload {
     account,
     password,
     clientId,
+    clientSecret,
     refreshToken,
     remark: ''
   };
@@ -2004,6 +2016,10 @@ function normalizeIngestConfig(input: Partial<IngestConfig>): IngestConfig {
     accountField: normalizeFieldName(input.accountField, DEFAULT_INGEST_CONFIG.accountField),
     passwordField: normalizeFieldName(input.passwordField, DEFAULT_INGEST_CONFIG.passwordField),
     clientIdField: normalizeFieldName(input.clientIdField, DEFAULT_INGEST_CONFIG.clientIdField),
+    clientSecretField: normalizeFieldName(
+      input.clientSecretField,
+      DEFAULT_INGEST_CONFIG.clientSecretField
+    ),
     tokenField: normalizeFieldName(input.tokenField, DEFAULT_INGEST_CONFIG.tokenField)
   };
 }
@@ -2026,6 +2042,7 @@ function validateIngestConfig(config: IngestConfig): void {
     config.accountField,
     config.passwordField,
     config.clientIdField,
+    config.clientSecretField,
     config.tokenField
   ];
 
@@ -5791,7 +5808,12 @@ async function refreshAccountToken(
     };
   }
 
-  const exchanged = await exchangeMicrosoftToken(env, account.refreshToken, account.clientId);
+  const exchanged = await exchangeMicrosoftToken(
+    env,
+    account.refreshToken,
+    account.clientId,
+    account.clientSecret
+  );
   if (!exchanged.ok) {
     const message = exchanged.error || '刷新失败';
     await updateTokenState(db, account.id, {
@@ -5880,6 +5902,7 @@ async function fetchAccountMessages(
     const attempt = await attemptMailFetch(
       env,
       account.clientId,
+      account.clientSecret,
       latestRefreshToken,
       resolvedMode,
       includeBody
@@ -5944,6 +5967,7 @@ async function fetchAccountMessages(
 async function attemptMailFetch(
   env: Pick<Bindings, 'MS_CLIENT_SECRET'>,
   clientId: string,
+  clientSecret: string | null,
   refreshToken: string,
   mode: ResolvedMailFetchMode,
   includeBody: boolean
@@ -5962,7 +5986,13 @@ async function attemptMailFetch(
       message: string;
     }
 > {
-  const exchanged = await exchangeMicrosoftToken(env, refreshToken, clientId, getScopeByMode(mode));
+  const exchanged = await exchangeMicrosoftToken(
+    env,
+    refreshToken,
+    clientId,
+    clientSecret,
+    getScopeByMode(mode)
+  );
   if (!exchanged.ok) {
     return {
       ok: false,
@@ -6000,6 +6030,7 @@ async function exchangeMicrosoftToken(
   env: Pick<Bindings, 'MS_CLIENT_SECRET'>,
   refreshToken: string,
   clientId: string,
+  accountClientSecret: string | null,
   scope = ''
 ): Promise<{ ok: true; result: TokenExchangeResult } | { ok: false; error: string }> {
   const params = new URLSearchParams();
@@ -6007,7 +6038,7 @@ async function exchangeMicrosoftToken(
   params.set('grant_type', 'refresh_token');
   params.set('refresh_token', refreshToken);
 
-  const clientSecret = asText(env.MS_CLIENT_SECRET).trim();
+  const clientSecret = resolveRefreshClientSecret(env, clientId, accountClientSecret);
   if (clientSecret) {
     params.set('client_secret', clientSecret);
   }
@@ -6485,6 +6516,7 @@ function parseIncomingPayload(input: unknown, config: IngestConfig): ParseIncomi
           account,
           password,
           clientId: asText(obj[config.clientIdField]).trim(),
+          clientSecret: asText(obj[config.clientSecretField]).trim(),
           refreshToken: asText(obj[config.tokenField]).trim(),
           remark: ''
         }
@@ -6509,6 +6541,7 @@ function parseIncomingPayload(input: unknown, config: IngestConfig): ParseIncomi
           account,
           password,
           clientId: asText(obj.clientId ?? obj.client_id).trim(),
+          clientSecret: asText(obj.clientSecret ?? obj.client_secret).trim(),
           refreshToken: asText(obj.refreshToken ?? obj.refresh_token).trim(),
           remark: asText(obj.remark).trim()
         }
@@ -6618,6 +6651,24 @@ function getMicrosoftClientSecret(env: Bindings): string {
     throw new HTTPException(500, { message: '服务端未配置 MS_CLIENT_SECRET 环境变量' });
   }
   return clientSecret;
+}
+
+function resolveRefreshClientSecret(
+  env: Pick<Bindings, 'MS_CLIENT_ID' | 'MS_CLIENT_SECRET'>,
+  clientId: string,
+  accountClientSecret: string | null
+): string {
+  const trimmedAccountSecret = asText(accountClientSecret).trim();
+  if (trimmedAccountSecret) {
+    return trimmedAccountSecret;
+  }
+
+  const globalClientId = asText(env.MS_CLIENT_ID).trim();
+  if (clientId === globalClientId) {
+    return asText(env.MS_CLIENT_SECRET).trim();
+  }
+
+  return '';
 }
 
 function getMicrosoftTenantId(_env: Bindings): string {
@@ -6896,19 +6947,20 @@ async function readMicrosoftMe(
 
 async function upsertMicrosoftOauthAccount(
   db: D1Database,
-  payload: { account: string; clientId: string; refreshToken: string }
+  payload: { account: string; clientId: string; clientSecret: string; refreshToken: string }
 ): Promise<AccountRow> {
   const existing = await fetchAccountByAccount(db, payload.account);
   if (existing) {
     await db
       .prepare(
         `UPDATE accounts
-         SET password = ?, client_id = ?, refresh_token = ?, auth_type = ?, token_status = ?, token_message = ?, token_checked_at = CURRENT_TIMESTAMP, refreshed_at = CURRENT_TIMESTAMP
+         SET password = ?, client_id = ?, client_secret = ?, refresh_token = ?, auth_type = ?, token_status = ?, token_message = ?, token_checked_at = CURRENT_TIMESTAMP, refreshed_at = CURRENT_TIMESTAMP
          WHERE id = ?`
       )
       .bind(
         existing.password || 'oauth',
         payload.clientId,
+        payload.clientSecret,
         payload.refreshToken,
         'microsoft_oauth',
         'valid',
@@ -6926,10 +6978,20 @@ async function upsertMicrosoftOauthAccount(
 
   const result = await db
     .prepare(
-      `INSERT INTO accounts (account, password, client_id, refresh_token, auth_type, remark, token_status, token_message, token_checked_at, refreshed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+      `INSERT INTO accounts (account, password, client_id, client_secret, refresh_token, auth_type, remark, token_status, token_message, token_checked_at, refreshed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
     )
-    .bind(payload.account, 'oauth', payload.clientId, payload.refreshToken, 'microsoft_oauth', null, 'valid', 'OAuth 授权成功')
+    .bind(
+      payload.account,
+      'oauth',
+      payload.clientId,
+      payload.clientSecret,
+      payload.refreshToken,
+      'microsoft_oauth',
+      null,
+      'valid',
+      'OAuth 授权成功'
+    )
     .run();
 
   const inserted = await db.prepare(`${ACCOUNT_SELECT_SQL} WHERE id = ?`).bind(Number(result.meta.last_row_id)).first<AccountRow>();

@@ -54,6 +54,11 @@
                 </n-form-item>
               </n-gi>
               <n-gi :span="24" :md="8">
+                <n-form-item label="client_secret 字段名">
+                  <n-input v-model:value="ingestConfig.clientSecretField" placeholder="s" />
+                </n-form-item>
+              </n-gi>
+              <n-gi :span="24" :md="8">
                 <n-form-item label="refresh_token 字段名">
                   <n-input v-model:value="ingestConfig.tokenField" placeholder="t" />
                 </n-form-item>
@@ -201,7 +206,7 @@ const ingestEndpointUrl = computed(() => {
 const captchaPayloadExample = computed(() => {
   const key = ingestConfig.captchaField;
   const delimiter = ingestConfig.delimiter;
-  const value = `your_account${delimiter}your_password${delimiter}your_client_id${delimiter}your_refresh_token`;
+  const value = `your_account${delimiter}your_password${delimiter}your_client_id${delimiter}your_refresh_token${delimiter}your_client_secret`;
   return JSON.stringify({ [key]: value }, null, 2);
 });
 
@@ -211,6 +216,7 @@ const mappedPayloadExample = computed(() =>
       [ingestConfig.accountField]: 'your_account',
       [ingestConfig.passwordField]: 'your_password',
       [ingestConfig.clientIdField]: 'your_client_id',
+      [ingestConfig.clientSecretField]: 'your_client_secret',
       [ingestConfig.tokenField]: 'your_refresh_token'
     },
     null,

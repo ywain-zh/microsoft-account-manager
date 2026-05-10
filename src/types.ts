@@ -3,6 +3,7 @@ export interface AccountItem {
   account: string;
   password: string;
   clientId: string | null;
+  clientSecret: string | null;
   refreshToken: string | null;
   authType: 'manual' | 'microsoft_oauth';
   remark: string | null;
@@ -23,6 +24,7 @@ export interface AccountPayload {
   account: string;
   password: string;
   clientId?: string;
+  clientSecret?: string;
   refreshToken?: string;
   remark?: string;
 }
@@ -39,6 +41,7 @@ export interface IngestConfig {
   accountField: string;
   passwordField: string;
   clientIdField: string;
+  clientSecretField: string;
   tokenField: string;
 }
 

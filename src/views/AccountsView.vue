@@ -144,6 +144,17 @@
             </n-form-item>
           </n-gi>
           <n-gi :span="24" :md="6">
+            <n-form-item label="Client Secret（可选）">
+              <n-input
+                v-model:value="createForm.clientSecret"
+                placeholder="client_secret"
+                type="text"
+                class="microsoft-secret-input"
+                :input-props="clientSecretInputProps"
+              />
+            </n-form-item>
+          </n-gi>
+          <n-gi :span="24" :md="6">
             <n-form-item label="Refresh Token（可选）">
               <n-input v-model:value="createForm.refreshToken" placeholder="refresh_token" :input-props="refreshTokenInputProps" />
             </n-form-item>
@@ -173,7 +184,7 @@
           v-model:value="importText"
           type="textarea"
           :autosize="{ minRows: 7, maxRows: 12 }"
-          placeholder="每行一个账号：账号----密码 或 账号----密码----client_id----refresh_token"
+          placeholder="每行一个账号：账号----密码 或 账号----密码----client_id----refresh_token----client_secret"
         />
         <p class="hint">支持手动输入或 TXT 文件导入，空行会自动忽略。</p>
       </div>
@@ -226,6 +237,16 @@
           <n-gi :span="24" :md="6">
             <n-form-item label="Client ID（可选）">
               <n-input v-model:value="editForm.clientId" :input-props="clientIdInputProps" />
+            </n-form-item>
+          </n-gi>
+          <n-gi :span="24" :md="6">
+            <n-form-item label="Client Secret（可选）">
+              <n-input
+                v-model:value="editForm.clientSecret"
+                type="text"
+                class="microsoft-secret-input"
+                :input-props="clientSecretInputProps"
+              />
             </n-form-item>
           </n-gi>
           <n-gi :span="24" :md="6">
@@ -496,6 +517,13 @@ const accountInputProps = {
 const clientIdInputProps = {
   ...noCredentialInputProps,
   name: 'microsoft-mail-client-id'
+} as const;
+
+const clientSecretInputProps = {
+  ...noCredentialInputProps,
+  autocomplete: 'new-password',
+  name: 'microsoft-mail-client-secret',
+  'aria-autocomplete': 'none'
 } as const;
 
 const refreshTokenInputProps = {
