@@ -120,11 +120,11 @@
       class="console-modal"
       title="新增账户"
     >
-      <n-form label-placement="top">
+      <n-form label-placement="top" autocomplete="off">
         <n-grid :cols="24" :x-gap="14" :y-gap="8">
           <n-gi :span="24" :md="6">
             <n-form-item label="账号">
-              <n-input v-model:value="createForm.account" placeholder="请输入账号" />
+              <n-input v-model:value="createForm.account" placeholder="请输入账号" :input-props="accountInputProps" />
             </n-form-item>
           </n-gi>
           <n-gi :span="24" :md="6">
@@ -134,17 +134,18 @@
                 type="password"
                 show-password-on="click"
                 placeholder="请输入密码"
+                :input-props="accountPasswordInputProps"
               />
             </n-form-item>
           </n-gi>
           <n-gi :span="24" :md="6">
             <n-form-item label="Client ID（可选）">
-              <n-input v-model:value="createForm.clientId" placeholder="client_id" />
+              <n-input v-model:value="createForm.clientId" placeholder="client_id" :input-props="clientIdInputProps" />
             </n-form-item>
           </n-gi>
           <n-gi :span="24" :md="6">
             <n-form-item label="Refresh Token（可选）">
-              <n-input v-model:value="createForm.refreshToken" placeholder="refresh_token" />
+              <n-input v-model:value="createForm.refreshToken" placeholder="refresh_token" :input-props="refreshTokenInputProps" />
             </n-form-item>
           </n-gi>
         </n-grid>
@@ -205,26 +206,31 @@
       class="console-modal"
       title="编辑账户"
     >
-      <n-form label-placement="top">
+      <n-form label-placement="top" autocomplete="off">
         <n-grid :cols="24" :x-gap="14" :y-gap="8">
           <n-gi :span="24" :md="6">
             <n-form-item label="账号">
-              <n-input v-model:value="editForm.account" />
+              <n-input v-model:value="editForm.account" :input-props="accountInputProps" />
             </n-form-item>
           </n-gi>
           <n-gi :span="24" :md="6">
             <n-form-item label="密码">
-              <n-input v-model:value="editForm.password" type="password" show-password-on="click" />
+              <n-input
+                v-model:value="editForm.password"
+                type="password"
+                show-password-on="click"
+                :input-props="accountPasswordInputProps"
+              />
             </n-form-item>
           </n-gi>
           <n-gi :span="24" :md="6">
             <n-form-item label="Client ID（可选）">
-              <n-input v-model:value="editForm.clientId" />
+              <n-input v-model:value="editForm.clientId" :input-props="clientIdInputProps" />
             </n-form-item>
           </n-gi>
           <n-gi :span="24" :md="6">
             <n-form-item label="Refresh Token（可选）">
-              <n-input v-model:value="editForm.refreshToken" />
+              <n-input v-model:value="editForm.refreshToken" :input-props="refreshTokenInputProps" />
             </n-form-item>
           </n-gi>
         </n-grid>
@@ -247,9 +253,9 @@
       class="console-modal microsoft-remark-modal"
       title="编辑备注"
     >
-      <n-form label-placement="top" autocomplete="off">
+      <n-form label-placement="top" autocomplete="off" @submit.prevent>
         <n-form-item label="邮箱">
-          <n-input :value="remarkForm.account" readonly />
+          <n-input :value="remarkForm.account" readonly :input-props="remarkAccountInputProps" />
         </n-form-item>
         <n-form-item label="备注">
           <n-input
@@ -258,6 +264,7 @@
             maxlength="500"
             show-count
             :autosize="{ minRows: 4, maxRows: 8 }"
+            :input-props="remarkInputProps"
           />
         </n-form-item>
       </n-form>
@@ -288,7 +295,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, h, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
   NButton,
@@ -407,13 +414,58 @@ const {
   markMailAsRead,
   isAuthenticated,
   initialDataLoaded,
-  oauthPopupLoading
+  oauthPopupLoading,
+  updateAccountPassword,
+  copyPasswordValue
 } = admin;
 
 const txtFileInputRef = ref<HTMLInputElement | null>(null);
 const tablePage = ref(1);
+const passwordDrafts = reactive<Record<number, string>>({});
+const passwordSavingIds = ref<number[]>([]);
 const SEARCH_DEBOUNCE_MS = 300;
 let searchDebounceTimer: number | null = null;
+
+const noCredentialInputProps = {
+  autocomplete: 'off',
+  autocapitalize: 'none',
+  autocorrect: 'off',
+  spellcheck: 'false',
+  'data-lpignore': 'true',
+  'data-1p-ignore': 'true',
+  'data-form-type': 'other'
+} as const;
+
+const accountInputProps = {
+  ...noCredentialInputProps,
+  name: 'microsoft-mail-account-address'
+} as const;
+
+const clientIdInputProps = {
+  ...noCredentialInputProps,
+  name: 'microsoft-mail-client-id'
+} as const;
+
+const refreshTokenInputProps = {
+  ...noCredentialInputProps,
+  name: 'microsoft-mail-refresh-token'
+} as const;
+
+const remarkAccountInputProps = {
+  ...noCredentialInputProps,
+  name: 'microsoft-mail-remark-account'
+} as const;
+
+const remarkInputProps = {
+  ...noCredentialInputProps,
+  name: 'microsoft-mail-remark-text'
+} as const;
+
+const accountPasswordInputProps = {
+  ...noCredentialInputProps,
+  autocomplete: 'new-password',
+  name: 'microsoft-mail-account-secret'
+} as const;
 
 const rowKey = (row: AccountItem): number => row.id;
 
@@ -532,6 +584,100 @@ function renderRemarkCell(row: AccountItem): ReturnType<typeof h> {
   ]);
 }
 
+function getPasswordDraft(row: AccountItem): string {
+  return passwordDrafts[row.id] ?? row.password ?? '';
+}
+
+function setPasswordSaving(id: number, saving: boolean): void {
+  if (saving) {
+    if (!passwordSavingIds.value.includes(id)) {
+      passwordSavingIds.value = [...passwordSavingIds.value, id];
+    }
+    return;
+  }
+
+  passwordSavingIds.value = passwordSavingIds.value.filter((item) => item !== id);
+}
+
+function isPasswordSaving(id: number): boolean {
+  return passwordSavingIds.value.includes(id);
+}
+
+function getPasswordCellInputProps(row: AccountItem): Record<string, string> {
+  return {
+    ...accountPasswordInputProps,
+    name: `microsoft-mail-account-secret-${row.id}`
+  };
+}
+
+async function saveInlinePassword(row: AccountItem): Promise<void> {
+  const nextPassword = getPasswordDraft(row).trim();
+  if (nextPassword === row.password) {
+    return;
+  }
+  if (!nextPassword) {
+    passwordDrafts[row.id] = row.password ?? '';
+    return;
+  }
+
+  setPasswordSaving(row.id, true);
+  try {
+    const updated = await updateAccountPassword(row.id, nextPassword);
+    if (updated) {
+      passwordDrafts[row.id] = updated.password;
+    }
+  } finally {
+    setPasswordSaving(row.id, false);
+  }
+}
+
+function renderPasswordCell(row: AccountItem): ReturnType<typeof h> {
+  const draftValue = getPasswordDraft(row);
+  return h('div', { class: 'microsoft-password-cell' }, [
+    h(NInput, {
+      value: draftValue,
+      size: 'small',
+      type: 'password',
+      showPasswordOn: 'click',
+      placeholder: '输入密码',
+      class: 'microsoft-password-input',
+      inputProps: getPasswordCellInputProps(row),
+      loading: isPasswordSaving(row.id),
+      disabled: isPasswordSaving(row.id),
+      onClick: (event: MouseEvent) => {
+        event.stopPropagation();
+      },
+      'onUpdate:value': (value: string) => {
+        passwordDrafts[row.id] = value;
+      },
+      onBlur: () => {
+        void saveInlinePassword(row);
+      },
+      onKeydown: (event: KeyboardEvent) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          void saveInlinePassword(row);
+        }
+      }
+    }),
+    h(
+      'button',
+      {
+        type: 'button',
+        class: 'table-icon-button microsoft-password-copy-button',
+        title: '复制密码',
+        'aria-label': `复制 ${row.account} 的密码`,
+        disabled: !draftValue.trim(),
+        onClick: (event: MouseEvent) => {
+          event.stopPropagation();
+          void copyPasswordValue(draftValue);
+        }
+      },
+      [h(CopyGlyph)]
+    )
+  ]);
+}
+
 const accountColumns: DataTableColumns<AccountItem> = [
   {
     type: 'selection',
@@ -540,13 +686,13 @@ const accountColumns: DataTableColumns<AccountItem> = [
   {
     title: '邮箱',
     key: 'account',
-    width: 250,
+    width: 220,
     render: (row) => renderEmailCell(row)
   },
   {
     title: '备注',
     key: 'remark',
-    width: 180,
+    width: 170,
     render: (row) => renderRemarkCell(row)
   },
   {
@@ -559,9 +705,8 @@ const accountColumns: DataTableColumns<AccountItem> = [
   {
     title: '密码',
     key: 'password',
-    width: 92,
-    render: (row) =>
-      h('span', { class: 'plain-cell-text plain-cell-text-compact', title: row.password }, row.password)
+    width: 230,
+    render: (row) => renderPasswordCell(row)
   },
   {
     title: '邮箱状态',
@@ -925,6 +1070,35 @@ onUnmounted(() => {
 :deep(.microsoft-account-table .microsoft-remark-edit-button svg) {
   width: 14px;
   height: 14px;
+}
+
+:deep(.microsoft-account-table .microsoft-password-cell) {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) 28px;
+  max-width: 100%;
+  align-items: center;
+  gap: 8px;
+}
+
+:deep(.microsoft-account-table .microsoft-password-input .n-input-wrapper) {
+  padding-inline: 10px;
+}
+
+:deep(.microsoft-account-table .microsoft-password-input .n-input__input-el) {
+  font-family: 'Fira Code', 'SFMono-Regular', Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+:deep(.microsoft-account-table .microsoft-password-copy-button) {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+
+:deep(.microsoft-account-table .microsoft-password-copy-button:disabled) {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 :deep(.microsoft-account-table .n-data-table-td:nth-child(6) .status-pill) {

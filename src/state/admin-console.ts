@@ -18,6 +18,8 @@ const ACCOUNT_SEARCH_STORAGE_KEY = 'mail-console-account-search';
 const MICROSOFT_OAUTH_LOGIN_PATH = '/auth/microsoft';
 const MICROSOFT_OAUTH_POPUP_NAME = 'microsoft-oauth-login';
 const MICROSOFT_OAUTH_POPUP_FEATURES = 'popup=yes,width=560,height=760,left=120,top=80,resizable=yes,scrollbars=yes';
+const MICROSOFT_OAUTH_POPUP_POLL_MS = 800;
+const MICROSOFT_OAUTH_POPUP_TIMEOUT_MS = 120_000;
 
 interface AccountFormState {
   account: string;
@@ -48,6 +50,9 @@ const isAuthenticated = ref(false);
 const currentUser = ref('');
 const siteOrigin = ref(typeof window === 'undefined' ? '' : window.location.origin);
 const oauthPopupLoading = ref(false);
+let microsoftOauthPopup: Window | null = null;
+let microsoftOauthPopupPollTimer: number | null = null;
+let microsoftOauthPopupTimeoutTimer: number | null = null;
 
 const accounts = ref<AccountItem[]>([]);
 const searchKeyword = ref(readPersistedSearchKeyword());
@@ -203,11 +208,27 @@ function resetRemarkForm(): void {
   remarkForm.remark = '';
 }
 
+function clearMicrosoftOauthPopupWatch(): void {
+  if (typeof window !== 'undefined') {
+    if (microsoftOauthPopupPollTimer !== null) {
+      window.clearInterval(microsoftOauthPopupPollTimer);
+    }
+    if (microsoftOauthPopupTimeoutTimer !== null) {
+      window.clearTimeout(microsoftOauthPopupTimeoutTimer);
+    }
+  }
+
+  microsoftOauthPopup = null;
+  microsoftOauthPopupPollTimer = null;
+  microsoftOauthPopupTimeoutTimer = null;
+}
+
 function clearSessionState(): void {
   authChecked.value = true;
   initialDataLoaded.value = false;
   isAuthenticated.value = false;
   currentUser.value = '';
+  clearMicrosoftOauthPopupWatch();
   oauthPopupLoading.value = false;
   accounts.value = [];
   checkedRowKeys.value = [];
@@ -275,6 +296,57 @@ async function loadAccounts(): Promise<boolean> {
   } finally {
     tableLoading.value = false;
   }
+}
+
+async function finishMicrosoftOauthPopupWait(refreshList = true): Promise<void> {
+  if (!oauthPopupLoading.value) {
+    clearMicrosoftOauthPopupWatch();
+    return;
+  }
+
+  clearMicrosoftOauthPopupWatch();
+  oauthPopupLoading.value = false;
+
+  if (!refreshList) {
+    return;
+  }
+
+  const loaded = await loadAccounts();
+  if (!loaded) {
+    message.warning('OAuth 窗口已关闭，但列表刷新失败，请手动刷新一次');
+  }
+}
+
+function watchMicrosoftOauthPopup(popup: Window): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  clearMicrosoftOauthPopupWatch();
+  microsoftOauthPopup = popup;
+  microsoftOauthPopupPollTimer = window.setInterval(() => {
+    let isClosed = false;
+    try {
+      isClosed = microsoftOauthPopup?.closed ?? true;
+    } catch {
+      isClosed = true;
+    }
+
+    if (isClosed) {
+      void finishMicrosoftOauthPopupWait();
+    }
+  }, MICROSOFT_OAUTH_POPUP_POLL_MS);
+  microsoftOauthPopupTimeoutTimer = window.setTimeout(() => {
+    if (!oauthPopupLoading.value) {
+      clearMicrosoftOauthPopupWatch();
+      return;
+    }
+
+    clearMicrosoftOauthPopupWatch();
+    oauthPopupLoading.value = false;
+    void loadAccounts();
+    message.warning('OAuth 登录等待超时，已自动刷新列表');
+  }, MICROSOFT_OAUTH_POPUP_TIMEOUT_MS);
 }
 
 async function loadIngestConfig(): Promise<void> {
@@ -487,6 +559,24 @@ async function saveRemark(): Promise<void> {
   }
 }
 
+async function updateAccountPassword(id: number, password: string): Promise<AccountItem | null> {
+  const nextPassword = password.trim();
+  if (!nextPassword) {
+    message.warning('密码不能为空');
+    return null;
+  }
+
+  try {
+    const response = await api.updateAccountPassword(id, nextPassword);
+    accounts.value = accounts.value.map((item) => (item.id === response.item.id ? response.item : item));
+    message.success('密码已保存');
+    return response.item;
+  } catch (error) {
+    handleApiError(error);
+    return null;
+  }
+}
+
 async function deleteAccount(id: number): Promise<void> {
   const confirmed = window.confirm('确认删除该账号？');
   if (!confirmed) {
@@ -644,6 +734,16 @@ async function copyAccountValue(account: string): Promise<boolean> {
   return copyText(account, '邮箱已复制');
 }
 
+async function copyPasswordValue(password: string): Promise<boolean> {
+  const value = password.trim();
+  if (!value) {
+    message.warning('当前没有可复制的密码');
+    return false;
+  }
+
+  return copyText(value, '密码已复制');
+}
+
 async function copyMailAccount(): Promise<boolean> {
   const account = mailAccount.value.trim();
   if (!account) {
@@ -701,6 +801,7 @@ function beginMicrosoftOauthLogin(): void {
   );
 
   if (popup) {
+    watchMicrosoftOauthPopup(popup);
     popup.focus();
     return;
   }
@@ -716,6 +817,7 @@ async function consumeMicrosoftOauthResult(
     return;
   }
 
+  clearMicrosoftOauthPopupWatch();
   oauthPopupLoading.value = false;
   const isPopupMessage = payload.source === 'microsoft-oauth';
   const queryOauth = typeof (payload as Record<string, unknown>).oauth === 'string'
@@ -905,6 +1007,7 @@ export function useAdminConsole() {
     createAccount,
     updateAccount,
     saveRemark,
+    updateAccountPassword,
     deleteAccount,
     importAccountsText,
     refreshAccounts,
@@ -913,6 +1016,7 @@ export function useAdminConsole() {
     batchDeleteAccounts,
     openMailModal,
     copyAccountValue,
+    copyPasswordValue,
     copyMailAccount,
     refreshMailInbox,
     saveIngestConfig,

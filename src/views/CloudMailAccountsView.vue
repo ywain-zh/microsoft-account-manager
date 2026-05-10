@@ -32,8 +32,8 @@
             <n-button
               size="small"
               class="toolbar-button toolbar-button-muted"
-              :loading="tableLoading"
-              :disabled="!hasConfiguredCloudMail"
+              :loading="accountsSyncing"
+              :disabled="!hasConfiguredCloudMail || accountsSyncing"
               @click="refreshAccounts"
             >
               <template #icon>
@@ -270,9 +270,9 @@
       class="console-modal cloud-mail-remark-modal"
       title="编辑备注"
     >
-      <n-form label-placement="top" autocomplete="off">
+      <n-form label-placement="top" autocomplete="off" @submit.prevent>
         <n-form-item label="邮箱">
-          <n-input :value="remarkForm.email" readonly />
+          <n-input :value="remarkForm.email" readonly :input-props="remarkEmailInputProps" />
         </n-form-item>
         <n-form-item label="备注">
           <n-input
@@ -281,6 +281,7 @@
             maxlength="500"
             show-count
             :autosize="{ minRows: 4, maxRows: 8 }"
+            :input-props="remarkInputProps"
           />
         </n-form-item>
       </n-form>
@@ -561,6 +562,7 @@ const {
   configSaving,
   createLoading,
   deleteLoading,
+  accountsSyncing,
   mailLoading,
   remarkSaving,
   configVisible,
@@ -658,6 +660,28 @@ const localPartInputProps = {
   name: 'cloud-mail-local-part',
   'data-lpignore': 'true',
   'data-1p-ignore': 'true'
+} as const;
+
+const remarkEmailInputProps = {
+  autocomplete: 'off',
+  autocapitalize: 'off',
+  autocorrect: 'off',
+  spellcheck: 'false',
+  name: 'cloud-mail-remark-email',
+  'data-lpignore': 'true',
+  'data-1p-ignore': 'true',
+  'data-form-type': 'other'
+} as const;
+
+const remarkInputProps = {
+  autocomplete: 'off',
+  autocapitalize: 'off',
+  autocorrect: 'off',
+  spellcheck: 'false',
+  name: 'cloud-mail-remark-text',
+  'data-lpignore': 'true',
+  'data-1p-ignore': 'true',
+  'data-form-type': 'other'
 } as const;
 
 const rowKey = (row: CloudMailAccountItem): number => row.userId;

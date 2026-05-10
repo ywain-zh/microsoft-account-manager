@@ -65,11 +65,19 @@ export interface CloudMailAccountListResponse {
   total: number;
   page: number;
   pageSize: number;
+  syncedAt?: string | null;
+  cacheEmpty?: boolean;
 }
 
 export interface CloudMailCreatePayload {
   localPart: string;
   domain: string;
+}
+
+export interface CloudMailSyncResponse {
+  ok: true;
+  synced: number;
+  syncedAt: string;
 }
 
 export interface Sub2ApiConfig {

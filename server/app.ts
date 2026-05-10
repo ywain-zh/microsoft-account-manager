@@ -169,11 +169,32 @@ interface CloudMailRemarkRow {
   remark: string | null;
 }
 
+interface CloudMailAccountCacheRow {
+  configKey: string;
+  userId: number;
+  email: string;
+  status: number;
+  receiveEmailCount: number;
+  sendEmailCount: number;
+  activeTime: string | null;
+  createTime: string | null;
+  syncedAt: string | null;
+  remark: string | null;
+}
+
 interface CloudMailListResponse {
   items: CloudMailAccountItem[];
   total: number;
   page: number;
   pageSize: number;
+  syncedAt?: string | null;
+  cacheEmpty?: boolean;
+}
+
+interface CloudMailSyncResponse {
+  ok: true;
+  synced: number;
+  syncedAt: string;
 }
 
 interface CloudMailRemoteEnvelope<T> {
@@ -802,6 +823,17 @@ app.put('/api/accounts/:id', async (c) => {
     throw new HTTPException(404, { message: '账号不存在' });
   }
 
+  return c.json({ item: serializeAccountRow(item) });
+});
+
+app.patch('/api/accounts/:id/password', async (c) => {
+  const id = parseNumericId(c.req.param('id'));
+  const body = await readJson<{ password?: unknown }>(c);
+  const password = normalizeAccountPassword(body.password);
+  const item = await updateAccountPassword(c.env.DB, id, password);
+  if (!item) {
+    throw new HTTPException(404, { message: '账号不存在' });
+  }
   return c.json({ item: serializeAccountRow(item) });
 });
 
@@ -1536,13 +1568,26 @@ app.get('/api/cloud-mail/accounts', async (c) => {
   const pageSize = parsePageNumber(c.req.query('pageSize'), 20, 1, 100);
   const keyword = asText(c.req.query('keyword')).trim();
 
-  const result = await listCloudMailAccounts(c.env.DB, config, {
+  const result = await listCloudMailAccountCache(c.env.DB, config, {
     page,
     pageSize,
     keyword
   });
 
   return c.json(result);
+});
+
+app.post('/api/cloud-mail/accounts/sync', async (c) => {
+  const config = await getCloudMailConfig(c.env.DB);
+  ensureCloudMailConfigured(config);
+
+  const result = await syncCloudMailAccountCache(c.env.DB, config);
+
+  return c.json({
+    ok: true as const,
+    synced: result.synced,
+    syncedAt: result.syncedAt
+  } satisfies CloudMailSyncResponse);
 });
 
 app.get('/api/cloud-mail/messages', async (c) => {
@@ -1592,6 +1637,7 @@ app.post('/api/cloud-mail/accounts', async (c) => {
   const email = `${payload.localPart}@${payload.domain}`;
 
   await createCloudMailAccount(config, { email });
+  await cacheCreatedCloudMailAccount(c.env.DB, config, email);
 
   return c.json({
     ok: true as const,
@@ -1611,6 +1657,7 @@ app.post('/api/cloud-mail/accounts/batch-delete', async (c) => {
   }
 
   await deleteCloudMailAccounts(config, userIds);
+  await deleteCloudMailAccountCache(c.env.DB, getCloudMailCacheKey(config), userIds);
   await deleteCloudMailAccountRemarks(c.env.DB, userIds);
 
   return c.json({
@@ -1629,8 +1676,7 @@ app.patch('/api/cloud-mail/accounts/:id/remark', async (c) => {
   const body = await readJson<{ remark?: unknown }>(c);
   const remark = normalizeRemark(body.remark);
 
-  const remoteList = await fetchAllCloudMailAccounts(config, '');
-  const account = remoteList.find((item) => item.userId === userId) ?? null;
+  const account = await findCloudMailCachedAccountByUserId(c.env.DB, getCloudMailCacheKey(config), userId);
 
   if (!account) {
     throw new HTTPException(404, { message: 'Cloud Mail 邮箱不存在' });
@@ -1825,6 +1871,17 @@ function normalizeAccountPayload(input: Partial<AccountPayload>, requireBase: bo
   }
 
   return payload;
+}
+
+function normalizeAccountPassword(input: unknown): string {
+  const password = asText(input).trim();
+  if (!password) {
+    throw new HTTPException(400, { message: '密码不能为空' });
+  }
+  if (password.length > 255) {
+    throw new HTTPException(400, { message: '密码长度超过限制' });
+  }
+  return password;
 }
 
 function normalizeRemark(input: unknown): string | null {
@@ -3726,6 +3783,258 @@ async function listCloudMailAccounts(
   };
 }
 
+function getCloudMailCacheKey(config: CloudMailConfig): string {
+  const apiBaseUrl = config.apiBaseUrl.trim().replace(/\/+$/, '').toLowerCase();
+  const adminEmail = config.adminEmail.trim().toLowerCase();
+  return `${apiBaseUrl}::${adminEmail}`;
+}
+
+function toCloudMailAccountItemFromCache(row: CloudMailAccountCacheRow): CloudMailAccountItem {
+  return {
+    userId: row.userId,
+    email: row.email,
+    status: row.status,
+    receiveEmailCount: row.receiveEmailCount,
+    sendEmailCount: row.sendEmailCount,
+    activeTime: row.activeTime,
+    createTime: row.createTime,
+    remark: row.remark ?? null
+  };
+}
+
+async function countCloudMailAccountCache(db: D1Database, configKey: string): Promise<number> {
+  const row = await db
+    .prepare(`SELECT COUNT(*) AS total FROM cloud_mail_account_cache WHERE config_key = ?`)
+    .bind(configKey)
+    .first<{ total: number }>();
+  return toCloudMailNumber(row?.total, 0);
+}
+
+async function getCloudMailAccountCacheSyncedAt(db: D1Database, configKey: string): Promise<string | null> {
+  const row = await db
+    .prepare(`SELECT MAX(synced_at) AS syncedAt FROM cloud_mail_account_cache WHERE config_key = ?`)
+    .bind(configKey)
+    .first<{ syncedAt: string | null }>();
+  return row?.syncedAt ?? null;
+}
+
+async function queryCloudMailAccountCache(
+  db: D1Database,
+  configKey: string,
+  options: { page: number; pageSize: number; keyword: string }
+): Promise<CloudMailListResponse> {
+  const page = Math.max(1, options.page);
+  const pageSize = Math.max(1, Math.min(options.pageSize, 100));
+  const offset = (page - 1) * pageSize;
+  const keyword = options.keyword.trim().toLowerCase();
+  const whereParts = ['c.config_key = ?'];
+  const bindings: (string | number)[] = [configKey];
+
+  if (keyword) {
+    whereParts.push('LOWER(c.email) LIKE ?');
+    bindings.push(`%${keyword}%`);
+  }
+
+  const whereSql = whereParts.join(' AND ');
+  const totalRow = await db
+    .prepare(`SELECT COUNT(*) AS total FROM cloud_mail_account_cache c WHERE ${whereSql}`)
+    .bind(...bindings)
+    .first<{ total: number }>();
+  const total = toCloudMailNumber(totalRow?.total, 0);
+  const { results } = await db
+    .prepare(
+      `SELECT
+         c.config_key AS configKey,
+         c.user_id AS userId,
+         c.email,
+         c.status,
+         c.receive_email_count AS receiveEmailCount,
+         c.send_email_count AS sendEmailCount,
+         c.active_time AS activeTime,
+         c.create_time AS createTime,
+         c.synced_at AS syncedAt,
+         r.remark
+       FROM cloud_mail_account_cache c
+       LEFT JOIN cloud_mail_account_remarks r ON r.user_id = c.user_id
+       WHERE ${whereSql}
+       ORDER BY COALESCE(c.create_time, '') DESC, c.user_id DESC
+       LIMIT ? OFFSET ?`
+    )
+    .bind(...bindings, pageSize, offset)
+    .all<CloudMailAccountCacheRow>();
+
+  return {
+    items: (results ?? []).map(toCloudMailAccountItemFromCache),
+    total,
+    page,
+    pageSize,
+    syncedAt: await getCloudMailAccountCacheSyncedAt(db, configKey),
+    cacheEmpty: false
+  };
+}
+
+async function listCloudMailAccountCache(
+  db: D1Database,
+  config: CloudMailConfig,
+  options: { page: number; pageSize: number; keyword: string }
+): Promise<CloudMailListResponse> {
+  const configKey = getCloudMailCacheKey(config);
+  const cachedTotal = await countCloudMailAccountCache(db, configKey);
+  const cacheEmpty = cachedTotal === 0;
+
+  if (cacheEmpty) {
+    await syncCloudMailAccountCache(db, config);
+  }
+
+  const result = await queryCloudMailAccountCache(db, configKey, options);
+  return {
+    ...result,
+    cacheEmpty
+  };
+}
+
+async function upsertCloudMailAccountCache(
+  db: D1Database,
+  configKey: string,
+  item: CloudMailAccountItem,
+  syncedAt: string
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO cloud_mail_account_cache (
+         config_key,
+         user_id,
+         email,
+         status,
+         receive_email_count,
+         send_email_count,
+         active_time,
+         create_time,
+         synced_at,
+         updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(config_key, user_id)
+       DO UPDATE SET
+         email = excluded.email,
+         status = excluded.status,
+         receive_email_count = excluded.receive_email_count,
+         send_email_count = excluded.send_email_count,
+         active_time = excluded.active_time,
+         create_time = excluded.create_time,
+         synced_at = excluded.synced_at,
+         updated_at = CURRENT_TIMESTAMP`
+    )
+    .bind(
+      configKey,
+      item.userId,
+      item.email,
+      item.status,
+      item.receiveEmailCount,
+      item.sendEmailCount,
+      item.activeTime,
+      item.createTime,
+      syncedAt
+    )
+    .run();
+}
+
+async function replaceCloudMailAccountCacheFromRemote(
+  db: D1Database,
+  config: CloudMailConfig,
+  items: CloudMailAccountItem[]
+): Promise<{ synced: number; syncedAt: string }> {
+  const configKey = getCloudMailCacheKey(config);
+  const syncedAt = new Date().toISOString();
+
+  for (const item of items) {
+    await upsertCloudMailAccountCache(db, configKey, item, syncedAt);
+  }
+  const cachedUserIds = await listCloudMailAccountCacheUserIds(db, configKey);
+  const freshUserIds = new Set(items.map((item) => item.userId));
+  const staleUserIds = cachedUserIds.filter((userId) => !freshUserIds.has(userId));
+  await deleteCloudMailAccountCache(db, configKey, staleUserIds);
+
+  return {
+    synced: items.length,
+    syncedAt
+  };
+}
+
+async function syncCloudMailAccountCache(
+  db: D1Database,
+  config: CloudMailConfig
+): Promise<{ synced: number; syncedAt: string }> {
+  const items = await fetchAllCloudMailAccounts(config, '');
+  return replaceCloudMailAccountCacheFromRemote(db, config, items);
+}
+
+async function cacheCreatedCloudMailAccount(db: D1Database, config: CloudMailConfig, email: string): Promise<void> {
+  try {
+    const matched = await fetchAllCloudMailAccounts(config, email);
+    const account = matched.find((item) => item.email.toLowerCase() === email.toLowerCase()) ?? matched[0] ?? null;
+    if (account) {
+      await upsertCloudMailAccountCache(db, getCloudMailCacheKey(config), account, new Date().toISOString());
+    }
+  } catch (error) {
+    console.warn('Failed to refresh Cloud Mail account cache after create', error);
+  }
+}
+
+async function listCloudMailAccountCacheUserIds(db: D1Database, configKey: string): Promise<number[]> {
+  const { results } = await db
+    .prepare(`SELECT user_id AS userId FROM cloud_mail_account_cache WHERE config_key = ?`)
+    .bind(configKey)
+    .all<{ userId: number }>();
+  return (results ?? []).map((row) => toCloudMailNumber(row.userId, 0)).filter((userId) => userId > 0);
+}
+
+async function deleteCloudMailAccountCache(db: D1Database, configKey: string, userIds: number[]): Promise<void> {
+  if (userIds.length === 0) {
+    return;
+  }
+
+  const chunkSize = 100;
+  for (let index = 0; index < userIds.length; index += chunkSize) {
+    const chunk = userIds.slice(index, index + chunkSize);
+    const placeholders = chunk.map(() => '?').join(',');
+    await db
+      .prepare(`DELETE FROM cloud_mail_account_cache WHERE config_key = ? AND user_id IN (${placeholders})`)
+      .bind(configKey, ...chunk)
+      .run();
+  }
+}
+
+async function findCloudMailCachedAccountByUserId(
+  db: D1Database,
+  configKey: string,
+  userId: number
+): Promise<CloudMailAccountItem | null> {
+  const row = await db
+    .prepare(
+      `SELECT
+         c.config_key AS configKey,
+         c.user_id AS userId,
+         c.email,
+         c.status,
+         c.receive_email_count AS receiveEmailCount,
+         c.send_email_count AS sendEmailCount,
+         c.active_time AS activeTime,
+         c.create_time AS createTime,
+         c.synced_at AS syncedAt,
+         r.remark
+       FROM cloud_mail_account_cache c
+       LEFT JOIN cloud_mail_account_remarks r ON r.user_id = c.user_id
+       WHERE c.config_key = ?
+         AND c.user_id = ?
+       LIMIT 1`
+    )
+    .bind(configKey, userId)
+    .first<CloudMailAccountCacheRow>();
+
+  return row ? toCloudMailAccountItemFromCache(row) : null;
+}
+
 async function createCloudMailAccount(
   config: CloudMailConfig,
   payload: { email: string }
@@ -5360,6 +5669,14 @@ async function fetchAllCloudMailAccounts(
 
 async function updateAccountRemark(db: D1Database, id: number, remark: string | null): Promise<AccountRow | null> {
   const result = await db.prepare('UPDATE accounts SET remark = ? WHERE id = ?').bind(remark, id).run();
+  if ((result.meta.changes ?? 0) === 0) {
+    return null;
+  }
+  return fetchAccountById(db, id);
+}
+
+async function updateAccountPassword(db: D1Database, id: number, password: string): Promise<AccountRow | null> {
+  const result = await db.prepare('UPDATE accounts SET password = ? WHERE id = ?').bind(password, id).run();
   if ((result.meta.changes ?? 0) === 0) {
     return null;
   }

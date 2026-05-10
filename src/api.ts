@@ -9,6 +9,7 @@ import type {
   CloudMailConfig,
   CloudMailCreatePayload,
   CloudMailMessagesResponse,
+  CloudMailSyncResponse,
   IngestConfig,
   ImportResult,
   MailFetchMode,
@@ -139,6 +140,13 @@ export const api = {
     return request<{ item: AccountItem }>(`/api/accounts/${id}`, {
       method: 'PUT',
       body: JSON.stringify(payload)
+    });
+  },
+
+  updateAccountPassword(id: number, password: string): Promise<{ item: AccountItem }> {
+    return request<{ item: AccountItem }>(`/api/accounts/${id}/password`, {
+      method: 'PATCH',
+      body: JSON.stringify({ password })
     });
   },
 
@@ -298,6 +306,12 @@ export const api = {
         keyword: payload.keyword
       })}`
     );
+  },
+
+  syncCloudMailAccounts(): Promise<CloudMailSyncResponse> {
+    return request<CloudMailSyncResponse>('/api/cloud-mail/accounts/sync', {
+      method: 'POST'
+    });
   },
 
   getCloudMailMessages(email: string): Promise<CloudMailMessagesResponse> {
