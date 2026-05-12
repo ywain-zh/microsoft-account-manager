@@ -428,6 +428,9 @@ const DEFAULT_TRANSLATION_MODEL = 'gpt-5.4-mini';
 const TRANSLATION_TIMEOUT_MS = 45000;
 const TRANSLATION_MAX_TEXT_LENGTH = 30000;
 const TRANSLATION_TEST_TEXT = 'Your personal access token is about to expire in 7 days.';
+const HTML_TRANSLATION_MAX_MARKUP_LENGTH = 6000;
+const HTML_TRANSLATION_MAX_SEGMENTS = 24;
+const HTML_TRANSLATION_MAX_TEXT_RATIO = 3;
 
 const DEFAULT_TRANSLATION_CONFIG: TranslationConfig = {
   enabled: true,
@@ -2510,12 +2513,20 @@ async function translateHtmlToChinese(
   html: string,
   fallbackText: string
 ): Promise<TranslationResponsePayload> {
+  if (shouldUsePlainTextTranslationForHtml(html, fallbackText)) {
+    return translateTextToChinese(config, fallbackText);
+  }
+
   const prepared = prepareHtmlForSegmentTranslation(html);
-  if (prepared.segments.length === 0) {
+  if (prepared.segments.length === 0 || prepared.segments.length > HTML_TRANSLATION_MAX_SEGMENTS) {
     return translateTextToChinese(config, fallbackText);
   }
 
   const markedText = prepared.segments.map((segment) => `${segment.marker}\n${segment.text}`).join('\n\n');
+  if (shouldUsePlainTextTranslationForMarkedText(markedText, fallbackText)) {
+    return translateTextToChinese(config, fallbackText);
+  }
+
   const result = await translateTextToChineseWithPrompt(
     config,
     markedText,
@@ -2529,6 +2540,28 @@ async function translateHtmlToChinese(
     translatedText: Array.from(translations.values()).join('\n\n').trim() || result.translatedText,
     translatedHtml
   };
+}
+
+function shouldUsePlainTextTranslationForHtml(html: string, fallbackText: string): boolean {
+  const textLength = fallbackText.trim().length;
+  if (!textLength) {
+    return false;
+  }
+
+  if (html.length > HTML_TRANSLATION_MAX_MARKUP_LENGTH) {
+    return true;
+  }
+
+  return html.length / textLength > HTML_TRANSLATION_MAX_TEXT_RATIO;
+}
+
+function shouldUsePlainTextTranslationForMarkedText(markedText: string, fallbackText: string): boolean {
+  const textLength = fallbackText.trim().length;
+  if (!textLength) {
+    return false;
+  }
+
+  return markedText.length / textLength > HTML_TRANSLATION_MAX_TEXT_RATIO;
 }
 
 async function translateTextToChineseWithPrompt(

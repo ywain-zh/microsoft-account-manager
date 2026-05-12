@@ -234,6 +234,8 @@ import type { AccountMailItem, TranslationResponse } from '../types';
 import { buildMailPreview, extractMailSnippet, extractMailText } from '../utils/mail-preview';
 
 type TranslationCacheEntry = Pick<TranslationResponse, 'provider' | 'model' | 'translatedText' | 'translatedHtml'>;
+const HTML_TRANSLATION_MAX_MARKUP_LENGTH = 6000;
+const HTML_TRANSLATION_MAX_TEXT_RATIO = 3;
 
 interface MailInboxViewerProps {
   show: boolean;
@@ -379,11 +381,28 @@ async function handleTranslate(): Promise<void> {
 async function translateSelectedMail(text: string): Promise<TranslationResponse> {
   const mail = selectedMail.value;
   const content = mail?.content?.trim() ?? '';
-  if (mail && content && isHtmlContent(mail.contentType, content)) {
+  if (mail && content && shouldTranslateHtmlMail(mail.contentType, content, text)) {
     return api.translateMailHtml({ html: content, text });
   }
 
   return api.translateMailText({ text });
+}
+
+function shouldTranslateHtmlMail(contentType: string | null | undefined, content: string, text: string): boolean {
+  if (!isHtmlContent(contentType, content)) {
+    return false;
+  }
+
+  const normalizedTextLength = text.trim().length;
+  if (content.length > HTML_TRANSLATION_MAX_MARKUP_LENGTH) {
+    return false;
+  }
+
+  if (normalizedTextLength > 0 && content.length / normalizedTextLength > HTML_TRANSLATION_MAX_TEXT_RATIO) {
+    return false;
+  }
+
+  return true;
 }
 
 function isHtmlContent(contentType: string | null | undefined, content: string): boolean {
