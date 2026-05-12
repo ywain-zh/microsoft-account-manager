@@ -4303,7 +4303,7 @@ function normalizeCloudMailTimestamp(value: unknown): string {
 }
 
 function detectCloudMailContentType(html: string, text: string): string {
-  if (html && /<\/?[a-z][\s\S]*>/i.test(html)) {
+  if (html && looksLikeHtml(html)) {
     return 'html';
   }
 
@@ -4312,6 +4312,46 @@ function detectCloudMailContentType(html: string, text: string): string {
   }
 
   return html ? 'html' : '';
+}
+
+function extractCloudMailPreviewText(text: string, html: string): string {
+  const normalizedText = collapseMailWhitespace(text);
+  if (normalizedText) {
+    const decodedText = collapseMailWhitespace(decodeHtmlEntities(normalizedText));
+    if (!looksLikeHtml(decodedText)) {
+      return decodedText;
+    }
+
+    return extractTextFromMailHtml(decodedText);
+  }
+
+  return extractTextFromMailHtml(html);
+}
+
+function extractTextFromMailHtml(value: string): string {
+  const normalized = value.trim();
+  if (!normalized) {
+    return '';
+  }
+
+  const decoded = decodeHtmlEntities(normalized);
+  const withoutHiddenBlocks = decoded
+    .replace(/<\s*(script|style|noscript|template)\b[\s\S]*?<\s*\/\s*\1\s*>/gi, ' ')
+    .replace(/<\s*br\s*\/?>/gi, ' ')
+    .replace(/<\s*\/\s*(p|div|tr|li|h[1-6]|table|section|article)\s*>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ');
+
+  return collapseMailWhitespace(decodeHtmlEntities(withoutHiddenBlocks));
+}
+
+function looksLikeHtml(value: string): boolean {
+  return /<(?:!doctype|html|head|body|meta|title|style|div|span|p|br|table|tbody|thead|tfoot|tr|td|th|a|img|strong|em|ul|ol|li)\b/i.test(
+    value
+  );
+}
+
+function collapseMailWhitespace(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
 }
 
 function formatMailboxDisplay(name: string, email: string): string {
@@ -4436,6 +4476,7 @@ function toCloudMailMailItem(input: unknown): AccountMailItem | null {
   const senderName = asText(row.sendName ?? row.fromName).trim();
   const rawHtml = asText(row.content ?? row.htmlContent ?? row.body).trim();
   const rawText = asText(row.text ?? row.preview ?? row.contentText).trim();
+  const preview = extractCloudMailPreviewText(rawText, rawHtml);
   const receivedAt = normalizeCloudMailTimestamp(
     row.createTime ?? row.receivedAt ?? row.sendTime ?? row.createdAt
   );
@@ -4451,7 +4492,7 @@ function toCloudMailMailItem(input: unknown): AccountMailItem | null {
     subject,
     from,
     receivedAt,
-    preview: rawText || rawHtml,
+    preview,
     contentType: detectCloudMailContentType(rawHtml, rawText),
     content: rawHtml || rawText,
     folderKind,

@@ -72,7 +72,7 @@ export function buildMailPreview(message: AccountMailItem | null | undefined): R
 }
 
 export function extractMailSnippet(message: Pick<AccountMailItem, 'preview' | 'content' | 'contentType'>): string {
-  const preview = collapseWhitespace(message.preview ?? '');
+  const preview = extractPlainTextPreview(message.preview ?? '');
   if (preview) {
     return trimSnippet(preview);
   }
@@ -105,7 +105,7 @@ export function extractMailText(
     return collapseWhitespace(content);
   }
 
-  return collapseWhitespace(message.preview ?? '');
+  return extractPlainTextPreview(message.preview ?? '');
 }
 
 function isHtmlMail(contentType: string | null | undefined, content: string): boolean {
@@ -117,6 +117,30 @@ function isHtmlMail(contentType: string | null | undefined, content: string): bo
     return false;
   }
   return /<\/?[a-z][\s\S]*>/i.test(content);
+}
+
+function extractPlainTextPreview(value: string): string {
+  const preview = collapseWhitespace(value);
+  if (!preview) {
+    return '';
+  }
+
+  if (looksLikeHtml(preview)) {
+    return collapseWhitespace(extractTextFromHtml(preview));
+  }
+
+  const decoded = decodeHtmlEntities(preview);
+  if (decoded !== preview && looksLikeHtml(decoded)) {
+    return collapseWhitespace(extractTextFromHtml(decoded));
+  }
+
+  return collapseWhitespace(decoded);
+}
+
+function looksLikeHtml(value: string): boolean {
+  return /<(?:!doctype|html|head|body|meta|title|style|div|span|p|br|table|tbody|thead|tfoot|tr|td|th|a|img|strong|em|ul|ol|li)\b/i.test(
+    value
+  );
 }
 
 function normalizeMailHtml(html: string): string {
@@ -300,6 +324,22 @@ function extractTextFromHtml(html: string): string {
   } catch {
     return collapseWhitespace(html);
   }
+}
+
+function decodeHtmlEntities(value: string): string {
+  if (typeof document === 'undefined') {
+    return value
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/g, "'");
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.innerHTML = value;
+  return textarea.value;
 }
 
 function trimSnippet(text: string): string {
