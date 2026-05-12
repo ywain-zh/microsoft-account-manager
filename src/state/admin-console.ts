@@ -2,6 +2,7 @@ import { computed, reactive, ref, watch } from 'vue';
 import { createDiscreteApi } from 'naive-ui';
 import { api, UnauthorizedError } from '../api';
 import { copyToClipboard } from '../utils/clipboard';
+import { downloadBlob } from '../utils/download';
 import type {
   AccountItem,
   AccountMailItem,
@@ -71,6 +72,7 @@ const remarkSaving = ref(false);
 const saveIngestLoading = ref(false);
 const syncLoading = ref(false);
 const batchDeleteLoading = ref(false);
+const gptJsonExportLoading = ref(false);
 
 const createVisible = ref(false);
 const importVisible = ref(false);
@@ -799,6 +801,24 @@ async function refreshMailInbox(): Promise<void> {
   await loadMailMessages(mailAccountId.value, mailAccount.value, false);
 }
 
+async function exportSub2ApiGptJson(email: string): Promise<void> {
+  const targetEmail = email.trim();
+  if (!targetEmail || gptJsonExportLoading.value) {
+    return;
+  }
+
+  gptJsonExportLoading.value = true;
+  try {
+    const { blob, filename } = await api.exportSub2ApiGptJson(targetEmail);
+    downloadBlob(blob, filename);
+    message.success('GPT JSON 已开始下载');
+  } catch (error) {
+    handleApiError(error);
+  } finally {
+    gptJsonExportLoading.value = false;
+  }
+}
+
 async function saveIngestConfig(): Promise<void> {
   saveIngestLoading.value = true;
   try {
@@ -1037,6 +1057,7 @@ export function useAdminConsole() {
     saveIngestLoading,
     syncLoading,
     batchDeleteLoading,
+    gptJsonExportLoading,
     createVisible,
     importVisible,
     editVisible,
@@ -1083,6 +1104,7 @@ export function useAdminConsole() {
     copyPasswordValue,
     copyMailAccount,
     refreshMailInbox,
+    exportSub2ApiGptJson,
     saveIngestConfig,
     beginMicrosoftOauthLogin,
     consumeMicrosoftOauthResult,

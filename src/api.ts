@@ -33,6 +33,11 @@ interface ApiError {
   message?: string;
 }
 
+interface DownloadResponse {
+  blob: Blob;
+  filename: string;
+}
+
 export class UnauthorizedError extends Error {
   constructor(message = '未登录或登录已过期') {
     super(message);
@@ -86,6 +91,56 @@ async function requestStream(path: string, init: RequestInit = {}): Promise<Resp
   }
 
   return response;
+}
+
+async function requestBlob(path: string, init: RequestInit = {}): Promise<DownloadResponse> {
+  const headers = new Headers(init.headers);
+  if (init.body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  const response = await fetch(path, {
+    ...init,
+    headers,
+    credentials: 'same-origin'
+  });
+
+  if (!response.ok) {
+    const contentType = response.headers.get('Content-Type') ?? '';
+    let message = `请求失败 (${response.status})`;
+
+    if (contentType.includes('application/json')) {
+      const payload = (await response.json().catch(() => ({}))) as ApiError;
+      message = payload.message ?? message;
+    } else {
+      const text = await response.text().catch(() => '');
+      message = text.trim() || message;
+    }
+
+    if (response.status === 401) {
+      throw new UnauthorizedError(message);
+    }
+    throw new Error(message);
+  }
+
+  return {
+    blob: await response.blob(),
+    filename: parseDownloadFilename(response.headers.get('Content-Disposition')) ?? 'sub2api_gpt.json'
+  };
+}
+
+function parseDownloadFilename(contentDisposition: string | null): string | null {
+  if (!contentDisposition) {
+    return null;
+  }
+
+  const encodedMatch = /filename\*=UTF-8''([^;]+)/i.exec(contentDisposition);
+  if (encodedMatch) {
+    return decodeURIComponent(encodedMatch[1].trim().replace(/^"|"$/g, ''));
+  }
+
+  const plainMatch = /filename="?([^";]+)"?/i.exec(contentDisposition);
+  return plainMatch?.[1]?.trim() || null;
 }
 
 function buildQuery(params: Record<string, string | number | undefined | null>): string {
@@ -292,6 +347,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload)
     });
+  },
+
+  exportSub2ApiGptJson(email: string): Promise<DownloadResponse> {
+    return requestBlob(`/api/sub2api/accounts/gpt-json-export${buildQuery({ email })}`);
   },
 
   listCloudMailAccounts(payload: {

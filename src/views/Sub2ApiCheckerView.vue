@@ -103,8 +103,7 @@
       <p class="config-modal-desc">所有检测请求都由本项目后端发起，页面不会直接暴露 Sub2API 管理员 Key。</p>
       <n-form label-placement="top" autocomplete="off" class="config-modal-form">
         <div class="form-autofill-guard" aria-hidden="true">
-          <input type="text" tabindex="-1" autocomplete="username" />
-          <input type="password" tabindex="-1" autocomplete="current-password" />
+          <input type="text" tabindex="-1" autocomplete="off" />
         </div>
 
         <n-form-item label="Sub2API 地址">
@@ -119,12 +118,45 @@
         <n-form-item label="管理员 API Key">
           <n-input
             v-model:value="configForm.adminApiKey"
-            type="password"
-            show-password-on="click"
+            class="sub2api-secret-input"
+            :class="{ 'is-secret-visible': apiKeyVisible }"
+            type="text"
             placeholder="请输入 x-api-key"
             :input-props="apiKeyInputProps"
             @keyup.enter="handleSaveConfig"
-          />
+          >
+            <template #suffix>
+              <button
+                type="button"
+                class="sub2api-input-icon-button"
+                :title="apiKeyVisible ? '隐藏 API Key' : '显示 API Key'"
+                :aria-label="apiKeyVisible ? '隐藏 API Key' : '显示 API Key'"
+                @mousedown.prevent
+                @click="apiKeyVisible = !apiKeyVisible"
+              >
+                <svg v-if="apiKeyVisible" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                  <path d="M3 3l14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+                  <path
+                    d="M7.4 5.9A7.9 7.9 0 0 1 10 5.5c5.1 0 7.5 4.5 7.5 4.5a11.4 11.4 0 0 1-2.1 2.6M12.1 13.8a7.9 7.9 0 0 1-2.1.3C4.9 14.1 2.5 10 2.5 10a10.9 10.9 0 0 1 2.4-2.8"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+                <svg v-else viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                  <path
+                    d="M2.5 10s2.4-4.5 7.5-4.5 7.5 4.5 7.5 4.5-2.4 4.5-7.5 4.5S2.5 10 2.5 10Z"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                  <path d="M10 12.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4Z" stroke="currentColor" stroke-width="1.5" />
+                </svg>
+              </button>
+            </template>
+          </n-input>
         </n-form-item>
       </n-form>
       <template #footer>
@@ -235,6 +267,7 @@ const {
 } = sub2api;
 
 const showConfigModal = ref(false);
+const apiKeyVisible = ref(false);
 const logTerminalRef = ref<HTMLElement | null>(null);
 
 const baseUrlInputProps = {
@@ -248,10 +281,15 @@ const baseUrlInputProps = {
 } as const;
 
 const apiKeyInputProps = {
-  autocomplete: 'new-password',
-  name: 'sub2api-admin-api-key',
+  autocomplete: 'off',
+  autocapitalize: 'off',
+  autocorrect: 'off',
+  spellcheck: 'false',
+  name: 'sub2api-admin-secret',
+  inputmode: 'text',
   'data-lpignore': 'true',
-  'data-1p-ignore': 'true'
+  'data-1p-ignore': 'true',
+  'data-form-type': 'other'
 } as const;
 
 const summaryCards = computed(() => {
@@ -699,6 +737,43 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+}
+
+:deep(.sub2api-secret-input:not(.is-secret-visible) .n-input__input-el) {
+  -webkit-text-security: disc;
+  text-security: disc;
+}
+
+.sub2api-input-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  color: #94a3b8;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    color 0.18s ease,
+    background-color 0.18s ease;
+}
+
+.sub2api-input-icon-button:hover {
+  color: #475569;
+  background: #f1f5f9;
+}
+
+.sub2api-input-icon-button:focus-visible {
+  outline: 2px solid rgba(64, 158, 255, 0.24);
+  outline-offset: 2px;
+}
+
+.sub2api-input-icon-button svg {
+  width: 16px;
+  height: 16px;
 }
 
 .form-autofill-guard {

@@ -565,6 +565,7 @@ const {
   accountsSyncing,
   mailLoading,
   remarkSaving,
+  gptJsonExportLoading,
   configVisible,
   createVisible,
   mailVisible,
@@ -606,6 +607,7 @@ const {
   formatDate,
   openMailModal,
   refreshMailInbox,
+  exportSub2ApiGptJson,
   markMailAsRead
 } = cloudMail;
 
@@ -806,9 +808,24 @@ const columns: DataTableColumns<CloudMailAccountItem> = [
   {
     title: '操作',
     key: 'actions',
-    width: 72,
+    width: 112,
     render: (row) =>
       h('div', { class: 'action-cell action-cell-compact' }, [
+        h(
+          'button',
+          {
+            type: 'button',
+            class: 'table-action-button',
+            disabled: gptJsonExportLoading.value,
+            title: `导出 ${row.email} 的 GPT JSON`,
+            'aria-label': `导出 ${row.email} 的 GPT JSON`,
+            onClick: (event: MouseEvent) => {
+              event.stopPropagation();
+              void exportSub2ApiGptJson(row.email);
+            }
+          },
+          '导出'
+        ),
         h(
           'button',
           {

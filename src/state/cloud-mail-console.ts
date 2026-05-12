@@ -2,6 +2,7 @@ import { computed, reactive, ref, watch } from 'vue';
 import { createDiscreteApi } from 'naive-ui';
 import { api, UnauthorizedError } from '../api';
 import { copyToClipboard } from '../utils/clipboard';
+import { downloadBlob } from '../utils/download';
 import type {
   AccountMailItem,
   CloudMailAccountItem,
@@ -230,6 +231,7 @@ const accountsSyncing = ref(false);
 const backgroundSyncing = ref(false);
 const mailLoading = ref(false);
 const remarkSaving = ref(false);
+const gptJsonExportLoading = ref(false);
 
 const configVisible = ref(false);
 const createVisible = ref(false);
@@ -893,6 +895,24 @@ async function refreshMailInbox(): Promise<void> {
   await loadMailMessages(mailAccount.value, false, { force: true });
 }
 
+async function exportSub2ApiGptJson(email: string): Promise<void> {
+  const targetEmail = email.trim();
+  if (!targetEmail || gptJsonExportLoading.value) {
+    return;
+  }
+
+  gptJsonExportLoading.value = true;
+  try {
+    const { blob, filename } = await api.exportSub2ApiGptJson(targetEmail);
+    downloadBlob(blob, filename);
+    message.success('GPT JSON 已开始下载');
+  } catch (error) {
+    handleApiError(error);
+  } finally {
+    gptJsonExportLoading.value = false;
+  }
+}
+
 function formatDate(value: string | null): string {
   if (!value) {
     return '-';
@@ -926,6 +946,7 @@ export function useCloudMailConsole() {
     backgroundSyncing,
     mailLoading,
     remarkSaving,
+    gptJsonExportLoading,
     configVisible,
     createVisible,
     mailVisible,
@@ -969,6 +990,7 @@ export function useCloudMailConsole() {
     copyMailAccount,
     openMailModal,
     refreshMailInbox,
+    exportSub2ApiGptJson,
     formatDate,
     clearMailState,
     markMailAsRead

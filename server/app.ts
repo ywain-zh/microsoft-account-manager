@@ -296,6 +296,17 @@ interface Sub2ApiDeleteAccountDetail {
   message: string;
 }
 
+interface Sub2ApiGptExportItem {
+  id_token: string;
+  access_token: string;
+  refresh_token: string;
+  account_id: string;
+  last_refresh: string;
+  email: string;
+  type: 'codex';
+  expired: string;
+}
+
 const SUB2API_ACCOUNT_TEST_TIMEOUT_MS = 45000;
 
 interface MicrosoftOauthStatePayload {
@@ -1390,6 +1401,30 @@ app.put('/api/sub2api/config', async (c) => {
   await validateSub2ApiConnection(item);
   await setAppSetting(c.env.DB, SUB2API_CONFIG_KEY, JSON.stringify(item));
   return c.json({ item });
+});
+
+app.get('/api/sub2api/accounts/gpt-json-export', async (c) => {
+  const email = normalizeExportEmail(c.req.query('email'));
+  const config = await getSub2ApiConfig(c.env.DB);
+  ensureSub2ApiConfigured(config);
+
+  const rawAccounts = await searchRawSub2ApiAccounts(config, email);
+  const items = rawAccounts
+    .filter((item) => doesSub2ApiRecordMatchEmail(item, email))
+    .map((item) => normalizeSub2ApiGptExportItem(item))
+    .filter((item): item is Sub2ApiGptExportItem => item !== null);
+
+  if (items.length === 0) {
+    throw new HTTPException(400, { message: `未找到 ${email} 的可导出 GPT 账号凭据` });
+  }
+
+  const filename = `${buildSafeFilenamePrefix(email)}_${new Date().toISOString().slice(0, 10)}.json`;
+  return new Response(JSON.stringify(items, null, 2), {
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`
+    }
+  });
 });
 
 app.get('/api/translation/config', async (c) => {
@@ -3082,6 +3117,16 @@ async function listAllSub2ApiAccounts(config: Sub2ApiConfig): Promise<Sub2ApiAcc
   return collected;
 }
 
+async function searchRawSub2ApiAccounts(config: Sub2ApiConfig, email: string): Promise<unknown[]> {
+  const payload = await requestSub2Api<unknown>(config, '/api/v1/admin/accounts', {}, {
+    page: 1,
+    page_size: SUB2API_PAGE_SIZE,
+    search: email
+  });
+
+  return extractSub2ApiItems(payload);
+}
+
 async function deleteSub2ApiAccounts(
   config: Sub2ApiConfig,
   accountIds: number[]
@@ -3212,6 +3257,145 @@ function normalizeSub2ApiAccount(value: unknown): Sub2ApiAccountItem | null {
     errorMessage: toNullableText(record.error_message ?? record.errorMessage ?? record.message),
     planType: normalizeSub2ApiPlanType(credentials?.chatgpt_plan_type ?? credentials?.plan_type)
   };
+}
+
+function normalizeExportEmail(value: unknown): string {
+  const email = asText(value).trim().toLowerCase();
+  if (!email) {
+    throw new HTTPException(400, { message: '请提供要导出的邮箱' });
+  }
+
+  return email;
+}
+
+function buildSafeFilenamePrefix(email: string): string {
+  return email.split('@')[0]?.replace(/[^a-zA-Z0-9._-]+/g, '_') || 'sub2api_gpt';
+}
+
+function doesSub2ApiRecordMatchEmail(value: unknown, email: string): boolean {
+  const record = toRecord(value);
+  if (!record) {
+    return false;
+  }
+
+  const credentials = toRecord(record.credentials) ?? {};
+  const candidate = firstNonEmptyText(credentials.email, record.email, record.account, record.username, record.name)
+    .trim()
+    .toLowerCase();
+  return candidate === email;
+}
+
+function normalizeSub2ApiGptExportItem(value: unknown): Sub2ApiGptExportItem | null {
+  const record = toRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const credentials = toRecord(record.credentials) ?? {};
+  const idToken = firstNonEmptyText(credentials.id_token, credentials.idToken, record.id_token, record.idToken);
+  const accessToken = firstNonEmptyText(
+    credentials.access_token,
+    credentials.accessToken,
+    record.access_token,
+    record.accessToken
+  );
+  const refreshToken = firstNonEmptyText(
+    credentials.refresh_token,
+    credentials.refreshToken,
+    record.refresh_token,
+    record.refreshToken
+  );
+
+  if (!idToken || !accessToken || !refreshToken) {
+    return null;
+  }
+
+  const accountId = firstNonEmptyText(
+    credentials.account_id,
+    credentials.accountId,
+    credentials.chatgpt_account_id,
+    credentials.chatgptAccountId,
+    record.account_id,
+    record.accountId,
+    record.chatgpt_account_id,
+    record.chatgptAccountId,
+    record.id
+  );
+  const email = firstNonEmptyText(credentials.email, record.email, record.account, record.username, record.name);
+  const lastRefresh = firstNonEmptyText(
+    credentials.last_refresh,
+    credentials.lastRefresh,
+    credentials.refreshed_at,
+    credentials.refreshedAt,
+    credentials.updated_at,
+    credentials.updatedAt,
+    record.last_refresh,
+    record.lastRefresh,
+    record.refreshed_at,
+    record.refreshedAt,
+    record.updated_at,
+    record.updatedAt
+  );
+  const expired = firstNonEmptyText(
+    credentials.expired_at,
+    credentials.expiredAt,
+    credentials.expires_at,
+    credentials.expiresAt,
+    credentials.expire_at,
+    credentials.expireAt,
+    credentials.expired,
+    record.expired_at,
+    record.expiredAt,
+    record.expires_at,
+    record.expiresAt,
+    record.expire_at,
+    record.expireAt,
+    record.expired
+  );
+
+  return {
+    id_token: idToken,
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    account_id: accountId,
+    last_refresh: toIsoDateTimeString(lastRefresh),
+    email,
+    type: 'codex',
+    expired: toIsoDateTimeString(expired)
+  };
+}
+
+function toIsoDateTimeString(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  const numeric = Number(trimmed);
+  const date = Number.isFinite(numeric)
+    ? new Date(trimmed.length <= 10 ? numeric * 1000 : numeric)
+    : new Date(trimmed);
+
+  if (Number.isNaN(date.getTime())) {
+    return trimmed;
+  }
+
+  return date.toISOString();
+}
+
+function firstNonEmptyText(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === 'boolean') {
+      continue;
+    }
+
+    const text = asText(value).trim();
+    if (text) {
+      return text;
+    }
+  }
+
+  return '';
 }
 
 function normalizeSub2ApiPlanType(value: unknown): Sub2ApiPlanType {

@@ -440,6 +440,7 @@ const {
   importLoading,
   syncLoading,
   batchDeleteLoading,
+  gptJsonExportLoading,
   createVisible,
   importVisible,
   editVisible,
@@ -475,6 +476,7 @@ const {
   copyAccountValue,
   copyMailAccount,
   refreshMailInbox,
+  exportSub2ApiGptJson,
   beginMicrosoftOauthLogin,
   consumeMicrosoftOauthResult,
   handleMicrosoftOauthMessage,
@@ -844,9 +846,24 @@ const accountColumns: DataTableColumns<AccountItem> = [
   {
     title: '操作',
     key: 'actions',
-    width: 100,
+    width: 148,
     render: (row) =>
       h('div', { class: 'action-cell action-cell-compact' }, [
+        h(
+          'button',
+          {
+            type: 'button',
+            class: 'table-action-button',
+            disabled: gptJsonExportLoading.value,
+            title: `导出 ${row.account} 的 GPT JSON`,
+            'aria-label': `导出 ${row.account} 的 GPT JSON`,
+            onClick: (event: MouseEvent) => {
+              event.stopPropagation();
+              void exportSub2ApiGptJson(row.account);
+            }
+          },
+          '导出'
+        ),
         h(
           'button',
           {
