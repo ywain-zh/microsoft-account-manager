@@ -7,7 +7,27 @@
     >
       <div class="toolbar">
         <span class="tag-pill blue">鉴权: x-api-key</span>
-        <span class="tag-pill green">模型: {{ modelId }}</span>
+        <div class="model-picker">
+          <span class="model-picker-label">模型</span>
+          <n-select
+            v-model:value="modelId"
+            class="model-picker-select"
+            filterable
+            tag
+            size="small"
+            :options="modelOptions"
+            :disabled="runLoading"
+            placeholder="选择或输入模型"
+          />
+          <n-button
+            size="small"
+            :loading="modelLoading"
+            :disabled="runLoading || !hasConfiguredSub2Api"
+            @click="refreshModels"
+          >
+            获取模型
+          </n-button>
+        </div>
         <button class="btn btn-default" type="button" @click="showConfigModal = true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="3"></circle>
@@ -228,7 +248,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { NButton, NCard, NForm, NFormItem, NInput, NModal, NPagination } from 'naive-ui';
+import { NButton, NCard, NForm, NFormItem, NInput, NModal, NPagination, NSelect } from 'naive-ui';
 import { useSub2ApiConsole } from '../state/sub2api-console';
 import type { Sub2ApiDetectedIssueItem, Sub2ApiLogLevel } from '../types';
 
@@ -238,6 +258,7 @@ const {
   configSaving,
   runLoading,
   deleteLoading,
+  modelLoading,
   configForm,
   summary,
   progress,
@@ -249,11 +270,13 @@ const {
   abnormalAccountsPage,
   abnormalAccountsPageSize,
   modelId,
+  modelOptions,
   hasConfiguredSub2Api,
   hasUnauthorizedCandidates,
   hasAbnormalCandidates,
   showAbnormalAccountsModal,
   loadInitialData,
+  refreshModels,
   saveConfig,
   clearLogs,
   openAbnormalAccountsModal,
@@ -462,6 +485,36 @@ onBeforeUnmount(() => {
   border-color: #dcfce7;
 }
 
+.model-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 3px 4px 3px 10px;
+  border: 1px solid #dcfce7;
+  border-radius: 8px;
+  background: #f0fdf4;
+}
+
+.model-picker-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #16a34a;
+  white-space: nowrap;
+}
+
+.model-picker-select {
+  width: 180px;
+}
+
+:deep(.model-picker-select .n-base-selection) {
+  --n-border: 1px solid transparent !important;
+  --n-border-hover: 1px solid #bbf7d0 !important;
+  --n-border-focus: 1px solid #22c55e !important;
+  --n-box-shadow-focus: 0 0 0 2px rgba(34, 197, 94, 0.14) !important;
+  background: #fff;
+}
+
 .page-desc {
   color: #94a3b8;
   font-size: 14px;
@@ -480,6 +533,19 @@ onBeforeUnmount(() => {
   padding-bottom: 20px;
   border-bottom: 1px solid #f1f5f9;
   flex-wrap: wrap;
+}
+
+@media (max-width: 720px) {
+  .model-picker {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .model-picker-select {
+    flex: 1;
+    min-width: 0;
+    width: auto;
+  }
 }
 
 .btn {

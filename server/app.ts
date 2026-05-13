@@ -415,7 +415,7 @@ const DEFAULT_CLOUD_MAIL_CONFIG: CloudMailConfig = {
 };
 
 const SUB2API_CONFIG_KEY = 'sub2api_config';
-const SUB2API_TEST_MODEL = 'gpt-5.4';
+const DEFAULT_SUB2API_TEST_MODEL = 'gpt-5.4';
 const SUB2API_PAGE_SIZE = 100;
 
 const DEFAULT_SUB2API_CONFIG: Sub2ApiConfig = {
@@ -1406,6 +1406,13 @@ app.put('/api/sub2api/config', async (c) => {
   return c.json({ item });
 });
 
+app.get('/api/sub2api/models', async (c) => {
+  const config = await getSub2ApiConfig(c.env.DB);
+  ensureSub2ApiConfigured(config);
+  const items = await listSub2ApiModels(config);
+  return c.json({ items });
+});
+
 app.get('/api/sub2api/accounts/gpt-json-export', async (c) => {
   const email = normalizeExportEmail(c.req.query('email'));
   const config = await getSub2ApiConfig(c.env.DB);
@@ -1481,6 +1488,8 @@ app.post('/api/translation/translate', async (c) => {
 app.post('/api/sub2api/check', async (c) => {
   const config = await getSub2ApiConfig(c.env.DB);
   ensureSub2ApiConfigured(config);
+  const body = await readJson<{ modelId?: unknown }>(c);
+  const modelId = normalizeSub2ApiModelId(body.modelId);
 
   let logCounter = 0;
   let aborted = false;
@@ -1551,7 +1560,7 @@ app.post('/api/sub2api/check', async (c) => {
             return;
           }
 
-          emitLog('info', `账号列表拉取完成，共 ${accounts.length} 个账号，开始逐个检测`);
+          emitLog('info', `账号列表拉取完成，共 ${accounts.length} 个账号，开始逐个检测，模型 ${modelId}`);
 
           for (let index = 0; index < accounts.length; index += 1) {
             if (aborted) {
@@ -1561,7 +1570,7 @@ app.post('/api/sub2api/check', async (c) => {
             const account = accounts[index];
             emitLog('info', `[${index + 1}/${accounts.length}] 开始检测 ${account.name}`, account);
 
-            const result = await testSub2ApiAccount(config, account, (level, message) => {
+            const result = await testSub2ApiAccount(config, account, modelId, (level, message) => {
               emitLog(level, `[${account.name}] ${message}`, account);
             });
 
@@ -2277,6 +2286,19 @@ function validateSub2ApiConfig(config: Sub2ApiConfig): void {
   if (config.adminApiKey.length > 1024) {
     throw new HTTPException(400, { message: '管理员 API Key 长度不能超过 1024 个字符' });
   }
+}
+
+function normalizeSub2ApiModelId(value: unknown): string {
+  const modelId = asText(value).trim();
+  if (!modelId) {
+    return DEFAULT_SUB2API_TEST_MODEL;
+  }
+
+  if (modelId.length > 160) {
+    throw new HTTPException(400, { message: '模型名称不能超过 160 个字符' });
+  }
+
+  return modelId;
 }
 
 function validateTranslationConfig(config: TranslationConfig): void {
@@ -3113,6 +3135,110 @@ async function validateSub2ApiConnection(config: Sub2ApiConfig): Promise<void> {
   await requestSub2Api<unknown>(config, '/api/v1/admin/accounts', {}, { page: 1, page_size: 1 });
 }
 
+async function listSub2ApiModels(config: Sub2ApiConfig): Promise<string[]> {
+  const adminModels = await listSub2ApiModelsFromAccounts(config);
+  if (adminModels.length > 0) {
+    return adminModels;
+  }
+
+  const modelPaths = ['/v1/models', '/v1beta/models', '/antigravity/v1/models', '/antigravity/v1beta/models'];
+  let lastMessage = '未读取到模型列表';
+
+  for (const path of modelPaths) {
+    const response = await fetchSub2Api(config, path, { method: 'GET' });
+    const rawText = await response.text();
+
+    if (!response.ok) {
+      lastMessage = resolveSub2ApiErrorMessage(response.status, rawText);
+      continue;
+    }
+
+    if (!rawText.trim()) {
+      return [];
+    }
+
+    try {
+      return extractSub2ApiModelIds(JSON.parse(rawText) as unknown);
+    } catch {
+      throw new HTTPException(502, { message: 'Sub2API 模型列表返回的数据格式不正确' });
+    }
+  }
+
+  throw new HTTPException(400, { message: lastMessage });
+}
+
+async function listSub2ApiModelsFromAccounts(config: Sub2ApiConfig): Promise<string[]> {
+  const ids = new Set<string>();
+  const accounts = await listAllSub2ApiAccounts(config);
+
+  for (const account of accounts) {
+    const response = await fetchSub2Api(config, `/api/v1/admin/accounts/${account.id}/models`, { method: 'GET' });
+    if (!response.ok) {
+      continue;
+    }
+
+    const rawText = await response.text();
+    if (!rawText.trim()) {
+      continue;
+    }
+
+    try {
+      for (const modelId of extractSub2ApiModelIds(JSON.parse(rawText) as unknown)) {
+        ids.add(modelId);
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return Array.from(ids);
+}
+
+function extractSub2ApiModelIds(payload: unknown): string[] {
+  const ids = new Set<string>();
+  collectSub2ApiModelIds(payload, ids, 0);
+  return Array.from(ids);
+}
+
+function collectSub2ApiModelIds(value: unknown, ids: Set<string>, depth: number): void {
+  if (depth > 4 || value === null || value === undefined) {
+    return;
+  }
+
+  if (typeof value === 'string') {
+    const modelId = value.trim();
+    if (modelId && modelId.length <= 160 && !/\s/.test(modelId)) {
+      ids.add(modelId);
+    }
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectSub2ApiModelIds(item, ids, depth + 1);
+    }
+    return;
+  }
+
+  const record = toRecord(value);
+  if (!record) {
+    return;
+  }
+
+  for (const key of ['id', 'model', 'model_id', 'name']) {
+    const direct = asText(record[key]).trim();
+    if (direct && direct.length <= 160 && !/\s/.test(direct)) {
+      ids.add(direct);
+    }
+  }
+
+  for (const key of ['data', 'items', 'models', 'result', 'list']) {
+    if (record[key] !== undefined) {
+      collectSub2ApiModelIds(record[key], ids, depth + 1);
+    }
+  }
+}
+
 async function listAllSub2ApiAccounts(config: Sub2ApiConfig): Promise<Sub2ApiAccountItem[]> {
   const collected: Sub2ApiAccountItem[] = [];
   const seenIds = new Set<number>();
@@ -3455,6 +3581,7 @@ function normalizeSub2ApiPlanType(value: unknown): Sub2ApiPlanType {
 async function testSub2ApiAccount(
   config: Sub2ApiConfig,
   account: Sub2ApiAccountItem,
+  modelId: string,
   onLog: (level: Sub2ApiLogLevel, message: string) => void
 ): Promise<Sub2ApiTestResult> {
   const abortController = new AbortController();
@@ -3466,7 +3593,7 @@ async function testSub2ApiAccount(
     const response = await fetchSub2Api(config, `/api/v1/admin/accounts/${account.id}/test`, {
       method: 'POST',
       body: JSON.stringify({
-        model_id: SUB2API_TEST_MODEL
+        model_id: modelId
       }),
       signal: abortController.signal
     });
@@ -3687,7 +3814,7 @@ function resolveSub2ApiStreamMessage(payload: Record<string, unknown>): string {
   if (payload.type !== undefined) {
     const normalizedType = asText(payload.type).trim().toLowerCase();
     if (normalizedType === 'test_start') {
-      const model = asText(payload.model ?? payload.model_id).trim() || SUB2API_TEST_MODEL;
+      const model = asText(payload.model ?? payload.model_id).trim() || DEFAULT_SUB2API_TEST_MODEL;
       return `远端测试已启动，模型 ${model}`;
     }
   }

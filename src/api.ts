@@ -290,6 +290,10 @@ export const api = {
     });
   },
 
+  listSub2ApiModels(): Promise<OpenAiModelsResponse> {
+    return request<OpenAiModelsResponse>('/api/sub2api/models');
+  },
+
   getTranslationConfig(): Promise<{ item: TranslationConfig }> {
     return request<{ item: TranslationConfig }>('/api/translation/config');
   },
@@ -335,9 +339,10 @@ export const api = {
     });
   },
 
-  startSub2ApiCheck(signal?: AbortSignal): Promise<Response> {
+  startSub2ApiCheck(payload: { modelId: string }, signal?: AbortSignal): Promise<Response> {
     return requestStream('/api/sub2api/check', {
       method: 'POST',
+      body: JSON.stringify(payload),
       signal
     });
   },

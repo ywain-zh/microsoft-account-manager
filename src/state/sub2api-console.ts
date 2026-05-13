@@ -1,4 +1,4 @@
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { createDiscreteApi } from 'naive-ui';
 import { api, UnauthorizedError } from '../api';
 import type {
@@ -12,7 +12,8 @@ import type {
 } from '../types';
 
 const { message } = createDiscreteApi(['message']);
-const SUB2API_MODEL_ID = 'gpt-5.4';
+const DEFAULT_SUB2API_MODEL_ID = 'gpt-5.4';
+const SUB2API_MODEL_STORAGE_KEY = 'sub2api-checker-model-id';
 const MAX_LOG_ITEMS = 1200;
 const ABNORMAL_ACCOUNTS_PAGE_SIZE = 10;
 
@@ -51,9 +52,12 @@ const configLoaded = ref(false);
 const configSaving = ref(false);
 const runLoading = ref(false);
 const deleteLoading = ref(false);
+const modelLoading = ref(false);
 const showAbnormalAccountsModal = ref(false);
 const abnormalAccountsPage = ref(1);
 const abnormalDeletingAccountIds = ref<number[]>([]);
+const selectedModelId = ref(readStoredModelId());
+const modelItems = ref<string[]>([]);
 
 const storedConfig = reactive<Sub2ApiConfig>(createDefaultConfig());
 const configForm = reactive<Sub2ApiConfig>(createDefaultConfig());
@@ -88,8 +92,29 @@ const pagedAbnormalCandidates = computed(() => {
   return abnormalCandidates.value.slice(start, start + ABNORMAL_ACCOUNTS_PAGE_SIZE);
 });
 
+const modelId = computed<string>({
+  get() {
+    return selectedModelId.value;
+  },
+  set(value) {
+    selectedModelId.value = normalizeModelId(value);
+  }
+});
+
+const modelOptions = computed(() => {
+  const values = [modelId.value, DEFAULT_SUB2API_MODEL_ID, ...modelItems.value].filter(Boolean);
+  return Array.from(new Set(values)).map((value) => ({
+    label: value,
+    value
+  }));
+});
+
 let initialLoadPromise: Promise<void> | null = null;
 let currentAbortController: AbortController | null = null;
+
+watch(selectedModelId, (value) => {
+  persistModelId(value);
+});
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : '发生未知错误';
@@ -113,6 +138,27 @@ function handleApiError(error: unknown): void {
   }
 
   message.error(getErrorMessage(error));
+}
+
+function normalizeModelId(value: unknown): string {
+  const text = typeof value === 'string' ? value.trim() : '';
+  return text || DEFAULT_SUB2API_MODEL_ID;
+}
+
+function readStoredModelId(): string {
+  if (typeof window === 'undefined') {
+    return DEFAULT_SUB2API_MODEL_ID;
+  }
+
+  return normalizeModelId(window.localStorage.getItem(SUB2API_MODEL_STORAGE_KEY));
+}
+
+function persistModelId(value: string): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(SUB2API_MODEL_STORAGE_KEY, normalizeModelId(value));
 }
 
 function assignConfig(target: Sub2ApiConfig, source: Sub2ApiConfig): void {
@@ -399,6 +445,28 @@ async function loadInitialData(force = false): Promise<void> {
   }
 }
 
+async function refreshModels(): Promise<void> {
+  if (!hasConfiguredSub2Api.value) {
+    message.warning('请先保存有效的 Sub2API 配置');
+    return;
+  }
+
+  modelLoading.value = true;
+  try {
+    const { items } = await api.listSub2ApiModels();
+    modelItems.value = items;
+    if (items.length === 0) {
+      message.warning('没有读取到模型列表');
+      return;
+    }
+    message.success(`已读取 ${items.length} 个模型`);
+  } catch (error) {
+    handleApiError(error);
+  } finally {
+    modelLoading.value = false;
+  }
+}
+
 async function saveConfig(): Promise<void> {
   const payload: Sub2ApiConfig = {
     baseUrl: configForm.baseUrl.trim(),
@@ -449,7 +517,7 @@ async function startDetection(): Promise<void> {
   currentAbortController = abortController;
 
   try {
-    const response = await api.startSub2ApiCheck(abortController.signal);
+    const response = await api.startSub2ApiCheck({ modelId: modelId.value }, abortController.signal);
     await consumeEventStream(response);
     message.success('Sub2API 账号检测完成');
   } catch (error) {
@@ -674,6 +742,7 @@ export function useSub2ApiConsole() {
     configSaving,
     runLoading,
     deleteLoading,
+    modelLoading,
     showAbnormalAccountsModal,
     abnormalAccountsPage,
     abnormalAccountsPageSize: ABNORMAL_ACCOUNTS_PAGE_SIZE,
@@ -687,12 +756,14 @@ export function useSub2ApiConsole() {
     pagedAbnormalCandidates,
     abnormalCandidatesTotal,
     abnormalAccountsTotalPages,
-    modelId: SUB2API_MODEL_ID,
+    modelId,
+    modelOptions,
     hasConfiguredSub2Api,
     hasUnauthorizedCandidates,
     hasAbnormalCandidates,
     loadConfig,
     loadInitialData,
+    refreshModels,
     saveConfig,
     clearLogs,
     openAbnormalAccountsModal,
