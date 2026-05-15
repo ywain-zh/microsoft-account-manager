@@ -83,6 +83,19 @@ export interface CloudMailSyncResponse {
   syncedAt: string;
 }
 
+export interface CloudMailShareResponse {
+  email: string;
+  shareUrl: string;
+  createdAt: string;
+  revokedAt: string | null;
+}
+
+export interface CloudMailPublicShareInboxResponse {
+  account: string;
+  messages: AccountMailItem[];
+  readonly: true;
+}
+
 export interface Sub2ApiConfig {
   baseUrl: string;
   adminApiKey: string;

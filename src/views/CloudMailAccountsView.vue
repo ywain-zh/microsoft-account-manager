@@ -296,6 +296,68 @@
       </template>
     </n-modal>
 
+    <n-modal
+      v-model:show="shareVisible"
+      preset="card"
+      :bordered="false"
+      class="console-modal cloud-mail-share-modal"
+      title="分享收件箱"
+      @after-leave="closeShareModal"
+    >
+      <n-spin :show="shareLoading">
+        <div class="cloud-mail-share-panel">
+          <div class="cloud-mail-share-email">
+            <span class="cloud-mail-share-label">邮箱</span>
+            <strong>{{ shareState.email || '-' }}</strong>
+          </div>
+          <n-form label-placement="top" autocomplete="off" @submit.prevent>
+            <n-form-item label="免登录访问链接">
+              <n-input
+                :value="shareState.shareUrl"
+                readonly
+                placeholder="分享链接生成中..."
+                :input-props="shareUrlInputProps"
+              />
+            </n-form-item>
+          </n-form>
+          <p class="hint cloud-mail-share-hint">
+            此链接长期有效，任何拿到链接的人都可以只读查看该邮箱收件箱。重新生成或关闭分享会让旧链接失效。
+          </p>
+        </div>
+      </n-spin>
+
+      <template #footer>
+        <n-space justify="space-between" class="cloud-mail-share-footer">
+          <n-button
+            class="dialog-danger-button"
+            :loading="shareRevoking"
+            :disabled="shareLoading || !shareState.shareUrl"
+            @click="revokeShareUrl"
+          >
+            关闭分享
+          </n-button>
+          <n-space>
+            <n-button
+              class="dialog-cancel-button"
+              :loading="shareRegenerating"
+              :disabled="shareLoading || !shareState.shareUrl"
+              @click="regenerateShareUrl"
+            >
+              重新生成
+            </n-button>
+            <n-button
+              class="dialog-primary-button"
+              type="primary"
+              :disabled="shareLoading || !shareState.shareUrl"
+              @click="copyShareUrl"
+            >
+              复制链接
+            </n-button>
+          </n-space>
+        </n-space>
+      </template>
+    </n-modal>
+
     <MailInboxViewer
       :show="mailVisible"
       title="收件箱"
@@ -327,6 +389,7 @@ import {
   NPagination,
   NSelect,
   NSpace,
+  NSpin,
   NTag,
   type DataTableColumns
 } from 'naive-ui';
@@ -499,6 +562,31 @@ const PencilGlyph = () =>
     ]
   );
 
+const ShareGlyph = () =>
+  h(
+    'svg',
+    { viewBox: '0 0 20 20', fill: 'none' },
+    [
+      h('path', {
+        d: 'M7.25 10.25 12.75 7',
+        stroke: 'currentColor',
+        'stroke-width': '1.6',
+        'stroke-linecap': 'round'
+      }),
+      h('path', {
+        d: 'M7.25 10.25 12.75 13',
+        stroke: 'currentColor',
+        'stroke-width': '1.6',
+        'stroke-linecap': 'round'
+      }),
+      h('path', {
+        d: 'M5.25 12.5a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5ZM14.75 7.5a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5ZM14.75 17a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Z',
+        stroke: 'currentColor',
+        'stroke-width': '1.6'
+      })
+    ]
+  );
+
 const CloudGlyph = () =>
   h(
     'svg',
@@ -566,10 +654,14 @@ const {
   mailLoading,
   remarkSaving,
   gptJsonExportLoading,
+  shareLoading,
+  shareRegenerating,
+  shareRevoking,
   configVisible,
   createVisible,
   mailVisible,
   remarkVisible,
+  shareVisible,
   serviceErrorMessage,
   searchKeyword,
   tablePage,
@@ -580,6 +672,7 @@ const {
   mailAccount,
   mailItems,
   selectedMailId,
+  shareState,
   storedConfig,
   configForm,
   createForm,
@@ -598,6 +691,11 @@ const {
   openRemarkModal,
   closeRemarkModal,
   saveRemark,
+  openShareModal,
+  closeShareModal,
+  copyShareUrl,
+  regenerateShareUrl,
+  revokeShareUrl,
   handleSearch,
   handlePageChange,
   handlePageSizeChange,
@@ -684,6 +782,15 @@ const remarkInputProps = {
   'data-lpignore': 'true',
   'data-1p-ignore': 'true',
   'data-form-type': 'other'
+} as const;
+
+const shareUrlInputProps = {
+  readonly: true,
+  autocomplete: 'off',
+  autocapitalize: 'off',
+  autocorrect: 'off',
+  spellcheck: 'false',
+  name: 'cloud-mail-share-url'
 } as const;
 
 const rowKey = (row: CloudMailAccountItem): number => row.userId;
@@ -798,6 +905,26 @@ const columns: DataTableColumns<CloudMailAccountItem> = [
     key: 'remark',
     width: 168,
     render: (row) => renderRemarkCell(row)
+  },
+  {
+    title: '分享',
+    key: 'share',
+    width: 84,
+    render: (row) =>
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'table-action-button table-action-button-share',
+          title: `分享 ${row.email} 的收件箱`,
+          'aria-label': `分享 ${row.email} 的收件箱`,
+          onClick: (event: MouseEvent) => {
+            event.stopPropagation();
+            void openShareModal(row);
+          }
+        },
+        [h(ShareGlyph), h('span', '分享')]
+      )
   },
   {
     title: '创建时间',
@@ -1210,12 +1337,18 @@ onUnmounted(() => {
   height: 14px;
 }
 :deep(.cloud-mail-account-table .table-action-button) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   padding: 4px 8px;
+  border: 0;
   border-radius: 4px;
   background: #f1f5f9 !important;
   color: #475569 !important;
   font-size: 12px;
   font-weight: 500;
+  cursor: pointer;
 }
 
 :deep(.cloud-mail-account-table .table-action-button:hover) {
@@ -1231,6 +1364,76 @@ onUnmounted(() => {
 :deep(.cloud-mail-account-table .table-action-button-danger:hover) {
   background: #fef0f0 !important;
   opacity: 0.8;
+}
+
+:deep(.cloud-mail-account-table .table-action-button-share) {
+  min-width: 58px;
+  color: #2563eb !important;
+  background: #eff6ff !important;
+}
+
+:deep(.cloud-mail-account-table .table-action-button-share:hover) {
+  background: #dbeafe !important;
+}
+
+:deep(.cloud-mail-account-table .table-action-button-share svg) {
+  width: 13px;
+  height: 13px;
+}
+
+.cloud-mail-share-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.cloud-mail-share-email {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.cloud-mail-share-email strong {
+  min-width: 0;
+  color: #0f172a;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cloud-mail-share-label {
+  flex: 0 0 auto;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.cloud-mail-share-hint {
+  margin: -2px 0 0;
+}
+
+.cloud-mail-share-footer {
+  width: 100%;
+}
+
+:deep(.dialog-danger-button) {
+  --n-color: #fff5f5 !important;
+  --n-color-hover: #ffe4e6 !important;
+  --n-color-pressed: #ffe4e6 !important;
+  --n-color-focus: #fff5f5 !important;
+  --n-text-color: #dc2626 !important;
+  --n-text-color-hover: #b91c1c !important;
+  --n-text-color-pressed: #b91c1c !important;
+  --n-text-color-focus: #dc2626 !important;
+  --n-border: 1px solid #fecdd3 !important;
+  --n-border-hover: 1px solid #fda4af !important;
+  --n-border-pressed: 1px solid #fda4af !important;
+  --n-border-focus: 1px solid #fecdd3 !important;
 }
 
 :deep(.list-footer-card) {

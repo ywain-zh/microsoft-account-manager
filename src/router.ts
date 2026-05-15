@@ -20,6 +20,15 @@ const router = createRouter({
       }
     },
     {
+      path: '/share/cloud-mail/:token',
+      name: 'cloud-mail-share',
+      component: () => import('./views/CloudMailShareView.vue'),
+      meta: {
+        title: 'Cloud Mail 共享收件箱',
+        description: '通过分享链接只读查看 Cloud Mail 收件箱。'
+      }
+    },
+    {
       path: '/',
       component: () => import('./layouts/AdminShell.vue'),
       meta: {
@@ -85,6 +94,10 @@ router.beforeEach(async (to: RouteLocationNormalized) => {
   const admin = useAdminConsole();
   const isProtected = to.matched.some((record) => record.meta.requiresAuth);
   const isGuestOnly = to.matched.some((record) => record.meta.guestOnly);
+
+  if (!isProtected && !isGuestOnly) {
+    return true;
+  }
 
   const authenticated = await admin.ensureAuthState();
 

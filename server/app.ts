@@ -200,6 +200,25 @@ interface CloudMailSyncResponse {
   syncedAt: string;
 }
 
+interface CloudMailShareRow {
+  id: number;
+  configKey: string;
+  userId: number;
+  email: string;
+  tokenId: string;
+  tokenHash: string;
+  createdAt: string;
+  revokedAt: string | null;
+  lastAccessedAt: string | null;
+}
+
+interface CloudMailShareResponse {
+  email: string;
+  shareUrl: string;
+  createdAt: string;
+  revokedAt: string | null;
+}
+
 interface CloudMailRemoteEnvelope<T> {
   code?: number | string;
   message?: string;
@@ -406,6 +425,8 @@ const DEFAULT_INGEST_CONFIG: IngestConfig = {
 };
 
 const CLOUD_MAIL_CONFIG_KEY = 'cloud_mail_config';
+const CLOUD_MAIL_SHARE_TOKEN_BYTES = 24;
+const CLOUD_MAIL_SHARE_TOKEN_PREFIX = 'cloud-mail-share';
 
 const DEFAULT_CLOUD_MAIL_CONFIG: CloudMailConfig = {
   apiBaseUrl: '',
@@ -1739,6 +1760,7 @@ app.post('/api/cloud-mail/accounts/batch-delete', async (c) => {
   await deleteCloudMailAccounts(config, userIds);
   await deleteCloudMailAccountCache(c.env.DB, getCloudMailCacheKey(config), userIds);
   await deleteCloudMailAccountRemarks(c.env.DB, userIds);
+  await revokeCloudMailSharesForAccounts(c.env.DB, getCloudMailCacheKey(config), userIds);
 
   return c.json({
     ok: true as const,
@@ -1767,6 +1789,80 @@ app.patch('/api/cloud-mail/accounts/:id/remark', async (c) => {
   return c.json({
     ok: true as const,
     item
+  });
+});
+
+app.post('/api/cloud-mail/accounts/:id/share', async (c) => {
+  const config = await getCloudMailConfig(c.env.DB);
+  ensureCloudMailConfigured(config);
+
+  const userId = parseNumericId(c.req.param('id'));
+  const configKey = getCloudMailCacheKey(config);
+  const account = await findCloudMailCachedAccountByUserId(c.env.DB, configKey, userId);
+
+  if (!account) {
+    throw new HTTPException(404, { message: 'Cloud Mail 邮箱不存在' });
+  }
+
+  const row = await getOrCreateCloudMailShare(c.env.DB, c.env, configKey, account);
+  return c.json(await toCloudMailShareResponse(row, c.req.url, c.env));
+});
+
+app.post('/api/cloud-mail/accounts/:id/share/regenerate', async (c) => {
+  const config = await getCloudMailConfig(c.env.DB);
+  ensureCloudMailConfigured(config);
+
+  const userId = parseNumericId(c.req.param('id'));
+  const configKey = getCloudMailCacheKey(config);
+  const account = await findCloudMailCachedAccountByUserId(c.env.DB, configKey, userId);
+
+  if (!account) {
+    throw new HTTPException(404, { message: 'Cloud Mail 邮箱不存在' });
+  }
+
+  const row = await regenerateCloudMailShare(c.env.DB, c.env, configKey, account);
+  return c.json(await toCloudMailShareResponse(row, c.req.url, c.env));
+});
+
+app.delete('/api/cloud-mail/accounts/:id/share', async (c) => {
+  const config = await getCloudMailConfig(c.env.DB);
+  ensureCloudMailConfigured(config);
+
+  const userId = parseNumericId(c.req.param('id'));
+  const configKey = getCloudMailCacheKey(config);
+  await revokeCloudMailShareForAccount(c.env.DB, configKey, userId);
+
+  return c.json({ ok: true as const });
+});
+
+app.get('/api/public/cloud-mail/shares/:token', async (c) => {
+  const token = asText(c.req.param('token')).trim();
+  const row = await verifyCloudMailShareToken(c.env.DB, c.env, token);
+
+  if (!row) {
+    throw new HTTPException(404, { message: '分享链接不存在或已失效' });
+  }
+
+  const config = await getCloudMailConfig(c.env.DB);
+  ensureCloudMailConfigured(config);
+
+  const configKey = getCloudMailCacheKey(config);
+  if (row.configKey !== configKey) {
+    throw new HTTPException(404, { message: '分享链接不存在或已失效' });
+  }
+
+  const account = await findCloudMailCachedAccountByUserId(c.env.DB, configKey, row.userId);
+  if (!account || account.email.trim().toLowerCase() !== row.email.trim().toLowerCase()) {
+    throw new HTTPException(404, { message: '分享链接不存在或已失效' });
+  }
+
+  await markCloudMailShareAccessed(c.env.DB, row.id);
+  const messages = await listCloudMailMessages(config, row.email);
+
+  return c.json({
+    account: row.email,
+    messages,
+    readonly: true as const
   });
 });
 
@@ -4429,6 +4525,181 @@ async function findCloudMailCachedAccountByUserId(
   return row ? toCloudMailAccountItemFromCache(row) : null;
 }
 
+async function findActiveCloudMailShare(
+  db: D1Database,
+  configKey: string,
+  userId: number
+): Promise<CloudMailShareRow | null> {
+  const row = await db
+    .prepare(
+      `SELECT
+         id,
+         config_key AS configKey,
+         user_id AS userId,
+         email,
+         token_id AS tokenId,
+         token_hash AS tokenHash,
+         created_at AS createdAt,
+         revoked_at AS revokedAt,
+         last_accessed_at AS lastAccessedAt
+       FROM cloud_mail_shares
+       WHERE config_key = ?
+         AND user_id = ?
+         AND revoked_at IS NULL
+       ORDER BY id DESC
+       LIMIT 1`
+    )
+    .bind(configKey, userId)
+    .first<CloudMailShareRow>();
+
+  return row ?? null;
+}
+
+async function findActiveCloudMailShareByTokenId(
+  db: D1Database,
+  tokenId: string
+): Promise<CloudMailShareRow | null> {
+  const row = await db
+    .prepare(
+      `SELECT
+         id,
+         config_key AS configKey,
+         user_id AS userId,
+         email,
+         token_id AS tokenId,
+         token_hash AS tokenHash,
+         created_at AS createdAt,
+         revoked_at AS revokedAt,
+         last_accessed_at AS lastAccessedAt
+       FROM cloud_mail_shares
+       WHERE token_id = ?
+         AND revoked_at IS NULL
+       LIMIT 1`
+    )
+    .bind(tokenId)
+    .first<CloudMailShareRow>();
+
+  return row ?? null;
+}
+
+async function createCloudMailShare(
+  db: D1Database,
+  env: Pick<Bindings, 'SESSION_SECRET'>,
+  configKey: string,
+  account: CloudMailAccountItem
+): Promise<CloudMailShareRow> {
+  const tokenId = createRandomTokenId();
+  const token = await createCloudMailShareToken(tokenId, env);
+  const tokenHash = await hashShareToken(token);
+  const result = await db
+    .prepare(
+      `INSERT INTO cloud_mail_shares (
+         config_key,
+         user_id,
+         email,
+         token_id,
+         token_hash,
+         created_at
+       )
+       VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
+    )
+    .bind(configKey, account.userId, account.email, tokenId, tokenHash)
+    .run();
+
+  const row = await db
+    .prepare(
+      `SELECT
+         id,
+         config_key AS configKey,
+         user_id AS userId,
+         email,
+         token_id AS tokenId,
+         token_hash AS tokenHash,
+         created_at AS createdAt,
+         revoked_at AS revokedAt,
+         last_accessed_at AS lastAccessedAt
+       FROM cloud_mail_shares
+       WHERE id = ?`
+    )
+    .bind(Number(result.meta.last_row_id))
+    .first<CloudMailShareRow>();
+
+  if (!row) {
+    throw new HTTPException(500, { message: '分享链接创建成功，但读取结果失败' });
+  }
+
+  return row;
+}
+
+async function getOrCreateCloudMailShare(
+  db: D1Database,
+  env: Pick<Bindings, 'SESSION_SECRET'>,
+  configKey: string,
+  account: CloudMailAccountItem
+): Promise<CloudMailShareRow> {
+  const existing = await findActiveCloudMailShare(db, configKey, account.userId);
+  if (existing) {
+    if (existing.email.trim().toLowerCase() === account.email.trim().toLowerCase()) {
+      return existing;
+    }
+    await revokeCloudMailShareForAccount(db, configKey, account.userId);
+  }
+
+  return createCloudMailShare(db, env, configKey, account);
+}
+
+async function regenerateCloudMailShare(
+  db: D1Database,
+  env: Pick<Bindings, 'SESSION_SECRET'>,
+  configKey: string,
+  account: CloudMailAccountItem
+): Promise<CloudMailShareRow> {
+  await revokeCloudMailShareForAccount(db, configKey, account.userId);
+  return createCloudMailShare(db, env, configKey, account);
+}
+
+async function revokeCloudMailShareForAccount(db: D1Database, configKey: string, userId: number): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE cloud_mail_shares
+       SET revoked_at = CURRENT_TIMESTAMP
+       WHERE config_key = ?
+         AND user_id = ?
+         AND revoked_at IS NULL`
+    )
+    .bind(configKey, userId)
+    .run();
+}
+
+async function revokeCloudMailSharesForAccounts(
+  db: D1Database,
+  configKey: string,
+  userIds: number[]
+): Promise<void> {
+  if (userIds.length === 0) {
+    return;
+  }
+
+  const placeholders = userIds.map(() => '?').join(',');
+  await db
+    .prepare(
+      `UPDATE cloud_mail_shares
+       SET revoked_at = CURRENT_TIMESTAMP
+       WHERE config_key = ?
+         AND user_id IN (${placeholders})
+         AND revoked_at IS NULL`
+    )
+    .bind(configKey, ...userIds)
+    .run();
+}
+
+async function markCloudMailShareAccessed(db: D1Database, id: number): Promise<void> {
+  await db
+    .prepare('UPDATE cloud_mail_shares SET last_accessed_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .bind(id)
+    .run();
+}
+
 async function createCloudMailAccount(
   config: CloudMailConfig,
   payload: { email: string }
@@ -7022,6 +7293,7 @@ function isPublicApiPath(pathname: string): boolean {
     pathname === '/auth/microsoft/callback' ||
     pathname === INGEST_PATH ||
     pathname === OPEN_MESSAGES_PATH ||
+    /^\/api\/public\/cloud-mail\/shares\/[^/]+$/.test(pathname) ||
     pathname === '/api/open/accounts' ||
     /^\/api\/open\/accounts\/\d+\/messages$/.test(pathname) ||
     /^\/api\/open\/accounts\/\d+\/remark$/.test(pathname) ||
@@ -7430,7 +7702,7 @@ function getConfiguredPassword(env: Bindings): string {
   return password;
 }
 
-function getSessionSecret(env: Bindings): string {
+function getSessionSecret(env: Pick<Bindings, 'SESSION_SECRET'>): string {
   const secret = asText(env.SESSION_SECRET);
   if (!secret) {
     throw new HTTPException(500, {
@@ -7548,6 +7820,72 @@ async function verifySessionToken(token: string, secret: string): Promise<Sessio
   return {
     username: payload.username,
     exp: payload.exp
+  };
+}
+
+function createRandomTokenId(): string {
+  const bytes = new Uint8Array(CLOUD_MAIL_SHARE_TOKEN_BYTES);
+  crypto.getRandomValues(bytes);
+  return encodeBase64UrlBytes(bytes);
+}
+
+async function createCloudMailShareToken(
+  tokenId: string,
+  env: Pick<Bindings, 'SESSION_SECRET'>
+): Promise<string> {
+  const signature = await signValue(`${CLOUD_MAIL_SHARE_TOKEN_PREFIX}:${tokenId}`, getSessionSecret(env));
+  return `${tokenId}.${signature}`;
+}
+
+async function verifyCloudMailShareToken(
+  db: D1Database,
+  env: Pick<Bindings, 'SESSION_SECRET'>,
+  token: string
+): Promise<CloudMailShareRow | null> {
+  const [tokenId, signature, ...rest] = token.split('.');
+  if (!tokenId || !signature || rest.length > 0) {
+    return null;
+  }
+
+  const expectedToken = await createCloudMailShareToken(tokenId, env);
+  if (!timingSafeEqual(token, expectedToken)) {
+    return null;
+  }
+
+  const row = await findActiveCloudMailShareByTokenId(db, tokenId);
+  if (!row) {
+    return null;
+  }
+
+  const tokenHash = await hashShareToken(token);
+  if (!timingSafeEqual(tokenHash, row.tokenHash)) {
+    return null;
+  }
+
+  return row;
+}
+
+async function hashShareToken(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', textEncoder.encode(token));
+  return encodeBase64UrlBytes(new Uint8Array(digest));
+}
+
+async function toCloudMailShareResponse(
+  row: CloudMailShareRow,
+  requestUrl: string,
+  env: Pick<Bindings, 'SESSION_SECRET'>
+): Promise<CloudMailShareResponse> {
+  const token = await createCloudMailShareToken(row.tokenId, env);
+  const url = new URL(requestUrl);
+  url.pathname = `/share/cloud-mail/${encodeURIComponent(token)}`;
+  url.search = '';
+  url.hash = '';
+
+  return {
+    email: row.email,
+    shareUrl: url.toString(),
+    createdAt: row.createdAt,
+    revokedAt: row.revokedAt
   };
 }
 

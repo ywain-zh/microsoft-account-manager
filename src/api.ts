@@ -9,6 +9,8 @@ import type {
   CloudMailConfig,
   CloudMailCreatePayload,
   CloudMailMessagesResponse,
+  CloudMailPublicShareInboxResponse,
+  CloudMailShareResponse,
   CloudMailSyncResponse,
   IngestConfig,
   ImportResult,
@@ -387,6 +389,30 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ email, messageId })
     });
+  },
+
+  getCloudMailShare(userId: number): Promise<CloudMailShareResponse> {
+    return request<CloudMailShareResponse>(`/api/cloud-mail/accounts/${userId}/share`, {
+      method: 'POST'
+    });
+  },
+
+  regenerateCloudMailShare(userId: number): Promise<CloudMailShareResponse> {
+    return request<CloudMailShareResponse>(`/api/cloud-mail/accounts/${userId}/share/regenerate`, {
+      method: 'POST'
+    });
+  },
+
+  revokeCloudMailShare(userId: number): Promise<{ ok: true }> {
+    return request<{ ok: true }>(`/api/cloud-mail/accounts/${userId}/share`, {
+      method: 'DELETE'
+    });
+  },
+
+  getPublicCloudMailShareInbox(token: string): Promise<CloudMailPublicShareInboxResponse> {
+    return request<CloudMailPublicShareInboxResponse>(
+      `/api/public/cloud-mail/shares/${encodeURIComponent(token)}`
+    );
   },
 
   createCloudMailAccount(payload: CloudMailCreatePayload): Promise<{ ok: true; email: string }> {

@@ -9,7 +9,8 @@ import type {
   CloudMailAccountListResponse,
   CloudMailConfig,
   CloudMailCreatePayload,
-  CloudMailMessagesResponse
+  CloudMailMessagesResponse,
+  CloudMailShareResponse
 } from '../types';
 
 const { message } = createDiscreteApi(['message']);
@@ -54,6 +55,14 @@ interface CloudMailRemarkFormState {
   userId: number;
   email: string;
   remark: string;
+}
+
+interface CloudMailShareState {
+  userId: number;
+  email: string;
+  shareUrl: string;
+  createdAt: string;
+  revokedAt: string | null;
 }
 
 interface TimedCacheEntry<T> {
@@ -232,11 +241,15 @@ const backgroundSyncing = ref(false);
 const mailLoading = ref(false);
 const remarkSaving = ref(false);
 const gptJsonExportLoading = ref(false);
+const shareLoading = ref(false);
+const shareRegenerating = ref(false);
+const shareRevoking = ref(false);
 
 const configVisible = ref(false);
 const createVisible = ref(false);
 const mailVisible = ref(false);
 const remarkVisible = ref(false);
+const shareVisible = ref(false);
 const serviceErrorMessage = ref('');
 
 const searchKeyword = ref(readPersistedSearchKeyword());
@@ -248,6 +261,13 @@ const accounts = ref<CloudMailAccountItem[]>([]);
 const mailAccount = ref('');
 const mailItems = ref<AccountMailItem[]>([]);
 const selectedMailId = ref('');
+const shareState = reactive<CloudMailShareState>({
+  userId: 0,
+  email: '',
+  shareUrl: '',
+  createdAt: '',
+  revokedAt: null
+});
 
 const storedConfig = reactive<CloudMailConfig>(createDefaultCloudMailConfig());
 const configForm = reactive<CloudMailConfigFormState>(createDefaultConfigForm());
@@ -356,6 +376,14 @@ function resetRemarkForm(): void {
   remarkForm.userId = 0;
   remarkForm.email = '';
   remarkForm.remark = '';
+}
+
+function resetShareState(): void {
+  shareState.userId = 0;
+  shareState.email = '';
+  shareState.shareUrl = '';
+  shareState.createdAt = '';
+  shareState.revokedAt = null;
 }
 
 function resetCreateForm(): void {
@@ -736,6 +764,100 @@ function closeRemarkModal(): void {
   resetRemarkForm();
 }
 
+function assignShareState(userId: number, response: CloudMailShareResponse): void {
+  shareState.userId = userId;
+  shareState.email = response.email;
+  shareState.shareUrl = response.shareUrl;
+  shareState.createdAt = response.createdAt;
+  shareState.revokedAt = response.revokedAt;
+}
+
+function closeShareModal(): void {
+  shareVisible.value = false;
+  resetShareState();
+}
+
+async function openShareModal(row: CloudMailAccountItem): Promise<void> {
+  if (!hasConfiguredCloudMail.value) {
+    message.warning('请先完成 Cloud Mail 配置');
+    return;
+  }
+
+  if (serviceErrorMessage.value) {
+    message.warning('当前 Cloud Mail 配置不可用，请先重新保存配置信息');
+    openConfigModal();
+    return;
+  }
+
+  resetShareState();
+  shareState.userId = row.userId;
+  shareState.email = row.email;
+  shareVisible.value = true;
+  shareLoading.value = true;
+
+  try {
+    const response = await api.getCloudMailShare(row.userId);
+    assignShareState(row.userId, response);
+    clearCloudMailServiceError();
+  } catch (error) {
+    rememberCloudMailServiceError(error);
+    handleApiError(error);
+  } finally {
+    shareLoading.value = false;
+  }
+}
+
+async function copyShareUrl(): Promise<boolean> {
+  return copyText(shareState.shareUrl, '分享链接已复制');
+}
+
+async function regenerateShareUrl(): Promise<void> {
+  if (!shareState.userId || shareRegenerating.value) {
+    return;
+  }
+
+  const confirmed = window.confirm('重新生成后，旧分享链接会立即失效。确认继续？');
+  if (!confirmed) {
+    return;
+  }
+
+  shareRegenerating.value = true;
+  try {
+    const response = await api.regenerateCloudMailShare(shareState.userId);
+    assignShareState(shareState.userId, response);
+    clearCloudMailServiceError();
+    message.success('分享链接已重新生成');
+  } catch (error) {
+    rememberCloudMailServiceError(error);
+    handleApiError(error);
+  } finally {
+    shareRegenerating.value = false;
+  }
+}
+
+async function revokeShareUrl(): Promise<void> {
+  if (!shareState.userId || shareRevoking.value) {
+    return;
+  }
+
+  const confirmed = window.confirm('关闭分享后，当前链接会立即失效。确认关闭？');
+  if (!confirmed) {
+    return;
+  }
+
+  shareRevoking.value = true;
+  try {
+    await api.revokeCloudMailShare(shareState.userId);
+    message.success('分享链接已关闭');
+    closeShareModal();
+  } catch (error) {
+    rememberCloudMailServiceError(error);
+    handleApiError(error);
+  } finally {
+    shareRevoking.value = false;
+  }
+}
+
 async function saveRemark(): Promise<void> {
   if (!remarkForm.userId) {
     message.warning('请先选择需要备注的邮箱');
@@ -947,10 +1069,14 @@ export function useCloudMailConsole() {
     mailLoading,
     remarkSaving,
     gptJsonExportLoading,
+    shareLoading,
+    shareRegenerating,
+    shareRevoking,
     configVisible,
     createVisible,
     mailVisible,
     remarkVisible,
+    shareVisible,
     serviceErrorMessage,
     searchKeyword,
     tablePage,
@@ -961,6 +1087,7 @@ export function useCloudMailConsole() {
     mailAccount,
     mailItems,
     selectedMailId,
+    shareState,
     selectedMail,
     storedConfig,
     configForm,
@@ -982,6 +1109,11 @@ export function useCloudMailConsole() {
     openRemarkModal,
     closeRemarkModal,
     saveRemark,
+    openShareModal,
+    closeShareModal,
+    copyShareUrl,
+    regenerateShareUrl,
+    revokeShareUrl,
     handleSearch,
     handlePageChange,
     handlePageSizeChange,
