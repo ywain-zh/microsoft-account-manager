@@ -14,6 +14,7 @@ import type {
   CloudMailSyncResponse,
   IngestConfig,
   ImportResult,
+  MailGptValidityService,
   MailFetchMode,
   OpenAiModelsResponse,
   PpSmsFetchCodeResponse,
@@ -361,7 +362,11 @@ export const api = {
     return requestBlob(`/api/sub2api/accounts/gpt-json-export${buildQuery({ email })}`);
   },
 
-  checkSub2ApiGptValidity(payload: { email: string; modelId?: string }): Promise<Sub2ApiGptValidityResponse> {
+  checkSub2ApiGptValidity(payload: {
+    email: string;
+    service: MailGptValidityService;
+    modelId?: string;
+  }): Promise<Sub2ApiGptValidityResponse> {
     return request<Sub2ApiGptValidityResponse>('/api/sub2api/accounts/gpt-valid-check', {
       method: 'POST',
       body: JSON.stringify(payload)

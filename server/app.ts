@@ -30,6 +30,8 @@ type MailFetchMode = 'auto' | 'graph' | 'imap';
 type ResolvedMailFetchMode = 'graph' | 'imap';
 type TokenStatus = 'unknown' | 'valid' | 'invalid';
 type MailReadService = 'microsoft' | 'cloud-mail';
+type MailGptValidityService = MailReadService;
+type MailGptValidityStatus = 'valid' | 'invalid' | 'missing';
 
 interface AccountRow {
   id: number;
@@ -49,6 +51,12 @@ interface AccountRow {
   tokenStatus: TokenStatus;
   tokenMessage: string | null;
   tokenCheckedAt: string | null;
+  gptValidityStatus: MailGptValidityStatus | null;
+  gptValidityMessage: string | null;
+  gptValidityAccountId: number | null;
+  gptValidityAccountName: string | null;
+  gptValidityPlanType: Sub2ApiPlanType | null;
+  gptValidityCheckedAt: string | null;
 }
 
 type Seven79CardStatus = 'pending' | 'checked' | 'expired' | 'failed';
@@ -164,6 +172,7 @@ interface CloudMailAccountItem {
   activeTime: string | null;
   createTime: string | null;
   remark: string | null;
+  gptValidity: Sub2ApiGptValidityResponse | null;
 }
 
 interface CloudMailRemarkRow {
@@ -183,6 +192,12 @@ interface CloudMailAccountCacheRow {
   createTime: string | null;
   syncedAt: string | null;
   remark: string | null;
+  gptValidityStatus: MailGptValidityStatus | null;
+  gptValidityMessage: string | null;
+  gptValidityAccountId: number | null;
+  gptValidityAccountName: string | null;
+  gptValidityPlanType: Sub2ApiPlanType | null;
+  gptValidityCheckedAt: string | null;
 }
 
 interface CloudMailListResponse {
@@ -269,6 +284,7 @@ type Sub2ApiLogLevel = 'info' | 'success' | 'warning' | 'error';
 interface Sub2ApiAccountItem {
   id: number;
   name: string;
+  email: string | null;
   status: string;
   errorMessage: string | null;
   planType: Sub2ApiPlanType;
@@ -312,7 +328,7 @@ interface Sub2ApiTestResult {
 interface Sub2ApiGptValidityResponse {
   email: string;
   valid: boolean;
-  status: 'valid' | 'invalid' | 'missing';
+  status: MailGptValidityStatus;
   message: string;
   accountId: number | null;
   accountName: string | null;
@@ -476,24 +492,33 @@ const DEFAULT_TRANSLATION_CONFIG: TranslationConfig = {
 
 const ACCOUNT_SELECT_SQL = `
   SELECT
-    id,
-    account,
-    password,
-    client_id AS clientId,
-    client_secret AS clientSecret,
-    refresh_token AS refreshToken,
-    IFNULL(auth_type, 'manual') AS authType,
-    remark,
-    created_at AS createdAt,
-    IFNULL(sync_status, 'idle') AS syncStatus,
-    sync_message AS syncMessage,
-    refreshed_at AS refreshedAt,
-    fetched_at AS fetchedAt,
-    IFNULL(fetched_count, 0) AS fetchedCount,
-    IFNULL(token_status, 'unknown') AS tokenStatus,
-    token_message AS tokenMessage,
-    token_checked_at AS tokenCheckedAt
-  FROM accounts
+    a.id,
+    a.account,
+    a.password,
+    a.client_id AS clientId,
+    a.client_secret AS clientSecret,
+    a.refresh_token AS refreshToken,
+    IFNULL(a.auth_type, 'manual') AS authType,
+    a.remark,
+    a.created_at AS createdAt,
+    IFNULL(a.sync_status, 'idle') AS syncStatus,
+    a.sync_message AS syncMessage,
+    a.refreshed_at AS refreshedAt,
+    a.fetched_at AS fetchedAt,
+    IFNULL(a.fetched_count, 0) AS fetchedCount,
+    IFNULL(a.token_status, 'unknown') AS tokenStatus,
+    a.token_message AS tokenMessage,
+    a.token_checked_at AS tokenCheckedAt,
+    gpt.status AS gptValidityStatus,
+    gpt.message AS gptValidityMessage,
+    gpt.sub2api_account_id AS gptValidityAccountId,
+    gpt.sub2api_account_name AS gptValidityAccountName,
+    gpt.plan_type AS gptValidityPlanType,
+    gpt.checked_at AS gptValidityCheckedAt
+  FROM accounts a
+  LEFT JOIN mail_gpt_validity_status gpt
+    ON gpt.service = 'microsoft'
+   AND gpt.normalized_email = LOWER(TRIM(a.account))
 `;
 
 const SEVEN79_CARD_SELECT_SQL = `
@@ -824,7 +849,7 @@ app.post('/api/accounts', async (c) => {
 
   const lastRowId = Number(insertResult.meta.last_row_id);
   const item = await c.env.DB
-    .prepare(`${ACCOUNT_SELECT_SQL} WHERE id = ?`)
+    .prepare(`${ACCOUNT_SELECT_SQL} WHERE a.id = ?`)
     .bind(lastRowId)
     .first<AccountRow>();
 
@@ -871,7 +896,7 @@ app.put('/api/accounts/:id', async (c) => {
   }
 
   const item = await c.env.DB
-    .prepare(`${ACCOUNT_SELECT_SQL} WHERE id = ?`)
+    .prepare(`${ACCOUNT_SELECT_SQL} WHERE a.id = ?`)
     .bind(id)
     .first<AccountRow>();
 
@@ -1473,10 +1498,12 @@ app.post('/api/sub2api/accounts/gpt-valid-check', async (c) => {
   const config = await getSub2ApiConfig(c.env.DB);
   ensureSub2ApiConfigured(config);
 
-  const body = await readJson<{ email?: unknown; modelId?: unknown }>(c);
+  const body = await readJson<{ email?: unknown; modelId?: unknown; service?: unknown }>(c);
   const email = normalizeExportEmail(body.email);
+  const service = normalizeMailGptValidityService(body.service);
   const modelId = body.modelId === undefined ? DEFAULT_SUB2API_TEST_MODEL : normalizeSub2ApiModelId(body.modelId);
   const result = await checkSub2ApiGptValidity(config, email, modelId);
+  await upsertMailGptValidityStatus(c.env.DB, service, result);
 
   return c.json(result);
 });
@@ -1617,6 +1644,10 @@ app.post('/api/sub2api/check', async (c) => {
             const result = await testSub2ApiAccount(config, account, modelId, (level, message) => {
               emitLog(level, `[${account.name}] ${message}`, account);
             });
+            const syncedServices = await syncSub2ApiGptValidityToMatchedMailAccounts(
+              c.env.DB,
+              createGptValidityResponseFromTestResult(account, result)
+            );
 
             applySub2ApiDetectionResult(summary, result);
             emitSummary(summary);
@@ -1629,6 +1660,9 @@ app.post('/api/sub2api/check', async (c) => {
             } as Sub2ApiDetectionProgress);
 
             emitLog(resolveSub2ApiOutcomeLogLevel(result.outcome), formatSub2ApiResultMessage(result), account);
+            if (syncedServices.length > 0) {
+              emitLog('info', `[${account.name}] 已同步 GPT 状态到 ${syncedServices.join('、')}`, account);
+            }
           }
 
           emitLog(
@@ -3478,6 +3512,121 @@ async function checkSub2ApiGptValidity(
   };
 }
 
+function normalizeMailGptValidityService(value: unknown): MailGptValidityService {
+  const service = asText(value).trim();
+  if (service === 'microsoft' || service === 'cloud-mail') {
+    return service;
+  }
+  throw new HTTPException(400, { message: 'GPT 检测服务类型无效' });
+}
+
+function normalizeGptValidityEmail(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function createGptValidityResponseFromTestResult(
+  account: Sub2ApiAccountItem,
+  result: Sub2ApiTestResult
+): Sub2ApiGptValidityResponse {
+  const status: MailGptValidityStatus = result.outcome === 'success' ? 'valid' : 'invalid';
+  return {
+    email: account.email ?? '',
+    valid: status === 'valid',
+    status,
+    message: formatSub2ApiResultMessage(result),
+    accountId: account.id,
+    accountName: account.name,
+    planType: result.planType,
+    checkedAt: new Date().toISOString()
+  };
+}
+
+async function upsertMailGptValidityStatus(
+  db: D1Database,
+  service: MailGptValidityService,
+  result: Sub2ApiGptValidityResponse
+): Promise<void> {
+  const normalizedEmail = normalizeGptValidityEmail(result.email);
+  if (!normalizedEmail) {
+    return;
+  }
+
+  await db
+    .prepare(
+      `INSERT INTO mail_gpt_validity_status (
+         service,
+         normalized_email,
+         status,
+         message,
+         sub2api_account_id,
+         sub2api_account_name,
+         plan_type,
+         checked_at,
+         updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(service, normalized_email)
+       DO UPDATE SET
+         status = excluded.status,
+         message = excluded.message,
+         sub2api_account_id = excluded.sub2api_account_id,
+         sub2api_account_name = excluded.sub2api_account_name,
+         plan_type = excluded.plan_type,
+         checked_at = excluded.checked_at,
+         updated_at = CURRENT_TIMESTAMP`
+    )
+    .bind(
+      service,
+      normalizedEmail,
+      result.status,
+      result.message,
+      result.accountId,
+      result.accountName,
+      result.planType,
+      result.checkedAt
+    )
+    .run();
+}
+
+async function hasMicrosoftMailAccount(db: D1Database, normalizedEmail: string): Promise<boolean> {
+  const row = await db
+    .prepare('SELECT 1 AS matched FROM accounts WHERE LOWER(TRIM(account)) = ? LIMIT 1')
+    .bind(normalizedEmail)
+    .first<{ matched: number }>();
+  return Boolean(row);
+}
+
+async function hasCloudMailAccount(db: D1Database, normalizedEmail: string): Promise<boolean> {
+  const row = await db
+    .prepare('SELECT 1 AS matched FROM cloud_mail_account_cache WHERE LOWER(TRIM(email)) = ? LIMIT 1')
+    .bind(normalizedEmail)
+    .first<{ matched: number }>();
+  return Boolean(row);
+}
+
+async function syncSub2ApiGptValidityToMatchedMailAccounts(
+  db: D1Database,
+  result: Sub2ApiGptValidityResponse
+): Promise<string[]> {
+  const normalizedEmail = normalizeGptValidityEmail(result.email);
+  if (!normalizedEmail) {
+    return [];
+  }
+
+  const syncedServices: string[] = [];
+  if (await hasMicrosoftMailAccount(db, normalizedEmail)) {
+    await upsertMailGptValidityStatus(db, 'microsoft', result);
+    syncedServices.push('微软邮箱');
+  }
+
+  if (await hasCloudMailAccount(db, normalizedEmail)) {
+    await upsertMailGptValidityStatus(db, 'cloud-mail', result);
+    syncedServices.push('Cloud Mail');
+  }
+
+  return syncedServices;
+}
+
 async function deleteSub2ApiAccount(
   config: Sub2ApiConfig,
   accountId: number
@@ -3591,6 +3740,7 @@ function normalizeSub2ApiAccount(value: unknown): Sub2ApiAccountItem | null {
     id,
     name:
       asText(record.name ?? record.account ?? record.email ?? record.username).trim() || `账号 #${id}`,
+    email: extractSub2ApiRecordEmail(record),
     status: asText(record.status).trim(),
     errorMessage: toNullableText(record.error_message ?? record.errorMessage ?? record.message),
     planType: normalizeSub2ApiPlanType(credentials?.chatgpt_plan_type ?? credentials?.plan_type)
@@ -3610,17 +3760,21 @@ function buildSafeFilenamePrefix(email: string): string {
   return email.split('@')[0]?.replace(/[^a-zA-Z0-9._-]+/g, '_') || 'sub2api_gpt';
 }
 
-function doesSub2ApiRecordMatchEmail(value: unknown, email: string): boolean {
+function extractSub2ApiRecordEmail(value: unknown): string | null {
   const record = toRecord(value);
   if (!record) {
-    return false;
+    return null;
   }
 
   const credentials = toRecord(record.credentials) ?? {};
   const candidate = firstNonEmptyText(credentials.email, record.email, record.account, record.username, record.name)
     .trim()
     .toLowerCase();
-  return candidate === email;
+  return candidate || null;
+}
+
+function doesSub2ApiRecordMatchEmail(value: unknown, email: string): boolean {
+  return extractSub2ApiRecordEmail(value) === email;
 }
 
 function normalizeSub2ApiGptExportItem(value: unknown): Sub2ApiGptExportItem | null {
@@ -4282,7 +4436,8 @@ function toCloudMailAccountItem(input: unknown): CloudMailAccountItem | null {
       row.activeTime ?? row.updateTime ?? row.lastActiveTime ?? row.lastLoginTime ?? row.updatedAt
     ),
     createTime: toNullableText(row.createTime ?? row.createdAt ?? row.createAt ?? row.insertTime),
-    remark: null
+    remark: null,
+    gptValidity: null
   };
 }
 
@@ -4371,7 +4526,8 @@ function toCloudMailAccountItemFromCache(row: CloudMailAccountCacheRow): CloudMa
     sendEmailCount: row.sendEmailCount,
     activeTime: row.activeTime,
     createTime: row.createTime,
-    remark: row.remark ?? null
+    remark: row.remark ?? null,
+    gptValidity: buildGptValidityResponseFromRow(row.email, row)
   };
 }
 
@@ -4426,9 +4582,18 @@ async function queryCloudMailAccountCache(
          c.active_time AS activeTime,
          c.create_time AS createTime,
          c.synced_at AS syncedAt,
-         r.remark
+         r.remark,
+         gpt.status AS gptValidityStatus,
+         gpt.message AS gptValidityMessage,
+         gpt.sub2api_account_id AS gptValidityAccountId,
+         gpt.sub2api_account_name AS gptValidityAccountName,
+         gpt.plan_type AS gptValidityPlanType,
+         gpt.checked_at AS gptValidityCheckedAt
        FROM cloud_mail_account_cache c
        LEFT JOIN cloud_mail_account_remarks r ON r.user_id = c.user_id
+       LEFT JOIN mail_gpt_validity_status gpt
+         ON gpt.service = 'cloud-mail'
+        AND gpt.normalized_email = LOWER(TRIM(c.email))
        WHERE ${whereSql}
        ORDER BY COALESCE(c.create_time, '') DESC, c.user_id DESC
        LIMIT ? OFFSET ?`
@@ -4595,9 +4760,18 @@ async function findCloudMailCachedAccountByUserId(
          c.active_time AS activeTime,
          c.create_time AS createTime,
          c.synced_at AS syncedAt,
-         r.remark
+         r.remark,
+         gpt.status AS gptValidityStatus,
+         gpt.message AS gptValidityMessage,
+         gpt.sub2api_account_id AS gptValidityAccountId,
+         gpt.sub2api_account_name AS gptValidityAccountName,
+         gpt.plan_type AS gptValidityPlanType,
+         gpt.checked_at AS gptValidityCheckedAt
        FROM cloud_mail_account_cache c
        LEFT JOIN cloud_mail_account_remarks r ON r.user_id = c.user_id
+       LEFT JOIN mail_gpt_validity_status gpt
+         ON gpt.service = 'cloud-mail'
+        AND gpt.normalized_email = LOWER(TRIM(c.email))
        WHERE c.config_key = ?
          AND c.user_id = ?
        LIMIT 1`
@@ -5092,13 +5266,42 @@ function getScopeByMode(mode: MailFetchMode): string {
   return GRAPH_SCOPE;
 }
 
+function buildGptValidityResponseFromRow(
+  email: string,
+  row: {
+    gptValidityStatus: MailGptValidityStatus | null;
+    gptValidityMessage: string | null;
+    gptValidityAccountId: number | null;
+    gptValidityAccountName: string | null;
+    gptValidityPlanType: Sub2ApiPlanType | null;
+    gptValidityCheckedAt: string | null;
+  }
+): Sub2ApiGptValidityResponse | null {
+  if (!row.gptValidityStatus || !row.gptValidityCheckedAt) {
+    return null;
+  }
+
+  return {
+    email,
+    valid: row.gptValidityStatus === 'valid',
+    status: row.gptValidityStatus,
+    message: row.gptValidityMessage ?? '',
+    accountId: row.gptValidityAccountId ?? null,
+    accountName: row.gptValidityAccountName ?? null,
+    planType: row.gptValidityPlanType ?? '',
+    checkedAt: row.gptValidityCheckedAt
+  };
+}
+
 function serializeAccountRow(row: AccountRow): AccountRow & {
+  gptValidity: Sub2ApiGptValidityResponse | null;
   tokenBaseAt: string | null;
   tokenCountdownDays: number | null;
 } {
   const tokenBaseAt = row.refreshedAt || row.createdAt || null;
   return {
     ...row,
+    gptValidity: buildGptValidityResponseFromRow(row.account, row),
     tokenBaseAt,
     tokenCountdownDays: calculateTokenCountdownDays(tokenBaseAt)
   };
@@ -6257,12 +6460,12 @@ async function queryAccounts(db: D1Database, keyword: string): Promise<AccountRo
     statement = db
       .prepare(
         `${ACCOUNT_SELECT_SQL}
-         WHERE account LIKE ?
-         ORDER BY id DESC`
+         WHERE a.account LIKE ?
+         ORDER BY a.id DESC`
       )
       .bind(like);
   } else {
-    statement = db.prepare(`${ACCOUNT_SELECT_SQL} ORDER BY id DESC`);
+    statement = db.prepare(`${ACCOUNT_SELECT_SQL} ORDER BY a.id DESC`);
   }
 
   const { results } = await statement.all<AccountRow>();
@@ -6270,12 +6473,12 @@ async function queryAccounts(db: D1Database, keyword: string): Promise<AccountRo
 }
 
 async function fetchAllAccounts(db: D1Database): Promise<AccountRow[]> {
-  const { results } = await db.prepare(`${ACCOUNT_SELECT_SQL} ORDER BY id DESC`).all<AccountRow>();
+  const { results } = await db.prepare(`${ACCOUNT_SELECT_SQL} ORDER BY a.id DESC`).all<AccountRow>();
   return results ?? [];
 }
 
 async function fetchAccountById(db: D1Database, id: number): Promise<AccountRow | null> {
-  const row = await db.prepare(`${ACCOUNT_SELECT_SQL} WHERE id = ?`).bind(id).first<AccountRow>();
+  const row = await db.prepare(`${ACCOUNT_SELECT_SQL} WHERE a.id = ?`).bind(id).first<AccountRow>();
   return row ?? null;
 }
 
@@ -6474,7 +6677,7 @@ async function updateAccountPassword(db: D1Database, id: number, password: strin
 
 async function fetchAccountByAccount(db: D1Database, account: string): Promise<AccountRow | null> {
   const row = await db
-    .prepare(`${ACCOUNT_SELECT_SQL} WHERE account = ? ORDER BY id DESC LIMIT 1`)
+    .prepare(`${ACCOUNT_SELECT_SQL} WHERE a.account = ? ORDER BY a.id DESC LIMIT 1`)
     .bind(account)
     .first<AccountRow>();
   return row ?? null;
@@ -6487,7 +6690,7 @@ async function fetchAccountsByIds(db: D1Database, ids: number[]): Promise<Accoun
 
   const placeholders = ids.map(() => '?').join(',');
   const statement = db
-    .prepare(`${ACCOUNT_SELECT_SQL} WHERE id IN (${placeholders}) ORDER BY id DESC`)
+    .prepare(`${ACCOUNT_SELECT_SQL} WHERE a.id IN (${placeholders}) ORDER BY a.id DESC`)
     .bind(...ids);
   const { results } = await statement.all<AccountRow>();
   return results ?? [];
@@ -7756,7 +7959,7 @@ async function upsertMicrosoftOauthAccount(
     )
     .run();
 
-  const inserted = await db.prepare(`${ACCOUNT_SELECT_SQL} WHERE id = ?`).bind(Number(result.meta.last_row_id)).first<AccountRow>();
+  const inserted = await db.prepare(`${ACCOUNT_SELECT_SQL} WHERE a.id = ?`).bind(Number(result.meta.last_row_id)).first<AccountRow>();
   if (!inserted) {
     throw new Error('OAuth 账号创建成功，但读取结果失败');
   }

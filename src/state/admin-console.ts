@@ -227,6 +227,16 @@ function getGptValidityKey(email: string): string {
   return email.trim().toLowerCase();
 }
 
+function mergeGptValidityResults(items: AccountItem[]): void {
+  const nextResults = { ...gptValidityResults.value };
+  for (const item of items) {
+    if (item.gptValidity) {
+      nextResults[getGptValidityKey(item.account)] = item.gptValidity;
+    }
+  }
+  gptValidityResults.value = nextResults;
+}
+
 function clearMicrosoftOauthPopupWatch(): void {
   if (typeof window !== 'undefined') {
     if (microsoftOauthPopupPollTimer !== null) {
@@ -309,6 +319,7 @@ async function loadAccounts(): Promise<boolean> {
   try {
     const response = await api.listAccounts(searchKeyword.value.trim());
     accounts.value = response.items;
+    mergeGptValidityResults(response.items);
     const available = new Set(response.items.map((item) => item.id));
     checkedRowKeys.value = checkedRowKeys.value.filter((id) => available.has(id));
     return true;
@@ -861,11 +872,16 @@ async function checkGptValidity(email: string): Promise<void> {
 
   setGptValidityLoading(targetEmail, true);
   try {
-    const response = await api.checkSub2ApiGptValidity({ email: targetEmail });
+    const response = await api.checkSub2ApiGptValidity({ email: targetEmail, service: 'microsoft' });
     gptValidityResults.value = {
       ...gptValidityResults.value,
       [getGptValidityKey(targetEmail)]: response
     };
+    accounts.value = accounts.value.map((item) =>
+      getGptValidityKey(item.account) === getGptValidityKey(targetEmail)
+        ? { ...item, gptValidity: response }
+        : item
+    );
 
     if (response.valid) {
       message.success(`${targetEmail} GPT 有效`);

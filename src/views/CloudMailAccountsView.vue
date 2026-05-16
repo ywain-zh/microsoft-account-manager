@@ -894,36 +894,34 @@ function renderRemarkCell(row: CloudMailAccountItem): ReturnType<typeof h> {
 
 function renderGptValidityCell(row: CloudMailAccountItem): ReturnType<typeof h> {
   const checking = isCheckingGptValidity(row.email);
-  const result = getGptValidityResult(row.email);
+  const result = getGptValidityResult(row.email) ?? row.gptValidity;
   const isValid = result?.valid === true;
+  const isFailed = result && !isValid;
+  const title = checking
+    ? `正在检测 ${row.email} 的 GPT 是否有效`
+    : result?.message
+      ? `${result.message}，点击重新检测`
+      : `检测 ${row.email} 的 GPT 是否有效`;
 
-  if (result && !isValid && !checking) {
-    return h('span', {
-      class: 'gpt-validity-empty',
-      title: result.message || '未检测到有效 GPT'
-    });
-  }
-
-  return h(
-    'button',
-    {
-      type: 'button',
-      class: [
-        'table-action-button',
-        isValid ? 'table-action-button-gpt-valid' : 'table-action-button-gpt-check'
-      ],
-      disabled: checking,
-      title: isValid
-        ? `${result.message || 'GPT 有效'}，点击重新检测`
-        : `检测 ${row.email} 的 GPT 是否有效`,
-      'aria-label': `检测 ${row.email} 的 GPT 是否有效`,
-      onClick: (event: MouseEvent) => {
-        event.stopPropagation();
-        void checkGptValidity(row.email);
-      }
-    },
-    checking ? '检测中' : isValid ? 'GPT有效' : '检测'
-  );
+  return h('button', {
+    type: 'button',
+    class: [
+      'gpt-validity-control',
+      isValid ? 'is-valid' : '',
+      isFailed ? 'is-failed' : '',
+      checking ? 'is-checking' : ''
+    ],
+    disabled: checking,
+    title,
+    'aria-label': `检测 ${row.email} 的 GPT 是否有效`,
+    onClick: (event: MouseEvent) => {
+      event.stopPropagation();
+      void checkGptValidity(row.email);
+    }
+  }, [
+    isValid ? h('span', { class: 'gpt-validity-label' }, 'GPT有效') : null,
+    h('span', { class: 'gpt-validity-refresh' }, [h(RefreshGlyph)])
+  ]);
 }
 
 const columns: DataTableColumns<CloudMailAccountItem> = [
@@ -1404,26 +1402,71 @@ onUnmounted(() => {
   opacity: 0.62;
 }
 
-:deep(.cloud-mail-account-table .table-action-button-gpt-check) {
-  min-width: 52px;
+:deep(.cloud-mail-account-table .gpt-validity-control) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 32px;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: #eff6ff;
+  color: #2563eb;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
 }
 
-:deep(.cloud-mail-account-table .gpt-validity-empty) {
-  display: inline-block;
-  width: 52px;
-  height: 24px;
-  vertical-align: middle;
+:deep(.cloud-mail-account-table .gpt-validity-control:hover) {
+  background: #dbeafe;
 }
 
-:deep(.cloud-mail-account-table .table-action-button-gpt-valid) {
-  min-width: 68px;
-  background: #dcfce7 !important;
-  color: #15803d !important;
+:deep(.cloud-mail-account-table .gpt-validity-control:disabled) {
+  cursor: not-allowed;
+  opacity: 0.62;
 }
 
-:deep(.cloud-mail-account-table .table-action-button-gpt-valid:hover) {
-  background: #bbf7d0 !important;
-  color: #166534 !important;
+:deep(.cloud-mail-account-table .gpt-validity-control.is-valid) {
+  min-width: 82px;
+  background: #dcfce7;
+  color: #15803d;
+}
+
+:deep(.cloud-mail-account-table .gpt-validity-control.is-valid:hover) {
+  background: #bbf7d0;
+  color: #166534;
+}
+
+:deep(.cloud-mail-account-table .gpt-validity-control.is-failed) {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+:deep(.cloud-mail-account-table .gpt-validity-control.is-failed:hover) {
+  background: #fecaca;
+}
+
+:deep(.cloud-mail-account-table .gpt-validity-refresh) {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+}
+
+:deep(.cloud-mail-account-table .gpt-validity-refresh svg) {
+  width: 16px;
+  height: 16px;
+}
+
+:deep(.cloud-mail-account-table .gpt-validity-control.is-checking .gpt-validity-refresh) {
+  animation: gpt-validity-spin 0.8s linear infinite;
+}
+
+@keyframes gpt-validity-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 :deep(.cloud-mail-account-table .table-action-button-danger) {

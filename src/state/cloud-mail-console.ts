@@ -226,6 +226,16 @@ function getGptValidityKey(email: string): string {
   return email.trim().toLowerCase();
 }
 
+function mergeGptValidityResults(items: CloudMailAccountItem[]): void {
+  const nextResults = { ...gptValidityResults.value };
+  for (const item of items) {
+    if (item.gptValidity) {
+      nextResults[getGptValidityKey(item.email)] = item.gptValidity;
+    }
+  }
+  gptValidityResults.value = nextResults;
+}
+
 function clearAccountsCache(): void {
   removeSessionCacheByPrefix(CLOUD_MAIL_ACCOUNTS_CACHE_PREFIX);
 }
@@ -436,6 +446,7 @@ function clearTableState(): void {
 
 function assignAccountsResponse(response: CloudMailAccountListResponse): void {
   accounts.value = response.items;
+  mergeGptValidityResults(response.items);
   total.value = response.total;
   checkedRowKeys.value = checkedRowKeys.value.filter((id) => response.items.some((item) => item.userId === id));
   lastAccountsCacheEmpty.value = Boolean(response.cacheEmpty);
@@ -1074,11 +1085,16 @@ async function checkGptValidity(email: string): Promise<void> {
 
   setGptValidityLoading(targetEmail, true);
   try {
-    const response = await api.checkSub2ApiGptValidity({ email: targetEmail });
+    const response = await api.checkSub2ApiGptValidity({ email: targetEmail, service: 'cloud-mail' });
     gptValidityResults.value = {
       ...gptValidityResults.value,
       [getGptValidityKey(targetEmail)]: response
     };
+    accounts.value = accounts.value.map((item) =>
+      getGptValidityKey(item.email) === getGptValidityKey(targetEmail)
+        ? { ...item, gptValidity: response }
+        : item
+    );
 
     if (response.valid) {
       message.success(`${targetEmail} GPT 有效`);

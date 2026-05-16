@@ -18,6 +18,7 @@ export interface AccountItem {
   tokenCheckedAt: string | null;
   tokenCountdownDays: number | null;
   tokenBaseAt: string | null;
+  gptValidity: Sub2ApiGptValidityResponse | null;
 }
 
 export interface AccountPayload {
@@ -61,6 +62,7 @@ export interface CloudMailAccountItem {
   activeTime: string | null;
   createTime: string | null;
   remark: string | null;
+  gptValidity: Sub2ApiGptValidityResponse | null;
 }
 
 export interface CloudMailAccountListResponse {
@@ -111,6 +113,8 @@ export interface Sub2ApiGptValidityResponse {
   planType: Sub2ApiPlanType;
   checkedAt: string;
 }
+
+export type MailGptValidityService = 'microsoft' | 'cloud-mail';
 
 export type TranslationProvider = 'openai' | 'deeplx';
 
