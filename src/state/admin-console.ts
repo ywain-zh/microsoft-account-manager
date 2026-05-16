@@ -2,6 +2,7 @@ import { computed, reactive, ref, watch } from 'vue';
 import { createDiscreteApi } from 'naive-ui';
 import { api, UnauthorizedError } from '../api';
 import { copyToClipboard } from '../utils/clipboard';
+import { formatDateTimeBeijing } from '../utils/datetime';
 import { downloadBlob } from '../utils/download';
 import type {
   AccountItem,
@@ -10,6 +11,7 @@ import type {
   BatchActionResult,
   IngestConfig,
   MailFetchMode,
+  Sub2ApiGptValidityResponse,
   TokenStatus
 } from '../types';
 
@@ -73,6 +75,8 @@ const saveIngestLoading = ref(false);
 const syncLoading = ref(false);
 const batchDeleteLoading = ref(false);
 const gptJsonExportLoading = ref(false);
+const gptValidityLoadingEmails = ref<string[]>([]);
+const gptValidityResults = ref<Record<string, Sub2ApiGptValidityResponse>>({});
 
 const createVisible = ref(false);
 const importVisible = ref(false);
@@ -219,6 +223,10 @@ function resetRemarkForm(): void {
   remarkForm.remark = '';
 }
 
+function getGptValidityKey(email: string): string {
+  return email.trim().toLowerCase();
+}
+
 function clearMicrosoftOauthPopupWatch(): void {
   if (typeof window !== 'undefined') {
     if (microsoftOauthPopupPollTimer !== null) {
@@ -253,6 +261,8 @@ function clearSessionState(): void {
   mailAccount.value = '';
   mailItems.value = [];
   selectedMailId.value = '';
+  gptValidityLoadingEmails.value = [];
+  gptValidityResults.value = {};
   clearCreateForm();
   clearImportForm();
   resetEditForm();
@@ -819,6 +829,56 @@ async function exportSub2ApiGptJson(email: string): Promise<void> {
   }
 }
 
+function getGptValidityResult(email: string): Sub2ApiGptValidityResponse | null {
+  return gptValidityResults.value[getGptValidityKey(email)] ?? null;
+}
+
+function isCheckingGptValidity(email: string): boolean {
+  return gptValidityLoadingEmails.value.includes(getGptValidityKey(email));
+}
+
+function setGptValidityLoading(email: string, loading: boolean): void {
+  const key = getGptValidityKey(email);
+  if (!key) {
+    return;
+  }
+
+  if (loading) {
+    if (!gptValidityLoadingEmails.value.includes(key)) {
+      gptValidityLoadingEmails.value = [...gptValidityLoadingEmails.value, key];
+    }
+    return;
+  }
+
+  gptValidityLoadingEmails.value = gptValidityLoadingEmails.value.filter((item) => item !== key);
+}
+
+async function checkGptValidity(email: string): Promise<void> {
+  const targetEmail = email.trim();
+  if (!targetEmail || isCheckingGptValidity(targetEmail)) {
+    return;
+  }
+
+  setGptValidityLoading(targetEmail, true);
+  try {
+    const response = await api.checkSub2ApiGptValidity({ email: targetEmail });
+    gptValidityResults.value = {
+      ...gptValidityResults.value,
+      [getGptValidityKey(targetEmail)]: response
+    };
+
+    if (response.valid) {
+      message.success(`${targetEmail} GPT 有效`);
+    } else {
+      message.warning(response.message || `${targetEmail} 未检测到有效 GPT`);
+    }
+  } catch (error) {
+    handleApiError(error);
+  } finally {
+    setGptValidityLoading(targetEmail, false);
+  }
+}
+
 async function saveIngestConfig(): Promise<void> {
   saveIngestLoading.value = true;
   try {
@@ -1014,16 +1074,7 @@ function resolveCountdownTone(row: AccountItem): 'success' | 'error' | 'warning'
 }
 
 function formatMailDate(value: string): string {
-  if (!value) {
-    return '-';
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString();
+  return formatDateTimeBeijing(value);
 }
 
 watch(
@@ -1058,6 +1109,8 @@ export function useAdminConsole() {
     syncLoading,
     batchDeleteLoading,
     gptJsonExportLoading,
+    gptValidityLoadingEmails,
+    gptValidityResults,
     createVisible,
     importVisible,
     editVisible,
@@ -1105,6 +1158,9 @@ export function useAdminConsole() {
     copyMailAccount,
     refreshMailInbox,
     exportSub2ApiGptJson,
+    checkGptValidity,
+    getGptValidityResult,
+    isCheckingGptValidity,
     saveIngestConfig,
     beginMicrosoftOauthLogin,
     consumeMicrosoftOauthResult,
