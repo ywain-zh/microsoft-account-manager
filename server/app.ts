@@ -309,6 +309,17 @@ interface Sub2ApiTestResult {
   planType: Sub2ApiPlanType;
 }
 
+interface Sub2ApiGptValidityResponse {
+  email: string;
+  valid: boolean;
+  status: 'valid' | 'invalid' | 'missing';
+  message: string;
+  accountId: number | null;
+  accountName: string | null;
+  planType: Sub2ApiPlanType;
+  checkedAt: string;
+}
+
 interface Sub2ApiDeleteAccountDetail {
   accountId: number;
   ok: boolean;
@@ -1456,6 +1467,18 @@ app.get('/api/sub2api/accounts/gpt-json-export', async (c) => {
       'Content-Disposition': `attachment; filename="${filename}"`
     }
   });
+});
+
+app.post('/api/sub2api/accounts/gpt-valid-check', async (c) => {
+  const config = await getSub2ApiConfig(c.env.DB);
+  ensureSub2ApiConfigured(config);
+
+  const body = await readJson<{ email?: unknown; modelId?: unknown }>(c);
+  const email = normalizeExportEmail(body.email);
+  const modelId = body.modelId === undefined ? DEFAULT_SUB2API_TEST_MODEL : normalizeSub2ApiModelId(body.modelId);
+  const result = await checkSub2ApiGptValidity(config, email, modelId);
+
+  return c.json(result);
 });
 
 app.get('/api/translation/config', async (c) => {
@@ -3393,6 +3416,66 @@ async function deleteSub2ApiAccounts(
   }
 
   return details;
+}
+
+async function checkSub2ApiGptValidity(
+  config: Sub2ApiConfig,
+  email: string,
+  modelId: string
+): Promise<Sub2ApiGptValidityResponse> {
+  const rawAccounts = await searchRawSub2ApiAccounts(config, email);
+  const accounts = rawAccounts
+    .filter((item) => doesSub2ApiRecordMatchEmail(item, email))
+    .map((item) => normalizeSub2ApiAccount(item))
+    .filter((item): item is Sub2ApiAccountItem => item !== null);
+
+  if (accounts.length === 0) {
+    return {
+      email,
+      valid: false,
+      status: 'missing',
+      message: `Sub2API 中未找到 ${email} 的 GPT 账号`,
+      accountId: null,
+      accountName: null,
+      planType: '',
+      checkedAt: new Date().toISOString()
+    };
+  }
+
+  let fallbackResult: Sub2ApiTestResult | null = null;
+  let fallbackAccount: Sub2ApiAccountItem | null = null;
+
+  for (const account of accounts) {
+    const result = await testSub2ApiAccount(config, account, modelId, () => {});
+    if (result.outcome === 'success') {
+      return {
+        email,
+        valid: true,
+        status: 'valid',
+        message: formatSub2ApiResultMessage(result),
+        accountId: account.id,
+        accountName: account.name,
+        planType: result.planType,
+        checkedAt: new Date().toISOString()
+      };
+    }
+
+    if (!fallbackResult) {
+      fallbackResult = result;
+      fallbackAccount = account;
+    }
+  }
+
+  return {
+    email,
+    valid: false,
+    status: 'invalid',
+    message: fallbackResult ? formatSub2ApiResultMessage(fallbackResult) : '未检测到有效 GPT 账号',
+    accountId: fallbackAccount?.id ?? null,
+    accountName: fallbackAccount?.name ?? null,
+    planType: fallbackResult?.planType ?? '',
+    checkedAt: new Date().toISOString()
+  };
 }
 
 async function deleteSub2ApiAccount(

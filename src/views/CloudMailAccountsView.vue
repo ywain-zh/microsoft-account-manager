@@ -706,6 +706,9 @@ const {
   openMailModal,
   refreshMailInbox,
   exportSub2ApiGptJson,
+  checkGptValidity,
+  getGptValidityResult,
+  isCheckingGptValidity,
   markMailAsRead
 } = cloudMail;
 
@@ -889,6 +892,40 @@ function renderRemarkCell(row: CloudMailAccountItem): ReturnType<typeof h> {
   ]);
 }
 
+function renderGptValidityCell(row: CloudMailAccountItem): ReturnType<typeof h> {
+  const checking = isCheckingGptValidity(row.email);
+  const result = getGptValidityResult(row.email);
+  const isValid = result?.valid === true;
+
+  if (result && !isValid && !checking) {
+    return h('span', {
+      class: 'gpt-validity-empty',
+      title: result.message || '未检测到有效 GPT'
+    });
+  }
+
+  return h(
+    'button',
+    {
+      type: 'button',
+      class: [
+        'table-action-button',
+        isValid ? 'table-action-button-gpt-valid' : 'table-action-button-gpt-check'
+      ],
+      disabled: checking,
+      title: isValid
+        ? `${result.message || 'GPT 有效'}，点击重新检测`
+        : `检测 ${row.email} 的 GPT 是否有效`,
+      'aria-label': `检测 ${row.email} 的 GPT 是否有效`,
+      onClick: (event: MouseEvent) => {
+        event.stopPropagation();
+        void checkGptValidity(row.email);
+      }
+    },
+    checking ? '检测中' : isValid ? 'GPT有效' : '检测'
+  );
+}
+
 const columns: DataTableColumns<CloudMailAccountItem> = [
   {
     type: 'selection',
@@ -905,6 +942,12 @@ const columns: DataTableColumns<CloudMailAccountItem> = [
     key: 'remark',
     width: 168,
     render: (row) => renderRemarkCell(row)
+  },
+  {
+    title: 'GPT有效',
+    key: 'gptValidity',
+    width: 96,
+    render: (row) => renderGptValidityCell(row)
   },
   {
     title: '分享',
@@ -1354,6 +1397,33 @@ onUnmounted(() => {
 :deep(.cloud-mail-account-table .table-action-button:hover) {
   background: #e2e8f0 !important;
   opacity: 1;
+}
+
+:deep(.cloud-mail-account-table .table-action-button:disabled) {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+:deep(.cloud-mail-account-table .table-action-button-gpt-check) {
+  min-width: 52px;
+}
+
+:deep(.cloud-mail-account-table .gpt-validity-empty) {
+  display: inline-block;
+  width: 52px;
+  height: 24px;
+  vertical-align: middle;
+}
+
+:deep(.cloud-mail-account-table .table-action-button-gpt-valid) {
+  min-width: 68px;
+  background: #dcfce7 !important;
+  color: #15803d !important;
+}
+
+:deep(.cloud-mail-account-table .table-action-button-gpt-valid:hover) {
+  background: #bbf7d0 !important;
+  color: #166534 !important;
 }
 
 :deep(.cloud-mail-account-table .table-action-button-danger) {

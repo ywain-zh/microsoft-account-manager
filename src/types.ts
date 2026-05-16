@@ -101,6 +101,17 @@ export interface Sub2ApiConfig {
   adminApiKey: string;
 }
 
+export interface Sub2ApiGptValidityResponse {
+  email: string;
+  valid: boolean;
+  status: 'valid' | 'invalid' | 'missing';
+  message: string;
+  accountId: number | null;
+  accountName: string | null;
+  planType: Sub2ApiPlanType;
+  checkedAt: string;
+}
+
 export type TranslationProvider = 'openai' | 'deeplx';
 
 export interface TranslationConfig {

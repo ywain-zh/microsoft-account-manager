@@ -10,7 +10,8 @@ import type {
   CloudMailConfig,
   CloudMailCreatePayload,
   CloudMailMessagesResponse,
-  CloudMailShareResponse
+  CloudMailShareResponse,
+  Sub2ApiGptValidityResponse
 } from '../types';
 
 const { message } = createDiscreteApi(['message']);
@@ -221,6 +222,10 @@ function getMessagesCacheKey(email: string): string {
   return `${CLOUD_MAIL_MESSAGES_CACHE_PREFIX}${encodeURIComponent(email.trim().toLowerCase())}`;
 }
 
+function getGptValidityKey(email: string): string {
+  return email.trim().toLowerCase();
+}
+
 function clearAccountsCache(): void {
   removeSessionCacheByPrefix(CLOUD_MAIL_ACCOUNTS_CACHE_PREFIX);
 }
@@ -241,6 +246,8 @@ const backgroundSyncing = ref(false);
 const mailLoading = ref(false);
 const remarkSaving = ref(false);
 const gptJsonExportLoading = ref(false);
+const gptValidityLoadingEmails = ref<string[]>([]);
+const gptValidityResults = ref<Record<string, Sub2ApiGptValidityResponse>>({});
 const shareLoading = ref(false);
 const shareRegenerating = ref(false);
 const shareRevoking = ref(false);
@@ -1035,6 +1042,56 @@ async function exportSub2ApiGptJson(email: string): Promise<void> {
   }
 }
 
+function getGptValidityResult(email: string): Sub2ApiGptValidityResponse | null {
+  return gptValidityResults.value[getGptValidityKey(email)] ?? null;
+}
+
+function isCheckingGptValidity(email: string): boolean {
+  return gptValidityLoadingEmails.value.includes(getGptValidityKey(email));
+}
+
+function setGptValidityLoading(email: string, loading: boolean): void {
+  const key = getGptValidityKey(email);
+  if (!key) {
+    return;
+  }
+
+  if (loading) {
+    if (!gptValidityLoadingEmails.value.includes(key)) {
+      gptValidityLoadingEmails.value = [...gptValidityLoadingEmails.value, key];
+    }
+    return;
+  }
+
+  gptValidityLoadingEmails.value = gptValidityLoadingEmails.value.filter((item) => item !== key);
+}
+
+async function checkGptValidity(email: string): Promise<void> {
+  const targetEmail = email.trim();
+  if (!targetEmail || isCheckingGptValidity(targetEmail)) {
+    return;
+  }
+
+  setGptValidityLoading(targetEmail, true);
+  try {
+    const response = await api.checkSub2ApiGptValidity({ email: targetEmail });
+    gptValidityResults.value = {
+      ...gptValidityResults.value,
+      [getGptValidityKey(targetEmail)]: response
+    };
+
+    if (response.valid) {
+      message.success(`${targetEmail} GPT 有效`);
+    } else {
+      message.warning(response.message || `${targetEmail} 未检测到有效 GPT`);
+    }
+  } catch (error) {
+    handleApiError(error);
+  } finally {
+    setGptValidityLoading(targetEmail, false);
+  }
+}
+
 function formatDate(value: string | null): string {
   if (!value) {
     return '-';
@@ -1069,6 +1126,8 @@ export function useCloudMailConsole() {
     mailLoading,
     remarkSaving,
     gptJsonExportLoading,
+    gptValidityLoadingEmails,
+    gptValidityResults,
     shareLoading,
     shareRegenerating,
     shareRevoking,
@@ -1123,6 +1182,9 @@ export function useCloudMailConsole() {
     openMailModal,
     refreshMailInbox,
     exportSub2ApiGptJson,
+    checkGptValidity,
+    getGptValidityResult,
+    isCheckingGptValidity,
     formatDate,
     clearMailState,
     markMailAsRead

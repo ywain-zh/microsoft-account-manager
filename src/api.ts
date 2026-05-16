@@ -25,6 +25,7 @@ import type {
   Seven79ImportResult,
   Sub2ApiConfig,
   Sub2ApiDeleteAccountsResponse,
+  Sub2ApiGptValidityResponse,
   TranslationConfig,
   TranslationProvider,
   TranslationResponse,
@@ -358,6 +359,13 @@ export const api = {
 
   exportSub2ApiGptJson(email: string): Promise<DownloadResponse> {
     return requestBlob(`/api/sub2api/accounts/gpt-json-export${buildQuery({ email })}`);
+  },
+
+  checkSub2ApiGptValidity(payload: { email: string; modelId?: string }): Promise<Sub2ApiGptValidityResponse> {
+    return request<Sub2ApiGptValidityResponse>('/api/sub2api/accounts/gpt-valid-check', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
   },
 
   listCloudMailAccounts(payload: {
