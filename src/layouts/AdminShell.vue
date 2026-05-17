@@ -24,7 +24,7 @@
                 stroke-width="1.7"
               />
             </svg>
-            <svg v-else-if="item.key === 'sub2api' || item.key === 'sub2api-codex-login'" viewBox="0 0 24 24" fill="none">
+            <svg v-else-if="item.key === 'sub2api'" viewBox="0 0 24 24" fill="none">
               <path
                 d="M12 4.5v3"
                 stroke="currentColor"

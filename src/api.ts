@@ -12,13 +12,11 @@ import type {
   CloudMailPublicShareInboxResponse,
   CloudMailShareResponse,
   CloudMailSyncResponse,
-  CodexLoginRunPayload,
   IngestConfig,
   ImportResult,
   MailGptValidityService,
   MailFetchMode,
   OpenAiModelsResponse,
-  Sub2ApiCodexLoginConfig,
   Sub2ApiConfig,
   Sub2ApiDeleteAccountsResponse,
   Sub2ApiGptValidityResponse,
@@ -289,17 +287,6 @@ export const api = {
     });
   },
 
-  getCodexLoginConfig(): Promise<{ item: Sub2ApiCodexLoginConfig }> {
-    return request<{ item: Sub2ApiCodexLoginConfig }>('/api/sub2api/codex-login/config');
-  },
-
-  updateCodexLoginConfig(payload: Sub2ApiCodexLoginConfig): Promise<{ item: Sub2ApiCodexLoginConfig }> {
-    return request<{ item: Sub2ApiCodexLoginConfig }>('/api/sub2api/codex-login/config', {
-      method: 'PUT',
-      body: JSON.stringify(payload)
-    });
-  },
-
   listSub2ApiModels(): Promise<OpenAiModelsResponse> {
     return request<OpenAiModelsResponse>('/api/sub2api/models');
   },
@@ -351,14 +338,6 @@ export const api = {
 
   startSub2ApiCheck(payload: { modelId: string }, signal?: AbortSignal): Promise<Response> {
     return requestStream('/api/sub2api/check', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-      signal
-    });
-  },
-
-  startCodexLoginRun(payload: CodexLoginRunPayload, signal?: AbortSignal): Promise<Response> {
-    return requestStream('/api/sub2api/codex-login/run', {
       method: 'POST',
       body: JSON.stringify(payload),
       signal

@@ -56,16 +56,6 @@ const router = createRouter({
           }
         },
         {
-          path: 'services/sub2api/codex-login',
-          name: 'sub2api-codex-login',
-          component: () => import('./views/Sub2ApiCodexLoginView.vue'),
-          meta: {
-            requiresAuth: true,
-            title: 'Codex Login',
-            description: '调用外部 Codex 注册/登录 CLI，并实时查看运行日志。'
-          }
-        },
-        {
           path: 'services/system/settings',
           name: 'system-settings',
           component: () => import('./views/SystemSettingsView.vue'),

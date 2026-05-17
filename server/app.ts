@@ -1,7 +1,3 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { access, writeFile } from 'node:fs/promises';
-import { isAbsolute, join, normalize } from 'node:path';
-import type { Readable } from 'node:stream';
 import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { cors } from 'hono/cors';
@@ -165,92 +161,6 @@ interface CloudMailRemoteEnvelope<T> {
 interface Sub2ApiConfig {
   baseUrl: string;
   adminApiKey: string;
-}
-
-type CodexLoginCommand = 'all' | 'register' | 'login';
-type CodexLoginLogLevel = 'info' | 'success' | 'warning' | 'error';
-type CodexLoginLogStream = 'stdout' | 'stderr' | 'system';
-
-interface Sub2ApiCodexLoginConfig {
-  projectPath: string;
-  mailProvider: 'skymail' | 'gptmail';
-  mailDomain: string;
-  emailUsernameLength: number;
-  mailPollIntervalSeconds: number;
-  skymailBaseUrl: string;
-  skymailAdminEmail: string;
-  skymailAdminPassword: string;
-  gptmailBaseUrl: string;
-  gptmailApiKey: string;
-  gptmailDomain: string;
-  smsProvider: 'herosms' | 'fivesim';
-  heroSmsApiKey: string;
-  fiveSimApiKey: string;
-  fiveSimProduct: string;
-  fiveSimOperator: string;
-  smsService: string;
-  smsCountry: string;
-  smsMaxPrice: number;
-  smsMinPrice: number;
-  blockedCountries: string[];
-  proxyUrl: string;
-  passwordRandomLength: number;
-  passwordSuffix: string;
-  passwordCharset: string;
-  maxCaptchaAttempts: number;
-  sentinelHeadless: boolean;
-  sentinelWaitSeconds: number;
-  sentinelCfExtraSeconds: number;
-  sentinelChannel: string;
-  sentinelPersistentProfile: boolean;
-  sentinelHeadedFallback: boolean;
-  sentinelProfileDir: string;
-  requestTimeoutSeconds: number;
-  emailPollSeconds: number;
-  pollIntervalSeconds: number;
-  tokenCacheTtlSeconds: number;
-  authBaseUrl: string;
-  chatBaseUrl: string;
-  chatWebClientId: string;
-  codexClientId: string;
-  userAgentChrome: string;
-  acceptLanguage: string;
-}
-
-interface CodexLoginRunPayload {
-  command: CodexLoginCommand;
-  count?: number;
-  workers?: number;
-  phone?: string;
-  password?: string;
-  latest?: number;
-  force?: boolean;
-}
-
-interface CodexLoginLogItem {
-  id: string;
-  timestamp: string;
-  level: CodexLoginLogLevel;
-  stream: CodexLoginLogStream;
-  message: string;
-}
-
-interface CodexLoginSummary {
-  startedAt: string | null;
-  finishedAt: string | null;
-  command: CodexLoginCommand | null;
-  exitCode: number | null;
-  registered: number;
-  loginSucceeded: number;
-  failed: number;
-  savedFiles: number;
-}
-
-interface CodexLoginProgress {
-  running: boolean;
-  currentStage: string | null;
-  processed: number;
-  total: number;
 }
 
 type TranslationProvider = 'openai' | 'deeplx';
@@ -471,64 +381,13 @@ const DEFAULT_CLOUD_MAIL_CONFIG: CloudMailConfig = {
 };
 
 const SUB2API_CONFIG_KEY = 'sub2api_config';
-const SUB2API_CODEX_LOGIN_CONFIG_KEY = 'sub2api_codex_login_config';
 const DEFAULT_SUB2API_TEST_MODEL = 'gpt-5.4';
 const SUB2API_PAGE_SIZE = 100;
-const DEFAULT_CODEX_LOGIN_PROJECT_PATH = 'C:/Users/zhouyuan/Desktop/Project/OpenAi/reg_codex_login';
 
 const DEFAULT_SUB2API_CONFIG: Sub2ApiConfig = {
   baseUrl: '',
   adminApiKey: ''
 };
-
-const DEFAULT_CODEX_LOGIN_CONFIG: Sub2ApiCodexLoginConfig = {
-  projectPath: DEFAULT_CODEX_LOGIN_PROJECT_PATH,
-  mailProvider: 'skymail',
-  mailDomain: '',
-  emailUsernameLength: 10,
-  mailPollIntervalSeconds: 1.5,
-  skymailBaseUrl: 'https://mail.zanolab.com',
-  skymailAdminEmail: '',
-  skymailAdminPassword: '',
-  gptmailBaseUrl: 'https://mail.chatgpt.org.uk',
-  gptmailApiKey: '',
-  gptmailDomain: '',
-  smsProvider: 'herosms',
-  heroSmsApiKey: '',
-  fiveSimApiKey: '',
-  fiveSimProduct: 'openai',
-  fiveSimOperator: 'any',
-  smsService: 'dr',
-  smsCountry: '',
-  smsMaxPrice: 1,
-  smsMinPrice: 0.02,
-  blockedCountries: [],
-  proxyUrl: '',
-  passwordRandomLength: 12,
-  passwordSuffix: '!A1',
-  passwordCharset: 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
-  maxCaptchaAttempts: 5,
-  sentinelHeadless: true,
-  sentinelWaitSeconds: 90,
-  sentinelCfExtraSeconds: 60,
-  sentinelChannel: '',
-  sentinelPersistentProfile: true,
-  sentinelHeadedFallback: true,
-  sentinelProfileDir: 'browser_profile',
-  requestTimeoutSeconds: 20,
-  emailPollSeconds: 120,
-  pollIntervalSeconds: 3,
-  tokenCacheTtlSeconds: 300,
-  authBaseUrl: 'https://auth.openai.com',
-  chatBaseUrl: 'https://chatgpt.com',
-  chatWebClientId: 'app_X8zY6vW2pQ9tR3dE7nK1jL5gH',
-  codexClientId: 'app_EMoamEEZ73f0CkXaXp7hrann',
-  userAgentChrome: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/148.0.0.0 Safari/537.36',
-  acceptLanguage: 'en-US,en;q=0.9'
-};
-
-let activeCodexLoginProcess: ChildProcessWithoutNullStreams | null = null;
-let activeCodexLoginRunning = false;
 
 const TRANSLATION_CONFIG_KEY = 'translation_config';
 const DEFAULT_TRANSLATION_MODEL = 'gpt-5.4-mini';
@@ -1261,20 +1120,6 @@ app.put('/api/sub2api/config', async (c) => {
   return c.json({ item });
 });
 
-app.get('/api/sub2api/codex-login/config', async (c) => {
-  const item = await getCodexLoginConfig(c.env.DB);
-  return c.json({ item });
-});
-
-app.put('/api/sub2api/codex-login/config', async (c) => {
-  const body = await readJson<Partial<Sub2ApiCodexLoginConfig>>(c);
-  const item = normalizeCodexLoginConfig(body);
-  validateCodexLoginConfig(item);
-  await validateCodexLoginProject(item.projectPath);
-  await setAppSetting(c.env.DB, SUB2API_CODEX_LOGIN_CONFIG_KEY, JSON.stringify(item));
-  return c.json({ item });
-});
-
 app.get('/api/sub2api/models', async (c) => {
   const config = await getSub2ApiConfig(c.env.DB);
   ensureSub2ApiConfigured(config);
@@ -1495,139 +1340,6 @@ app.post('/api/sub2api/check', async (c) => {
     },
     cancel() {
       aborted = true;
-    }
-  });
-
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream; charset=utf-8',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive'
-    }
-  });
-});
-
-app.post('/api/sub2api/codex-login/run', async (c) => {
-  if (activeCodexLoginRunning) {
-    throw new HTTPException(409, { message: '已有 Codex Login 任务正在运行，请等待完成或先停止当前任务' });
-  }
-
-  const config = await getCodexLoginConfig(c.env.DB);
-  ensureCodexLoginConfigured(config);
-  await validateCodexLoginProject(config.projectPath);
-  const body = await readJson<Partial<CodexLoginRunPayload>>(c);
-  const payload = normalizeCodexLoginRunPayload(body);
-  activeCodexLoginRunning = true;
-
-  let logCounter = 0;
-  let aborted = false;
-  let child: ChildProcessWithoutNullStreams | null = null;
-  const summary = createDefaultCodexLoginSummary(payload.command);
-  const progress = createDefaultCodexLoginProgress(payload.command, payload);
-
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const emit = (eventName: 'log' | 'progress' | 'summary' | 'done' | 'error', eventPayload: unknown): void => {
-        if (aborted) {
-          return;
-        }
-
-        controller.enqueue(textEncoder.encode(`event: ${eventName}\ndata: ${JSON.stringify(eventPayload)}\n\n`));
-      };
-
-      const emitLog = (level: CodexLoginLogLevel, message: string, streamName: CodexLoginLogStream = 'system'): void => {
-        logCounter += 1;
-        const item: CodexLoginLogItem = {
-          id: `${Date.now()}-${logCounter}`,
-          timestamp: new Date().toISOString(),
-          level,
-          stream: streamName,
-          message: sanitizeCodexLogLine(message, config, payload)
-        };
-        updateCodexSummaryFromLog(summary, item.message);
-        updateCodexProgressFromLog(progress, item.message);
-        emit('log', item);
-        emit('summary', { ...summary });
-        emit('progress', { ...progress });
-      };
-
-      const closeStream = (): void => {
-        if (aborted) {
-          return;
-        }
-        aborted = true;
-        controller.close();
-      };
-
-      const run = async (): Promise<void> => {
-        try {
-          summary.startedAt = new Date().toISOString();
-          emit('summary', { ...summary });
-          emit('progress', { ...progress });
-          emitLog('info', '准备写入 Codex Login 配置');
-          await writeCodexCliConfig(config);
-
-          const args = buildCodexLoginArgs(payload);
-          emitLog('info', `启动外部 CLI：uv run python main.py ${buildSafeCodexCommandPreview(args)}`);
-
-          if (aborted) {
-            activeCodexLoginRunning = false;
-            return;
-          }
-
-          child = spawn('uv', ['run', 'python', 'main.py', ...args], {
-            cwd: config.projectPath,
-            env: {
-              ...process.env,
-              PYTHONUNBUFFERED: '1'
-            },
-            windowsHide: true
-          });
-          activeCodexLoginProcess = child;
-
-          streamCodexProcessOutput(child.stdout, 'stdout', emitLog);
-          streamCodexProcessOutput(child.stderr, 'stderr', emitLog);
-
-          const exitCode = await waitForCodexProcess(child);
-          activeCodexLoginProcess = null;
-          activeCodexLoginRunning = false;
-          summary.exitCode = exitCode;
-          summary.finishedAt = new Date().toISOString();
-          progress.running = false;
-          progress.currentStage = exitCode === 0 ? '完成' : '失败';
-
-          if (exitCode === 0) {
-            emitLog('success', 'Codex Login 任务已完成');
-            emit('done', { summary: { ...summary }, exitCode });
-          } else if (!aborted) {
-            const message = `Codex Login 任务退出，退出码 ${exitCode ?? '未知'}`;
-            emitLog('error', message);
-            emit('error', { message });
-          }
-          closeStream();
-        } catch (error) {
-          activeCodexLoginProcess = null;
-          activeCodexLoginRunning = false;
-          summary.finishedAt = new Date().toISOString();
-          progress.running = false;
-          const message = getErrorMessage(error);
-          emitLog('error', message);
-          emit('error', { message });
-          closeStream();
-        }
-      };
-
-      void run();
-    },
-    cancel() {
-      aborted = true;
-      if (child) {
-        killCodexProcess(child);
-      }
-      if (activeCodexLoginProcess === child) {
-        activeCodexLoginProcess = null;
-      }
-      activeCodexLoginRunning = false;
     }
   });
 
@@ -1988,10 +1700,6 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 }
 
-function normalizePathText(value: unknown, fallback: string): string {
-  return normalize(asText(value).trim() || fallback).replace(/\\/g, '/');
-}
-
 function normalizeInteger(value: unknown, fallback: number, min: number, max: number): number {
   const parsed = Number.parseInt(asText(value), 10);
   if (!Number.isInteger(parsed)) {
@@ -2216,21 +1924,6 @@ async function getSub2ApiConfig(db: D1Database): Promise<Sub2ApiConfig> {
   }
 }
 
-async function getCodexLoginConfig(db: D1Database): Promise<Sub2ApiCodexLoginConfig> {
-  const value = await getAppSetting(db, SUB2API_CODEX_LOGIN_CONFIG_KEY);
-
-  if (!value) {
-    return DEFAULT_CODEX_LOGIN_CONFIG;
-  }
-
-  try {
-    const parsed = JSON.parse(value) as Partial<Sub2ApiCodexLoginConfig>;
-    return normalizeCodexLoginConfig(parsed);
-  } catch {
-    return DEFAULT_CODEX_LOGIN_CONFIG;
-  }
-}
-
 async function getTranslationConfig(db: D1Database): Promise<TranslationConfig> {
   const value = await getAppSetting(db, TRANSLATION_CONFIG_KEY);
 
@@ -2338,54 +2031,6 @@ function normalizeSub2ApiConfig(input: Partial<Sub2ApiConfig>): Sub2ApiConfig {
   return {
     baseUrl: normalizeSub2ApiBaseUrl(input.baseUrl),
     adminApiKey: asText(input.adminApiKey).trim()
-  };
-}
-
-function normalizeCodexLoginConfig(input: Partial<Sub2ApiCodexLoginConfig>): Sub2ApiCodexLoginConfig {
-  return {
-    projectPath: normalizePathText(input.projectPath, DEFAULT_CODEX_LOGIN_CONFIG.projectPath),
-    mailProvider: input.mailProvider === 'gptmail' ? 'gptmail' : 'skymail',
-    mailDomain: asText(input.mailDomain).trim().toLowerCase().replace(/^@+/, ''),
-    emailUsernameLength: normalizeNumber(input.emailUsernameLength, DEFAULT_CODEX_LOGIN_CONFIG.emailUsernameLength, 4, 64),
-    mailPollIntervalSeconds: normalizeNumber(input.mailPollIntervalSeconds, DEFAULT_CODEX_LOGIN_CONFIG.mailPollIntervalSeconds, 0.2, 60),
-    skymailBaseUrl: normalizeTranslationBaseUrl(input.skymailBaseUrl) || DEFAULT_CODEX_LOGIN_CONFIG.skymailBaseUrl,
-    skymailAdminEmail: asText(input.skymailAdminEmail).trim().toLowerCase(),
-    skymailAdminPassword: asText(input.skymailAdminPassword).trim(),
-    gptmailBaseUrl: normalizeTranslationBaseUrl(input.gptmailBaseUrl) || DEFAULT_CODEX_LOGIN_CONFIG.gptmailBaseUrl,
-    gptmailApiKey: asText(input.gptmailApiKey).trim(),
-    gptmailDomain: asText(input.gptmailDomain).trim().toLowerCase().replace(/^@+/, ''),
-    smsProvider: input.smsProvider === 'fivesim' ? 'fivesim' : 'herosms',
-    heroSmsApiKey: asText(input.heroSmsApiKey).trim(),
-    fiveSimApiKey: asText(input.fiveSimApiKey).trim(),
-    fiveSimProduct: asText(input.fiveSimProduct).trim() || DEFAULT_CODEX_LOGIN_CONFIG.fiveSimProduct,
-    fiveSimOperator: asText(input.fiveSimOperator).trim() || DEFAULT_CODEX_LOGIN_CONFIG.fiveSimOperator,
-    smsService: asText(input.smsService).trim() || DEFAULT_CODEX_LOGIN_CONFIG.smsService,
-    smsCountry: asText(input.smsCountry).trim().toLowerCase(),
-    smsMaxPrice: normalizeNumber(input.smsMaxPrice, DEFAULT_CODEX_LOGIN_CONFIG.smsMaxPrice, 0, 1000),
-    smsMinPrice: normalizeNumber(input.smsMinPrice, DEFAULT_CODEX_LOGIN_CONFIG.smsMinPrice, 0, 1000),
-    blockedCountries: normalizeStringList(input.blockedCountries),
-    proxyUrl: asText(input.proxyUrl).trim(),
-    passwordRandomLength: normalizeInteger(input.passwordRandomLength, DEFAULT_CODEX_LOGIN_CONFIG.passwordRandomLength, 8, 128),
-    passwordSuffix: asText(input.passwordSuffix),
-    passwordCharset: asText(input.passwordCharset) || DEFAULT_CODEX_LOGIN_CONFIG.passwordCharset,
-    maxCaptchaAttempts: normalizeInteger(input.maxCaptchaAttempts, DEFAULT_CODEX_LOGIN_CONFIG.maxCaptchaAttempts, 1, 50),
-    sentinelHeadless: input.sentinelHeadless !== false,
-    sentinelWaitSeconds: normalizeInteger(input.sentinelWaitSeconds, DEFAULT_CODEX_LOGIN_CONFIG.sentinelWaitSeconds, 0, 600),
-    sentinelCfExtraSeconds: normalizeInteger(input.sentinelCfExtraSeconds, DEFAULT_CODEX_LOGIN_CONFIG.sentinelCfExtraSeconds, 0, 600),
-    sentinelChannel: asText(input.sentinelChannel).trim(),
-    sentinelPersistentProfile: input.sentinelPersistentProfile !== false,
-    sentinelHeadedFallback: input.sentinelHeadedFallback !== false,
-    sentinelProfileDir: normalizePathText(input.sentinelProfileDir, DEFAULT_CODEX_LOGIN_CONFIG.sentinelProfileDir),
-    requestTimeoutSeconds: normalizeInteger(input.requestTimeoutSeconds, DEFAULT_CODEX_LOGIN_CONFIG.requestTimeoutSeconds, 1, 3600),
-    emailPollSeconds: normalizeInteger(input.emailPollSeconds, DEFAULT_CODEX_LOGIN_CONFIG.emailPollSeconds, 1, 3600),
-    pollIntervalSeconds: normalizeNumber(input.pollIntervalSeconds, DEFAULT_CODEX_LOGIN_CONFIG.pollIntervalSeconds, 0.2, 300),
-    tokenCacheTtlSeconds: normalizeInteger(input.tokenCacheTtlSeconds, DEFAULT_CODEX_LOGIN_CONFIG.tokenCacheTtlSeconds, 0, 86400),
-    authBaseUrl: normalizeTranslationBaseUrl(input.authBaseUrl) || DEFAULT_CODEX_LOGIN_CONFIG.authBaseUrl,
-    chatBaseUrl: normalizeTranslationBaseUrl(input.chatBaseUrl) || DEFAULT_CODEX_LOGIN_CONFIG.chatBaseUrl,
-    chatWebClientId: asText(input.chatWebClientId).trim() || DEFAULT_CODEX_LOGIN_CONFIG.chatWebClientId,
-    codexClientId: asText(input.codexClientId).trim() || DEFAULT_CODEX_LOGIN_CONFIG.codexClientId,
-    userAgentChrome: asText(input.userAgentChrome).trim() || DEFAULT_CODEX_LOGIN_CONFIG.userAgentChrome,
-    acceptLanguage: asText(input.acceptLanguage).trim() || DEFAULT_CODEX_LOGIN_CONFIG.acceptLanguage
   };
 }
 
@@ -2504,76 +2149,6 @@ function validateSub2ApiConfig(config: Sub2ApiConfig): void {
   }
 }
 
-function validateCodexLoginConfig(config: Sub2ApiCodexLoginConfig): void {
-  if (!config.projectPath) {
-    throw new HTTPException(400, { message: '请填写 Codex Login 项目路径' });
-  }
-
-  if (config.projectPath.length > 1000) {
-    throw new HTTPException(400, { message: '项目路径长度不能超过 1000 个字符' });
-  }
-
-  if (!isAbsolute(config.projectPath)) {
-    throw new HTTPException(400, { message: '项目路径必须是绝对路径' });
-  }
-
-  validateHttpUrl(config.authBaseUrl, 'Auth Base URL');
-  validateHttpUrl(config.chatBaseUrl, 'Chat Base URL');
-
-  if (!config.mailDomain) {
-    throw new HTTPException(400, { message: '请填写邮箱域名' });
-  }
-
-  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(config.mailDomain)) {
-    throw new HTTPException(400, { message: '邮箱域名格式不合法' });
-  }
-
-  if (config.mailProvider === 'skymail') {
-    validateHttpUrl(config.skymailBaseUrl, 'SkyMail Base URL');
-    if (!config.skymailAdminEmail || !config.skymailAdminPassword) {
-      throw new HTTPException(400, { message: '请完整填写 SkyMail 管理员邮箱和密码' });
-    }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(config.skymailAdminEmail)) {
-      throw new HTTPException(400, { message: 'SkyMail 管理员邮箱格式不合法' });
-    }
-  }
-
-  if (config.mailProvider === 'gptmail') {
-    validateHttpUrl(config.gptmailBaseUrl, 'GPTMail Base URL');
-    if (!config.gptmailApiKey) {
-      throw new HTTPException(400, { message: '请填写 GPTMail API Key' });
-    }
-  }
-
-  if (config.smsProvider === 'herosms' && !config.heroSmsApiKey) {
-    throw new HTTPException(400, { message: '请填写 HeroSMS API Key' });
-  }
-
-  if (config.smsProvider === 'fivesim' && !config.fiveSimApiKey) {
-    throw new HTTPException(400, { message: '请填写 5sim API Key' });
-  }
-
-  if (config.smsMinPrice > config.smsMaxPrice) {
-    throw new HTTPException(400, { message: '短信最低价格不能大于最高价格' });
-  }
-
-  if (!config.passwordCharset) {
-    throw new HTTPException(400, { message: '密码字符集不能为空' });
-  }
-
-  if (config.passwordCharset.length > 512 || config.passwordSuffix.length > 128) {
-    throw new HTTPException(400, { message: '密码配置过长' });
-  }
-
-  if (config.proxyUrl) {
-    validateProxyUrl(config.proxyUrl);
-  }
-
-  if (isAbsolute(config.sentinelProfileDir)) {
-    throw new HTTPException(400, { message: 'Sentinel Profile Dir 必须使用相对路径' });
-  }
-}
-
 function normalizeSub2ApiModelId(value: unknown): string {
   const modelId = asText(value).trim();
   if (!modelId) {
@@ -2647,17 +2222,6 @@ function ensureSub2ApiConfigured(config: Sub2ApiConfig): void {
   }
 }
 
-function ensureCodexLoginConfigured(config: Sub2ApiCodexLoginConfig): void {
-  try {
-    validateCodexLoginConfig(config);
-  } catch (error) {
-    if (error instanceof HTTPException) {
-      throw new HTTPException(400, { message: `请先完成 Codex Login 配置：${error.message}` });
-    }
-    throw error;
-  }
-}
-
 function normalizeTranslationProvider(value: unknown): TranslationProvider | null {
   const provider = asText(value).trim().toLowerCase();
   if (provider === 'openai' || provider === 'deeplx') {
@@ -2700,50 +2264,6 @@ function parsePageNumber(
   return Math.min(Math.max(parsed, min), max);
 }
 
-function normalizeCodexLoginRunPayload(input: Partial<CodexLoginRunPayload>): CodexLoginRunPayload {
-  const commandText = asText(input.command).trim();
-  const command: CodexLoginCommand = commandText === 'register' || commandText === 'login' ? commandText : 'all';
-
-  if (command === 'all') {
-    const count = normalizeInteger(input.count, 1, 1, 100);
-    return {
-      command,
-      count,
-      workers: normalizeInteger(input.workers, Math.min(3, count), 1, 20)
-    };
-  }
-
-  if (command === 'register') {
-    return { command };
-  }
-
-  const phone = asText(input.phone).trim();
-  const password = asText(input.password).trim();
-  const latest = input.latest === undefined || input.latest === null || asText(input.latest).trim() === ''
-    ? undefined
-    : normalizeInteger(input.latest, 0, 1, 1000);
-
-  if ((phone && !password) || (!phone && password)) {
-    throw new HTTPException(400, { message: '手机号和密码必须同时填写' });
-  }
-
-  if (!phone && !latest) {
-    throw new HTTPException(400, { message: '登录模式请填写手机号和密码，或填写 latest 重试数量' });
-  }
-
-  if (phone.length > 80 || password.length > 256) {
-    throw new HTTPException(400, { message: '手机号或密码长度过长' });
-  }
-
-  return {
-    command,
-    phone,
-    password,
-    latest,
-    force: input.force === true
-  };
-}
-
 function normalizeCloudMailCreatePayload(
   input: { localPart?: string; domain?: string },
   availableDomains: string[]
@@ -2767,305 +2287,6 @@ function normalizeCloudMailCreatePayload(
     localPart,
     domain
   };
-}
-
-async function validateCodexLoginProject(projectPath: string): Promise<void> {
-  try {
-    await access(join(projectPath, 'main.py'));
-    await access(join(projectPath, 'pyproject.toml'));
-  } catch {
-    throw new HTTPException(400, { message: 'Codex Login 项目路径下未找到 main.py 或 pyproject.toml' });
-  }
-}
-
-async function writeCodexCliConfig(config: Sub2ApiCodexLoginConfig): Promise<void> {
-  const payload = buildCodexCliConfig(config);
-  await writeFile(join(config.projectPath, 'config.json'), `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
-}
-
-function buildCodexCliConfig(config: Sub2ApiCodexLoginConfig): Record<string, unknown> {
-  return {
-    mail: {
-      provider: config.mailProvider,
-      domain: config.mailDomain,
-      email_username_length: config.emailUsernameLength,
-      poll_interval: config.mailPollIntervalSeconds
-    },
-    skymail: {
-      base_url: config.skymailBaseUrl,
-      admin_email: config.skymailAdminEmail,
-      admin_password: config.skymailAdminPassword
-    },
-    gptmail: {
-      base_url: config.gptmailBaseUrl,
-      api_key: config.gptmailApiKey,
-      domain: config.gptmailDomain
-    },
-    chatgpt: {
-      auth_base_url: config.authBaseUrl,
-      chat_base_url: config.chatBaseUrl,
-      mail_domain: config.mailDomain,
-      email_username_length: config.emailUsernameLength,
-      chat_web_client_id: config.chatWebClientId,
-      codex_client_id: config.codexClientId
-    },
-    registration: {
-      password_random_length: config.passwordRandomLength,
-      password_suffix: config.passwordSuffix,
-      password_charset: config.passwordCharset,
-      max_captcha_attempts: config.maxCaptchaAttempts
-    },
-    phone_sms: {
-      provider: config.smsProvider,
-      herosms_api_key: config.heroSmsApiKey,
-      fivesim_api_key: config.fiveSimApiKey,
-      fivesim_product: config.fiveSimProduct,
-      fivesim_operator: config.fiveSimOperator,
-      service: config.smsService,
-      country: config.smsCountry,
-      max_price: config.smsMaxPrice,
-      min_price: config.smsMinPrice,
-      blocked_countries: config.blockedCountries,
-      webhook_port: 0
-    },
-    proxy: {
-      default: config.proxyUrl
-    },
-    sentinel: {
-      headless: config.sentinelHeadless,
-      wait_seconds: config.sentinelWaitSeconds,
-      cf_extra_seconds: config.sentinelCfExtraSeconds,
-      channel: config.sentinelChannel,
-      persistent_profile: config.sentinelPersistentProfile,
-      headed_fallback: config.sentinelHeadedFallback,
-      profile_dir: config.sentinelProfileDir
-    },
-    timeouts: {
-      request: config.requestTimeoutSeconds,
-      email_poll: config.emailPollSeconds,
-      poll_interval: config.pollIntervalSeconds,
-      token_cache_ttl: config.tokenCacheTtlSeconds
-    },
-    output: {
-      directory: '.',
-      filename_pattern: 'chatgpt_{email}_{timestamp}.json'
-    },
-    http: {
-      user_agent_chrome: config.userAgentChrome,
-      accept_language: config.acceptLanguage
-    }
-  };
-}
-
-function buildCodexLoginArgs(payload: CodexLoginRunPayload): string[] {
-  if (payload.command === 'all') {
-    return ['all', '--count', String(payload.count ?? 1), '--workers', String(payload.workers ?? 1)];
-  }
-
-  if (payload.command === 'register') {
-    return ['register'];
-  }
-
-  const args = ['login'];
-  if (payload.phone && payload.password) {
-    args.push('--phone', payload.phone, '--password', payload.password);
-  }
-  if (payload.latest) {
-    args.push('--latest', String(payload.latest));
-  }
-  if (payload.force) {
-    args.push('--force');
-  }
-  return args;
-}
-
-function buildSafeCodexCommandPreview(args: string[]): string {
-  return args
-    .map((value, index) => {
-      const previous = args[index - 1];
-      if (previous === '--password') {
-        return '[REDACTED]';
-      }
-      return value.length > 80 ? '[REDACTED]' : value;
-    })
-    .join(' ');
-}
-
-function createDefaultCodexLoginSummary(command: CodexLoginCommand): CodexLoginSummary {
-  return {
-    startedAt: null,
-    finishedAt: null,
-    command,
-    exitCode: null,
-    registered: 0,
-    loginSucceeded: 0,
-    failed: 0,
-    savedFiles: 0
-  };
-}
-
-function createDefaultCodexLoginProgress(command: CodexLoginCommand, payload: CodexLoginRunPayload): CodexLoginProgress {
-  return {
-    running: true,
-    currentStage: command === 'login' ? '登录' : command === 'register' ? '注册' : '注册 + 登录',
-    processed: 0,
-    total: command === 'all' ? payload.count ?? 1 : payload.latest ?? 1
-  };
-}
-
-function streamCodexProcessOutput(
-  stream: Readable,
-  streamName: 'stdout' | 'stderr',
-  emitLog: (level: CodexLoginLogLevel, message: string, streamName: CodexLoginLogStream) => void
-): void {
-  let buffer = '';
-  stream.setEncoding('utf8');
-  stream.on('data', (chunk: string) => {
-    buffer += chunk;
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() ?? '';
-    for (const line of lines) {
-      const text = line.trimEnd();
-      if (text) {
-        emitLog(resolveCodexLogLevel(text, streamName), text, streamName);
-      }
-    }
-  });
-  stream.on('end', () => {
-    const text = buffer.trimEnd();
-    if (text) {
-      emitLog(resolveCodexLogLevel(text, streamName), text, streamName);
-    }
-  });
-}
-
-function waitForCodexProcess(child: ChildProcessWithoutNullStreams): Promise<number | null> {
-  return new Promise((resolve, reject) => {
-    child.once('error', reject);
-    child.once('close', (code) => resolve(code));
-  });
-}
-
-function killCodexProcess(child: ChildProcessWithoutNullStreams): void {
-  if (!child.pid) {
-    child.kill();
-    return;
-  }
-
-  if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
-    return;
-  }
-
-  child.kill('SIGTERM');
-}
-
-function resolveCodexLogLevel(line: string, streamName: 'stdout' | 'stderr'): CodexLoginLogLevel {
-  if (/\b(error|failed|traceback|exception)\b/i.test(line)) {
-    return 'error';
-  }
-  if (/\b(success|succeeded|done|saved|ok)\b/i.test(line)) {
-    return 'success';
-  }
-  if (streamName === 'stderr' || /\b(warn|retry|timeout)\b/i.test(line)) {
-    return 'warning';
-  }
-  return 'info';
-}
-
-function updateCodexSummaryFromLog(summary: CodexLoginSummary, line: string): void {
-  const doneMatch = /Done\.\s*(\d+)\s*succeeded,\s*(\d+)\s*failed/i.exec(line);
-  if (doneMatch) {
-    summary.registered = Number(doneMatch[1]);
-    summary.failed = Number(doneMatch[2]);
-  }
-
-  const retryMatch = /Retry login done\.\s*success=(\d+),\s*fail=(\d+)/i.exec(line);
-  if (retryMatch) {
-    summary.loginSucceeded = Number(retryMatch[1]);
-    summary.failed = Number(retryMatch[2]);
-  }
-
-  if (/Saved:/i.test(line)) {
-    summary.savedFiles += 1;
-  }
-
-  if (/Codex login failed/i.test(line)) {
-    summary.failed += 1;
-  }
-
-  if (/Codex login .*success|login succeeded|token.*saved/i.test(line)) {
-    summary.loginSucceeded += 1;
-  }
-}
-
-function updateCodexProgressFromLog(progress: CodexLoginProgress, line: string): void {
-  const batchMatch = /\[(\d+)\/(\d+)\]/.exec(line);
-  if (batchMatch) {
-    progress.processed = Math.max(progress.processed, Number(batchMatch[1]));
-    progress.total = Math.max(progress.total, Number(batchMatch[2]));
-  }
-
-  if (/Sentinel/i.test(line)) {
-    progress.currentStage = 'Sentinel';
-  } else if (/Phone|SMS|OTP/i.test(line)) {
-    progress.currentStage = '短信验证';
-  } else if (/Email|mail/i.test(line)) {
-    progress.currentStage = '邮箱验证';
-  } else if (/Codex|oauth|token/i.test(line)) {
-    progress.currentStage = 'Codex 登录';
-  } else if (/register|account/i.test(line)) {
-    progress.currentStage = '账号注册';
-  }
-}
-
-function sanitizeCodexLogLine(
-  line: string,
-  config: Sub2ApiCodexLoginConfig,
-  payload: CodexLoginRunPayload
-): string {
-  let result = line;
-  const secrets = [
-    config.skymailAdminPassword,
-    config.gptmailApiKey,
-    config.heroSmsApiKey,
-    config.fiveSimApiKey,
-    config.proxyUrl,
-    payload.password
-  ].filter((item): item is string => Boolean(item && item.length >= 3));
-
-  for (const secret of secrets) {
-    result = result.split(secret).join('[REDACTED]');
-  }
-
-  result = result.replace(
-    /\b(password|admin_password|api_key|herosms_api_key|fivesim_api_key|access_token|refresh_token|id_token|sentinel_token|sentinel_so_token|cookie_str)\b\s*[:=]\s*([^\s,}]+)/gi,
-    '$1: [REDACTED]'
-  );
-  result = result.replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '[JWT_REDACTED]');
-  result = result.replace(/\b[A-Za-z0-9_-]{40,}\b/g, '[TOKEN_REDACTED]');
-  result = result.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, maskEmail);
-  result = result.replace(/\+?\d[\d\s().-]{7,}\d/g, maskPhone);
-  result = result.replace(/Saved:\s*.+/gi, 'Saved: [REDACTED_PATH]');
-  return result;
-}
-
-function maskEmail(value: string): string {
-  const [local, domain] = value.split('@');
-  if (!local || !domain) {
-    return '[REDACTED_EMAIL]';
-  }
-  const visible = local.length > 2 ? `${local[0]}***${local[local.length - 1]}` : '***';
-  return `${visible}@${domain}`;
-}
-
-function maskPhone(value: string): string {
-  const digits = value.replace(/\D/g, '');
-  if (digits.length < 8) {
-    return value;
-  }
-  const prefix = value.trim().startsWith('+') ? '+' : '';
-  return `${prefix}${digits.slice(0, 3)}****${digits.slice(-4)}`;
 }
 
 async function validateCloudMailConnection(config: CloudMailConfig): Promise<void> {
