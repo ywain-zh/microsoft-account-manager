@@ -36,16 +36,6 @@ const router = createRouter({
       },
       children: [
         {
-          path: 'services/779/cards',
-          name: '779-cards',
-          component: () => import('./views/Seven79CardsView.vue'),
-          meta: {
-            requiresAuth: true,
-            title: '779验卡',
-            description: '导入 779 卡密，批量校验并提取卡片信息。'
-          }
-        },
-        {
           path: 'services/cloud-mail/accounts',
           name: 'cloud-mail-accounts',
           component: () => import('./views/CloudMailAccountsView.vue'),
@@ -63,6 +53,16 @@ const router = createRouter({
             requiresAuth: true,
             title: 'Sub2API 检测',
             description: '使用管理员 API Key 批量检测 Sub2API 账号并查看实时日志。'
+          }
+        },
+        {
+          path: 'services/sub2api/codex-login',
+          name: 'sub2api-codex-login',
+          component: () => import('./views/Sub2ApiCodexLoginView.vue'),
+          meta: {
+            requiresAuth: true,
+            title: 'Codex Login',
+            description: '调用外部 Codex 注册/登录 CLI，并实时查看运行日志。'
           }
         },
         {

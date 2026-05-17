@@ -98,6 +98,7 @@ import { useRoute } from 'vue-router';
 import { NButton, NEmpty, NSpin } from 'naive-ui';
 import { api } from '../api';
 import type { AccountMailItem } from '../types';
+import { formatDateTimeBeijing } from '../utils/datetime';
 import { buildMailPreview, extractMailSnippet } from '../utils/mail-preview';
 
 const route = useRoute();
@@ -123,16 +124,7 @@ function resolveSnippet(item: AccountMailItem): string {
 }
 
 function formatDate(value: string): string {
-  if (!value) {
-    return '-';
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString();
+  return formatDateTimeBeijing(value);
 }
 
 async function loadInbox(forceSelection = false): Promise<void> {

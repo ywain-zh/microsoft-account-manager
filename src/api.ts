@@ -12,18 +12,13 @@ import type {
   CloudMailPublicShareInboxResponse,
   CloudMailShareResponse,
   CloudMailSyncResponse,
+  CodexLoginRunPayload,
   IngestConfig,
   ImportResult,
   MailGptValidityService,
   MailFetchMode,
   OpenAiModelsResponse,
-  PpSmsFetchCodeResponse,
-  PpSmsImportResult,
-  PpSmsItem,
-  Seven79CardItem,
-  Seven79CardSmsCodeResponse,
-  Seven79CheckResponse,
-  Seven79ImportResult,
+  Sub2ApiCodexLoginConfig,
   Sub2ApiConfig,
   Sub2ApiDeleteAccountsResponse,
   Sub2ApiGptValidityResponse,
@@ -294,6 +289,17 @@ export const api = {
     });
   },
 
+  getCodexLoginConfig(): Promise<{ item: Sub2ApiCodexLoginConfig }> {
+    return request<{ item: Sub2ApiCodexLoginConfig }>('/api/sub2api/codex-login/config');
+  },
+
+  updateCodexLoginConfig(payload: Sub2ApiCodexLoginConfig): Promise<{ item: Sub2ApiCodexLoginConfig }> {
+    return request<{ item: Sub2ApiCodexLoginConfig }>('/api/sub2api/codex-login/config', {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
   listSub2ApiModels(): Promise<OpenAiModelsResponse> {
     return request<OpenAiModelsResponse>('/api/sub2api/models');
   },
@@ -345,6 +351,14 @@ export const api = {
 
   startSub2ApiCheck(payload: { modelId: string }, signal?: AbortSignal): Promise<Response> {
     return requestStream('/api/sub2api/check', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      signal
+    });
+  },
+
+  startCodexLoginRun(payload: CodexLoginRunPayload, signal?: AbortSignal): Promise<Response> {
+    return requestStream('/api/sub2api/codex-login/run', {
       method: 'POST',
       body: JSON.stringify(payload),
       signal
@@ -478,79 +492,5 @@ export const api = {
   openListAccounts(keyword?: string): Promise<{ items: AccountItem[] }> {
     const query = buildQuery({ keyword });
     return request<{ items: AccountItem[] }>(`/api/open/accounts${query}`);
-  },
-
-  listSeven79Cards(keyword?: string): Promise<{ items: Seven79CardItem[] }> {
-    return request<{ items: Seven79CardItem[] }>(`/api/779/cards${buildQuery({ keyword })}`);
-  },
-
-  importSeven79Cards(text: string): Promise<Seven79ImportResult> {
-    return request<Seven79ImportResult>('/api/779/cards/import', {
-      method: 'POST',
-      body: JSON.stringify({ text })
-    });
-  },
-
-  checkSeven79Card(key: string): Promise<Seven79CheckResponse> {
-    return request<Seven79CheckResponse>('/api/779/cards/check', {
-      method: 'POST',
-      body: JSON.stringify({ key })
-    });
-  },
-
-  extractSeven79Card(id: number): Promise<{ item: Seven79CardItem }> {
-    return request<{ item: Seven79CardItem }>(`/api/779/cards/${id}/extract`, {
-      method: 'POST'
-    });
-  },
-
-  fetchSeven79CardCode(id: number): Promise<Seven79CardSmsCodeResponse> {
-    return request<Seven79CardSmsCodeResponse>(`/api/779/cards/${id}/fetch-code`, {
-      method: 'POST'
-    });
-  },
-
-  extractAllSeven79Cards(payload?: { ids?: number[] }): Promise<{
-    total: number;
-    success: number;
-    failure: number;
-    items: Seven79CardItem[];
-  }> {
-    return request<{ total: number; success: number; failure: number; items: Seven79CardItem[] }>(
-      '/api/779/cards/extract-all',
-      {
-        method: 'POST',
-        body: JSON.stringify(payload ?? {})
-      }
-    );
-  },
-
-  deleteSeven79Card(id: number): Promise<{ ok: true }> {
-    return request<{ ok: true }>(`/api/779/cards/${id}`, {
-      method: 'DELETE'
-    });
-  },
-
-  listPpSmsItems(): Promise<{ items: PpSmsItem[] }> {
-    return request<{ items: PpSmsItem[] }>('/api/779/pp-sms');
-  },
-
-  importPpSmsItems(text: string): Promise<PpSmsImportResult> {
-    return request<PpSmsImportResult>('/api/779/pp-sms/import', {
-      method: 'POST',
-      body: JSON.stringify({ text })
-    });
-  },
-
-  fetchPpSmsCode(id: number): Promise<PpSmsFetchCodeResponse> {
-    return request<PpSmsFetchCodeResponse>(`/api/779/pp-sms/${id}/fetch-code`, {
-      method: 'POST'
-    });
-  },
-
-  deletePpSmsItem(id: number): Promise<{ ok: true }> {
-    return request<{ ok: true }>(`/api/779/pp-sms/${id}`, {
-      method: 'DELETE'
-    });
   }
 };

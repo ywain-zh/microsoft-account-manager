@@ -1,3 +1,7 @@
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { access, writeFile } from 'node:fs/promises';
+import { isAbsolute, join, normalize } from 'node:path';
+import type { Readable } from 'node:stream';
 import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { cors } from 'hono/cors';
@@ -16,10 +20,6 @@ type Bindings = {
   MS_CLIENT_SECRET?: string;
   MS_TENANT_ID?: string;
   MS_REDIRECT_URI?: string;
-  SEVEN79_OPEN_API_KEY?: string;
-  SEVEN79_OPEN_API_USERNAME?: string;
-  SEVEN79_OPEN_API_PASSWORD?: string;
-  SEVEN79_OPEN_API_INVITER_CODE?: string;
 };
 
 type Variables = {
@@ -57,84 +57,6 @@ interface AccountRow {
   gptValidityAccountName: string | null;
   gptValidityPlanType: Sub2ApiPlanType | null;
   gptValidityCheckedAt: string | null;
-}
-
-type Seven79CardStatus = 'pending' | 'checked' | 'expired' | 'failed';
-
-interface Seven79CardRow {
-  id: number;
-  cardKey: string;
-  status: Seven79CardStatus;
-  category: string | null;
-  checkExpiryTime: string | null;
-  checkRemainingTimeMs: number | null;
-  cardNumber: string | null;
-  expiryDate: string | null;
-  cvv: string | null;
-  phone: string | null;
-  smsApi: string | null;
-  holderName: string | null;
-  address: string | null;
-  cardValidUntil: string | null;
-  expiresAt: string | null;
-  errorMessage: string | null;
-  lastCheckedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface Seven79CheckResult {
-  category: string | null;
-  expiryTime: string | null;
-  remainingTimeMs: number | null;
-}
-
-interface Seven79VerifyResult {
-  cardNumber: string | null;
-  expiryDate: string | null;
-  cvv: string | null;
-  phone: string | null;
-  smsApi: string | null;
-  holderName: string | null;
-  address: string | null;
-  expiresAt: string | null;
-}
-
-type PpSmsStatus = 'active' | 'expired' | 'failed';
-
-interface PpSmsItemRow {
-  id: number;
-  fullPhone: string;
-  countryCode: string | null;
-  phoneNumber: string;
-  smsApi: string;
-  status: PpSmsStatus;
-  expiresAt: string | null;
-  lastCode: string | null;
-  lastMessage: string | null;
-  lastCheckedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface PpSmsParseResult {
-  fullPhone: string;
-  countryCode: string | null;
-  phoneNumber: string;
-  smsApi: string;
-}
-
-interface PpSmsImportEntry {
-  line: number;
-  raw: string;
-}
-
-interface PpSmsFetchResult {
-  status: PpSmsStatus;
-  expiresAt: string | null;
-  code: string | null;
-  message: string;
-  raw: string;
 }
 
 interface AccountPayload {
@@ -243,6 +165,92 @@ interface CloudMailRemoteEnvelope<T> {
 interface Sub2ApiConfig {
   baseUrl: string;
   adminApiKey: string;
+}
+
+type CodexLoginCommand = 'all' | 'register' | 'login';
+type CodexLoginLogLevel = 'info' | 'success' | 'warning' | 'error';
+type CodexLoginLogStream = 'stdout' | 'stderr' | 'system';
+
+interface Sub2ApiCodexLoginConfig {
+  projectPath: string;
+  mailProvider: 'skymail' | 'gptmail';
+  mailDomain: string;
+  emailUsernameLength: number;
+  mailPollIntervalSeconds: number;
+  skymailBaseUrl: string;
+  skymailAdminEmail: string;
+  skymailAdminPassword: string;
+  gptmailBaseUrl: string;
+  gptmailApiKey: string;
+  gptmailDomain: string;
+  smsProvider: 'herosms' | 'fivesim';
+  heroSmsApiKey: string;
+  fiveSimApiKey: string;
+  fiveSimProduct: string;
+  fiveSimOperator: string;
+  smsService: string;
+  smsCountry: string;
+  smsMaxPrice: number;
+  smsMinPrice: number;
+  blockedCountries: string[];
+  proxyUrl: string;
+  passwordRandomLength: number;
+  passwordSuffix: string;
+  passwordCharset: string;
+  maxCaptchaAttempts: number;
+  sentinelHeadless: boolean;
+  sentinelWaitSeconds: number;
+  sentinelCfExtraSeconds: number;
+  sentinelChannel: string;
+  sentinelPersistentProfile: boolean;
+  sentinelHeadedFallback: boolean;
+  sentinelProfileDir: string;
+  requestTimeoutSeconds: number;
+  emailPollSeconds: number;
+  pollIntervalSeconds: number;
+  tokenCacheTtlSeconds: number;
+  authBaseUrl: string;
+  chatBaseUrl: string;
+  chatWebClientId: string;
+  codexClientId: string;
+  userAgentChrome: string;
+  acceptLanguage: string;
+}
+
+interface CodexLoginRunPayload {
+  command: CodexLoginCommand;
+  count?: number;
+  workers?: number;
+  phone?: string;
+  password?: string;
+  latest?: number;
+  force?: boolean;
+}
+
+interface CodexLoginLogItem {
+  id: string;
+  timestamp: string;
+  level: CodexLoginLogLevel;
+  stream: CodexLoginLogStream;
+  message: string;
+}
+
+interface CodexLoginSummary {
+  startedAt: string | null;
+  finishedAt: string | null;
+  command: CodexLoginCommand | null;
+  exitCode: number | null;
+  registered: number;
+  loginSucceeded: number;
+  failed: number;
+  savedFiles: number;
+}
+
+interface CodexLoginProgress {
+  running: boolean;
+  currentStage: string | null;
+  processed: number;
+  total: number;
 }
 
 type TranslationProvider = 'openai' | 'deeplx';
@@ -463,13 +471,64 @@ const DEFAULT_CLOUD_MAIL_CONFIG: CloudMailConfig = {
 };
 
 const SUB2API_CONFIG_KEY = 'sub2api_config';
+const SUB2API_CODEX_LOGIN_CONFIG_KEY = 'sub2api_codex_login_config';
 const DEFAULT_SUB2API_TEST_MODEL = 'gpt-5.4';
 const SUB2API_PAGE_SIZE = 100;
+const DEFAULT_CODEX_LOGIN_PROJECT_PATH = 'C:/Users/zhouyuan/Desktop/Project/OpenAi/reg_codex_login';
 
 const DEFAULT_SUB2API_CONFIG: Sub2ApiConfig = {
   baseUrl: '',
   adminApiKey: ''
 };
+
+const DEFAULT_CODEX_LOGIN_CONFIG: Sub2ApiCodexLoginConfig = {
+  projectPath: DEFAULT_CODEX_LOGIN_PROJECT_PATH,
+  mailProvider: 'skymail',
+  mailDomain: '',
+  emailUsernameLength: 10,
+  mailPollIntervalSeconds: 1.5,
+  skymailBaseUrl: 'https://mail.zanolab.com',
+  skymailAdminEmail: '',
+  skymailAdminPassword: '',
+  gptmailBaseUrl: 'https://mail.chatgpt.org.uk',
+  gptmailApiKey: '',
+  gptmailDomain: '',
+  smsProvider: 'herosms',
+  heroSmsApiKey: '',
+  fiveSimApiKey: '',
+  fiveSimProduct: 'openai',
+  fiveSimOperator: 'any',
+  smsService: 'dr',
+  smsCountry: '',
+  smsMaxPrice: 1,
+  smsMinPrice: 0.02,
+  blockedCountries: [],
+  proxyUrl: '',
+  passwordRandomLength: 12,
+  passwordSuffix: '!A1',
+  passwordCharset: 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+  maxCaptchaAttempts: 5,
+  sentinelHeadless: true,
+  sentinelWaitSeconds: 90,
+  sentinelCfExtraSeconds: 60,
+  sentinelChannel: '',
+  sentinelPersistentProfile: true,
+  sentinelHeadedFallback: true,
+  sentinelProfileDir: 'browser_profile',
+  requestTimeoutSeconds: 20,
+  emailPollSeconds: 120,
+  pollIntervalSeconds: 3,
+  tokenCacheTtlSeconds: 300,
+  authBaseUrl: 'https://auth.openai.com',
+  chatBaseUrl: 'https://chatgpt.com',
+  chatWebClientId: 'app_X8zY6vW2pQ9tR3dE7nK1jL5gH',
+  codexClientId: 'app_EMoamEEZ73f0CkXaXp7hrann',
+  userAgentChrome: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/148.0.0.0 Safari/537.36',
+  acceptLanguage: 'en-US,en;q=0.9'
+};
+
+let activeCodexLoginProcess: ChildProcessWithoutNullStreams | null = null;
+let activeCodexLoginRunning = false;
 
 const TRANSLATION_CONFIG_KEY = 'translation_config';
 const DEFAULT_TRANSLATION_MODEL = 'gpt-5.4-mini';
@@ -520,54 +579,6 @@ const ACCOUNT_SELECT_SQL = `
     ON gpt.service = 'microsoft'
    AND gpt.normalized_email = LOWER(TRIM(a.account))
 `;
-
-const SEVEN79_CARD_SELECT_SQL = `
-  SELECT
-    id,
-    card_key AS cardKey,
-    status,
-    category,
-    check_expiry_time AS checkExpiryTime,
-    check_remaining_time_ms AS checkRemainingTimeMs,
-    card_number AS cardNumber,
-    expiry_date AS expiryDate,
-    cvv,
-    phone,
-    sms_api AS smsApi,
-    holder_name AS holderName,
-    address,
-    card_valid_until AS cardValidUntil,
-    expires_at AS expiresAt,
-    error_message AS errorMessage,
-    last_checked_at AS lastCheckedAt,
-    created_at AS createdAt,
-    updated_at AS updatedAt
-  FROM seven79_cards
-`;
-
-const PP_SMS_ITEM_SELECT_SQL = `
-  SELECT
-    id,
-    full_phone AS fullPhone,
-    country_code AS countryCode,
-    phone_number AS phoneNumber,
-    sms_api AS smsApi,
-    status,
-    expires_at AS expiresAt,
-    last_code AS lastCode,
-    last_message AS lastMessage,
-    last_checked_at AS lastCheckedAt,
-    created_at AS createdAt,
-    updated_at AS updatedAt
-  FROM pp_sms_items
-`;
-
-const SEVEN79_OPEN_API_BASE_URL = 'https://cards.779.chat';
-const SEVEN79_OPEN_API_LOGIN_PATH = '/open-api/web-api/auth/login';
-const SEVEN79_OPEN_API_REDEEM_PATH = '/open-api/web-api/redeem/submit';
-const DEFAULT_SEVEN79_OPEN_API_KEY = 'ak_moa17dc8_n4nmv47e4ys';
-const DEFAULT_SEVEN79_OPEN_API_USERNAME = 'admin123';
-const DEFAULT_SEVEN79_OPEN_API_PASSWORD = 'admin123';
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -1028,219 +1039,6 @@ app.post('/api/accounts/import', async (c) => {
   return c.json({ inserted, skipped, errors });
 });
 
-app.get('/api/779/cards', async (c) => {
-  const keyword = asText(c.req.query('keyword')).trim();
-  const items = await querySeven79Cards(c.env.DB, keyword);
-  return c.json({ items });
-});
-
-app.post('/api/779/cards/import', async (c) => {
-  const body = await readJson<{ text?: string }>(c);
-  const text = asText(body.text).trim();
-  if (!text) {
-    throw new HTTPException(400, { message: '导入内容不能为空' });
-  }
-
-  const lines = text.split(/\r?\n/);
-  let inserted = 0;
-  let skipped = 0;
-  const errors: ParseErrorItem[] = [];
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const raw = lines[index].trim();
-    if (!raw) {
-      continue;
-    }
-
-    try {
-      const result = await c.env.DB
-        .prepare(
-          `INSERT OR IGNORE INTO seven79_cards (card_key, status, created_at, updated_at)
-           VALUES (?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
-        )
-        .bind(raw)
-        .run();
-
-      if ((result.meta.changes ?? 0) > 0) {
-        inserted += 1;
-      } else {
-        skipped += 1;
-      }
-    } catch (error) {
-      errors.push({
-        line: index + 1,
-        raw,
-        reason: error instanceof Error ? error.message : '数据库写入失败'
-      });
-    }
-  }
-
-  return c.json({ inserted, skipped, errors });
-});
-
-app.post('/api/779/cards/check', async (c) => {
-  const body = await readJson<{ key?: string }>(c);
-  const key = asText(body.key).trim();
-  if (!key) {
-    throw new HTTPException(400, { message: '卡密不能为空' });
-  }
-
-  const item = await ensureSeven79CardRefreshedByKey(c.env.DB, key);
-
-  return c.json({
-    item,
-    check: {
-      category: item.category,
-      expiryTime: item.checkExpiryTime,
-      remainingTimeMs: item.checkRemainingTimeMs
-    },
-    verify: {
-      cardNumber: item.cardNumber,
-      expiryDate: item.expiryDate,
-      cvv: item.cvv,
-      phone: item.phone,
-      smsApi: item.smsApi,
-      holderName: item.holderName,
-      address: item.address,
-      expiresAt: item.expiresAt
-    }
-  });
-});
-
-app.post('/api/779/cards/:id/extract', async (c) => {
-  const id = parseNumericId(c.req.param('id'));
-  const item = await refreshSeven79Card(c.env.DB, id);
-  return c.json({ item });
-});
-
-app.post('/api/779/cards/:id/fetch-code', async (c) => {
-  const id = parseNumericId(c.req.param('id'));
-  const { item, code, message } = await refreshSeven79CardSmsCode(c.env.DB, id);
-  return c.json({ item, code, message });
-});
-
-app.post('/api/779/cards/extract-all', async (c) => {
-  const body = await readJson<{ ids?: unknown }>(c);
-  const ids = Array.isArray(body.ids)
-    ? body.ids.map((value) => Number.parseInt(asText(value), 10)).filter((value) => Number.isInteger(value) && value > 0)
-    : [];
-
-  const targets = ids.length > 0 ? await querySeven79CardsByIds(c.env.DB, ids) : await querySeven79Cards(c.env.DB, '');
-  const items: Seven79CardRow[] = [];
-  let success = 0;
-  let failure = 0;
-
-  for (const target of targets) {
-    try {
-      const item = await refreshSeven79Card(c.env.DB, target.id);
-      items.push(item);
-      success += 1;
-    } catch {
-      const latest = await fetchSeven79CardById(c.env.DB, target.id);
-      if (latest) {
-        items.push(latest);
-      }
-      failure += 1;
-    }
-  }
-
-  return c.json({
-    total: targets.length,
-    success,
-    failure,
-    items
-  });
-});
-
-app.delete('/api/779/cards/:id', async (c) => {
-  const id = parseNumericId(c.req.param('id'));
-  const result = await c.env.DB.prepare('DELETE FROM seven79_cards WHERE id = ?').bind(id).run();
-
-  if ((result.meta.changes ?? 0) === 0) {
-    throw new HTTPException(404, { message: '卡密记录不存在' });
-  }
-
-  return c.json({ ok: true as const });
-});
-
-app.get('/api/779/pp-sms', async (c) => {
-  const items = await queryPpSmsItems(c.env.DB);
-  return c.json({ items });
-});
-
-app.post('/api/779/pp-sms/import', async (c) => {
-  const body = await readJson<{ text?: string }>(c);
-  const text = asText(body.text).trim();
-  if (!text) {
-    throw new HTTPException(400, { message: '导入内容不能为空' });
-  }
-
-  const entries = splitPpSmsImportText(text);
-  let inserted = 0;
-  let skipped = 0;
-  const errors: ParseErrorItem[] = [];
-  const touchedIds: number[] = [];
-
-  for (const entry of entries) {
-    try {
-      const parsed = parsePpSmsImportLine(entry.raw);
-      const existing = await c.env.DB
-        .prepare('SELECT id FROM pp_sms_items WHERE full_phone = ? OR sms_api = ? LIMIT 1')
-        .bind(parsed.fullPhone, parsed.smsApi)
-        .first<{ id: number }>();
-
-      if (existing) {
-        skipped += 1;
-        touchedIds.push(existing.id);
-        continue;
-      }
-
-      const result = await c.env.DB
-        .prepare(
-          `INSERT INTO pp_sms_items (full_phone, country_code, phone_number, sms_api, status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
-        )
-        .bind(parsed.fullPhone, parsed.countryCode, parsed.phoneNumber, parsed.smsApi)
-        .run();
-
-      const newId = Number(result.meta.last_row_id ?? 0);
-      if (newId > 0) {
-        inserted += 1;
-        touchedIds.push(newId);
-        await refreshPpSmsItem(c.env.DB, newId);
-      } else {
-        skipped += 1;
-      }
-    } catch (error) {
-      errors.push({
-        line: entry.line,
-        raw: entry.raw,
-        reason: getErrorMessage(error)
-      });
-    }
-  }
-
-  const items = touchedIds.length > 0 ? await queryPpSmsItemsByIds(c.env.DB, touchedIds) : [];
-  return c.json({ inserted, skipped, errors, items });
-});
-
-app.post('/api/779/pp-sms/:id/fetch-code', async (c) => {
-  const id = parseNumericId(c.req.param('id'));
-  const { item, code, message } = await refreshPpSmsItem(c.env.DB, id);
-  return c.json({ item, code, message });
-});
-
-app.delete('/api/779/pp-sms/:id', async (c) => {
-  const id = parseNumericId(c.req.param('id'));
-  const result = await c.env.DB.prepare('DELETE FROM pp_sms_items WHERE id = ?').bind(id).run();
-
-  if ((result.meta.changes ?? 0) === 0) {
-    throw new HTTPException(404, { message: 'PP 接码记录不存在' });
-  }
-
-  return c.json({ ok: true as const });
-});
-
 app.post('/api/accounts/refresh', async (c) => {
   const body = await readJson<{ accountIds?: unknown }>(c);
   const accountIds = parseAccountIds(body.accountIds);
@@ -1460,6 +1258,20 @@ app.put('/api/sub2api/config', async (c) => {
   validateSub2ApiConfig(item);
   await validateSub2ApiConnection(item);
   await setAppSetting(c.env.DB, SUB2API_CONFIG_KEY, JSON.stringify(item));
+  return c.json({ item });
+});
+
+app.get('/api/sub2api/codex-login/config', async (c) => {
+  const item = await getCodexLoginConfig(c.env.DB);
+  return c.json({ item });
+});
+
+app.put('/api/sub2api/codex-login/config', async (c) => {
+  const body = await readJson<Partial<Sub2ApiCodexLoginConfig>>(c);
+  const item = normalizeCodexLoginConfig(body);
+  validateCodexLoginConfig(item);
+  await validateCodexLoginProject(item.projectPath);
+  await setAppSetting(c.env.DB, SUB2API_CODEX_LOGIN_CONFIG_KEY, JSON.stringify(item));
   return c.json({ item });
 });
 
@@ -1683,6 +1495,139 @@ app.post('/api/sub2api/check', async (c) => {
     },
     cancel() {
       aborted = true;
+    }
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive'
+    }
+  });
+});
+
+app.post('/api/sub2api/codex-login/run', async (c) => {
+  if (activeCodexLoginRunning) {
+    throw new HTTPException(409, { message: '已有 Codex Login 任务正在运行，请等待完成或先停止当前任务' });
+  }
+
+  const config = await getCodexLoginConfig(c.env.DB);
+  ensureCodexLoginConfigured(config);
+  await validateCodexLoginProject(config.projectPath);
+  const body = await readJson<Partial<CodexLoginRunPayload>>(c);
+  const payload = normalizeCodexLoginRunPayload(body);
+  activeCodexLoginRunning = true;
+
+  let logCounter = 0;
+  let aborted = false;
+  let child: ChildProcessWithoutNullStreams | null = null;
+  const summary = createDefaultCodexLoginSummary(payload.command);
+  const progress = createDefaultCodexLoginProgress(payload.command, payload);
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const emit = (eventName: 'log' | 'progress' | 'summary' | 'done' | 'error', eventPayload: unknown): void => {
+        if (aborted) {
+          return;
+        }
+
+        controller.enqueue(textEncoder.encode(`event: ${eventName}\ndata: ${JSON.stringify(eventPayload)}\n\n`));
+      };
+
+      const emitLog = (level: CodexLoginLogLevel, message: string, streamName: CodexLoginLogStream = 'system'): void => {
+        logCounter += 1;
+        const item: CodexLoginLogItem = {
+          id: `${Date.now()}-${logCounter}`,
+          timestamp: new Date().toISOString(),
+          level,
+          stream: streamName,
+          message: sanitizeCodexLogLine(message, config, payload)
+        };
+        updateCodexSummaryFromLog(summary, item.message);
+        updateCodexProgressFromLog(progress, item.message);
+        emit('log', item);
+        emit('summary', { ...summary });
+        emit('progress', { ...progress });
+      };
+
+      const closeStream = (): void => {
+        if (aborted) {
+          return;
+        }
+        aborted = true;
+        controller.close();
+      };
+
+      const run = async (): Promise<void> => {
+        try {
+          summary.startedAt = new Date().toISOString();
+          emit('summary', { ...summary });
+          emit('progress', { ...progress });
+          emitLog('info', '准备写入 Codex Login 配置');
+          await writeCodexCliConfig(config);
+
+          const args = buildCodexLoginArgs(payload);
+          emitLog('info', `启动外部 CLI：uv run python main.py ${buildSafeCodexCommandPreview(args)}`);
+
+          if (aborted) {
+            activeCodexLoginRunning = false;
+            return;
+          }
+
+          child = spawn('uv', ['run', 'python', 'main.py', ...args], {
+            cwd: config.projectPath,
+            env: {
+              ...process.env,
+              PYTHONUNBUFFERED: '1'
+            },
+            windowsHide: true
+          });
+          activeCodexLoginProcess = child;
+
+          streamCodexProcessOutput(child.stdout, 'stdout', emitLog);
+          streamCodexProcessOutput(child.stderr, 'stderr', emitLog);
+
+          const exitCode = await waitForCodexProcess(child);
+          activeCodexLoginProcess = null;
+          activeCodexLoginRunning = false;
+          summary.exitCode = exitCode;
+          summary.finishedAt = new Date().toISOString();
+          progress.running = false;
+          progress.currentStage = exitCode === 0 ? '完成' : '失败';
+
+          if (exitCode === 0) {
+            emitLog('success', 'Codex Login 任务已完成');
+            emit('done', { summary: { ...summary }, exitCode });
+          } else if (!aborted) {
+            const message = `Codex Login 任务退出，退出码 ${exitCode ?? '未知'}`;
+            emitLog('error', message);
+            emit('error', { message });
+          }
+          closeStream();
+        } catch (error) {
+          activeCodexLoginProcess = null;
+          activeCodexLoginRunning = false;
+          summary.finishedAt = new Date().toISOString();
+          progress.running = false;
+          const message = getErrorMessage(error);
+          emitLog('error', message);
+          emit('error', { message });
+          closeStream();
+        }
+      };
+
+      void run();
+    },
+    cancel() {
+      aborted = true;
+      if (child) {
+        killCodexProcess(child);
+      }
+      if (activeCodexLoginProcess === child) {
+        activeCodexLoginProcess = null;
+      }
+      activeCodexLoginRunning = false;
     }
   });
 
@@ -2043,6 +1988,61 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 }
 
+function normalizePathText(value: unknown, fallback: string): string {
+  return normalize(asText(value).trim() || fallback).replace(/\\/g, '/');
+}
+
+function normalizeInteger(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number.parseInt(asText(value), 10);
+  if (!Number.isInteger(parsed)) {
+    return fallback;
+  }
+  return Math.min(Math.max(parsed, min), max);
+}
+
+function normalizeNumber(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number.parseFloat(asText(value));
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.min(Math.max(parsed, min), max);
+}
+
+function normalizeStringList(value: unknown): string[] {
+  const segments = Array.isArray(value) ? value.map((item) => asText(item)) : asText(value).split(/[\n,]/);
+  return Array.from(new Set(segments.map((item) => item.trim().toLowerCase()).filter(Boolean)));
+}
+
+function validateHttpUrl(value: string, label: string): void {
+  if (!value || value.length > 500) {
+    throw new HTTPException(400, { message: `${label} 不能为空且长度不能超过 500 个字符` });
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(value);
+  } catch {
+    throw new HTTPException(400, { message: `${label} 格式不合法` });
+  }
+
+  if (!/^https?:$/.test(parsedUrl.protocol)) {
+    throw new HTTPException(400, { message: `${label} 必须以 http:// 或 https:// 开头` });
+  }
+}
+
+function validateProxyUrl(value: string): void {
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(value);
+  } catch {
+    throw new HTTPException(400, { message: '代理 URL 格式不合法' });
+  }
+
+  if (!/^https?:$/.test(parsedUrl.protocol)) {
+    throw new HTTPException(400, { message: '代理 URL 必须以 http:// 或 https:// 开头' });
+  }
+}
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof HTTPException) {
     return error.message;
@@ -2216,6 +2216,21 @@ async function getSub2ApiConfig(db: D1Database): Promise<Sub2ApiConfig> {
   }
 }
 
+async function getCodexLoginConfig(db: D1Database): Promise<Sub2ApiCodexLoginConfig> {
+  const value = await getAppSetting(db, SUB2API_CODEX_LOGIN_CONFIG_KEY);
+
+  if (!value) {
+    return DEFAULT_CODEX_LOGIN_CONFIG;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as Partial<Sub2ApiCodexLoginConfig>;
+    return normalizeCodexLoginConfig(parsed);
+  } catch {
+    return DEFAULT_CODEX_LOGIN_CONFIG;
+  }
+}
+
 async function getTranslationConfig(db: D1Database): Promise<TranslationConfig> {
   const value = await getAppSetting(db, TRANSLATION_CONFIG_KEY);
 
@@ -2323,6 +2338,54 @@ function normalizeSub2ApiConfig(input: Partial<Sub2ApiConfig>): Sub2ApiConfig {
   return {
     baseUrl: normalizeSub2ApiBaseUrl(input.baseUrl),
     adminApiKey: asText(input.adminApiKey).trim()
+  };
+}
+
+function normalizeCodexLoginConfig(input: Partial<Sub2ApiCodexLoginConfig>): Sub2ApiCodexLoginConfig {
+  return {
+    projectPath: normalizePathText(input.projectPath, DEFAULT_CODEX_LOGIN_CONFIG.projectPath),
+    mailProvider: input.mailProvider === 'gptmail' ? 'gptmail' : 'skymail',
+    mailDomain: asText(input.mailDomain).trim().toLowerCase().replace(/^@+/, ''),
+    emailUsernameLength: normalizeNumber(input.emailUsernameLength, DEFAULT_CODEX_LOGIN_CONFIG.emailUsernameLength, 4, 64),
+    mailPollIntervalSeconds: normalizeNumber(input.mailPollIntervalSeconds, DEFAULT_CODEX_LOGIN_CONFIG.mailPollIntervalSeconds, 0.2, 60),
+    skymailBaseUrl: normalizeTranslationBaseUrl(input.skymailBaseUrl) || DEFAULT_CODEX_LOGIN_CONFIG.skymailBaseUrl,
+    skymailAdminEmail: asText(input.skymailAdminEmail).trim().toLowerCase(),
+    skymailAdminPassword: asText(input.skymailAdminPassword).trim(),
+    gptmailBaseUrl: normalizeTranslationBaseUrl(input.gptmailBaseUrl) || DEFAULT_CODEX_LOGIN_CONFIG.gptmailBaseUrl,
+    gptmailApiKey: asText(input.gptmailApiKey).trim(),
+    gptmailDomain: asText(input.gptmailDomain).trim().toLowerCase().replace(/^@+/, ''),
+    smsProvider: input.smsProvider === 'fivesim' ? 'fivesim' : 'herosms',
+    heroSmsApiKey: asText(input.heroSmsApiKey).trim(),
+    fiveSimApiKey: asText(input.fiveSimApiKey).trim(),
+    fiveSimProduct: asText(input.fiveSimProduct).trim() || DEFAULT_CODEX_LOGIN_CONFIG.fiveSimProduct,
+    fiveSimOperator: asText(input.fiveSimOperator).trim() || DEFAULT_CODEX_LOGIN_CONFIG.fiveSimOperator,
+    smsService: asText(input.smsService).trim() || DEFAULT_CODEX_LOGIN_CONFIG.smsService,
+    smsCountry: asText(input.smsCountry).trim().toLowerCase(),
+    smsMaxPrice: normalizeNumber(input.smsMaxPrice, DEFAULT_CODEX_LOGIN_CONFIG.smsMaxPrice, 0, 1000),
+    smsMinPrice: normalizeNumber(input.smsMinPrice, DEFAULT_CODEX_LOGIN_CONFIG.smsMinPrice, 0, 1000),
+    blockedCountries: normalizeStringList(input.blockedCountries),
+    proxyUrl: asText(input.proxyUrl).trim(),
+    passwordRandomLength: normalizeInteger(input.passwordRandomLength, DEFAULT_CODEX_LOGIN_CONFIG.passwordRandomLength, 8, 128),
+    passwordSuffix: asText(input.passwordSuffix),
+    passwordCharset: asText(input.passwordCharset) || DEFAULT_CODEX_LOGIN_CONFIG.passwordCharset,
+    maxCaptchaAttempts: normalizeInteger(input.maxCaptchaAttempts, DEFAULT_CODEX_LOGIN_CONFIG.maxCaptchaAttempts, 1, 50),
+    sentinelHeadless: input.sentinelHeadless !== false,
+    sentinelWaitSeconds: normalizeInteger(input.sentinelWaitSeconds, DEFAULT_CODEX_LOGIN_CONFIG.sentinelWaitSeconds, 0, 600),
+    sentinelCfExtraSeconds: normalizeInteger(input.sentinelCfExtraSeconds, DEFAULT_CODEX_LOGIN_CONFIG.sentinelCfExtraSeconds, 0, 600),
+    sentinelChannel: asText(input.sentinelChannel).trim(),
+    sentinelPersistentProfile: input.sentinelPersistentProfile !== false,
+    sentinelHeadedFallback: input.sentinelHeadedFallback !== false,
+    sentinelProfileDir: normalizePathText(input.sentinelProfileDir, DEFAULT_CODEX_LOGIN_CONFIG.sentinelProfileDir),
+    requestTimeoutSeconds: normalizeInteger(input.requestTimeoutSeconds, DEFAULT_CODEX_LOGIN_CONFIG.requestTimeoutSeconds, 1, 3600),
+    emailPollSeconds: normalizeInteger(input.emailPollSeconds, DEFAULT_CODEX_LOGIN_CONFIG.emailPollSeconds, 1, 3600),
+    pollIntervalSeconds: normalizeNumber(input.pollIntervalSeconds, DEFAULT_CODEX_LOGIN_CONFIG.pollIntervalSeconds, 0.2, 300),
+    tokenCacheTtlSeconds: normalizeInteger(input.tokenCacheTtlSeconds, DEFAULT_CODEX_LOGIN_CONFIG.tokenCacheTtlSeconds, 0, 86400),
+    authBaseUrl: normalizeTranslationBaseUrl(input.authBaseUrl) || DEFAULT_CODEX_LOGIN_CONFIG.authBaseUrl,
+    chatBaseUrl: normalizeTranslationBaseUrl(input.chatBaseUrl) || DEFAULT_CODEX_LOGIN_CONFIG.chatBaseUrl,
+    chatWebClientId: asText(input.chatWebClientId).trim() || DEFAULT_CODEX_LOGIN_CONFIG.chatWebClientId,
+    codexClientId: asText(input.codexClientId).trim() || DEFAULT_CODEX_LOGIN_CONFIG.codexClientId,
+    userAgentChrome: asText(input.userAgentChrome).trim() || DEFAULT_CODEX_LOGIN_CONFIG.userAgentChrome,
+    acceptLanguage: asText(input.acceptLanguage).trim() || DEFAULT_CODEX_LOGIN_CONFIG.acceptLanguage
   };
 }
 
@@ -2441,6 +2504,76 @@ function validateSub2ApiConfig(config: Sub2ApiConfig): void {
   }
 }
 
+function validateCodexLoginConfig(config: Sub2ApiCodexLoginConfig): void {
+  if (!config.projectPath) {
+    throw new HTTPException(400, { message: '请填写 Codex Login 项目路径' });
+  }
+
+  if (config.projectPath.length > 1000) {
+    throw new HTTPException(400, { message: '项目路径长度不能超过 1000 个字符' });
+  }
+
+  if (!isAbsolute(config.projectPath)) {
+    throw new HTTPException(400, { message: '项目路径必须是绝对路径' });
+  }
+
+  validateHttpUrl(config.authBaseUrl, 'Auth Base URL');
+  validateHttpUrl(config.chatBaseUrl, 'Chat Base URL');
+
+  if (!config.mailDomain) {
+    throw new HTTPException(400, { message: '请填写邮箱域名' });
+  }
+
+  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(config.mailDomain)) {
+    throw new HTTPException(400, { message: '邮箱域名格式不合法' });
+  }
+
+  if (config.mailProvider === 'skymail') {
+    validateHttpUrl(config.skymailBaseUrl, 'SkyMail Base URL');
+    if (!config.skymailAdminEmail || !config.skymailAdminPassword) {
+      throw new HTTPException(400, { message: '请完整填写 SkyMail 管理员邮箱和密码' });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(config.skymailAdminEmail)) {
+      throw new HTTPException(400, { message: 'SkyMail 管理员邮箱格式不合法' });
+    }
+  }
+
+  if (config.mailProvider === 'gptmail') {
+    validateHttpUrl(config.gptmailBaseUrl, 'GPTMail Base URL');
+    if (!config.gptmailApiKey) {
+      throw new HTTPException(400, { message: '请填写 GPTMail API Key' });
+    }
+  }
+
+  if (config.smsProvider === 'herosms' && !config.heroSmsApiKey) {
+    throw new HTTPException(400, { message: '请填写 HeroSMS API Key' });
+  }
+
+  if (config.smsProvider === 'fivesim' && !config.fiveSimApiKey) {
+    throw new HTTPException(400, { message: '请填写 5sim API Key' });
+  }
+
+  if (config.smsMinPrice > config.smsMaxPrice) {
+    throw new HTTPException(400, { message: '短信最低价格不能大于最高价格' });
+  }
+
+  if (!config.passwordCharset) {
+    throw new HTTPException(400, { message: '密码字符集不能为空' });
+  }
+
+  if (config.passwordCharset.length > 512 || config.passwordSuffix.length > 128) {
+    throw new HTTPException(400, { message: '密码配置过长' });
+  }
+
+  if (config.proxyUrl) {
+    validateProxyUrl(config.proxyUrl);
+  }
+
+  if (isAbsolute(config.sentinelProfileDir)) {
+    throw new HTTPException(400, { message: 'Sentinel Profile Dir 必须使用相对路径' });
+  }
+}
+
 function normalizeSub2ApiModelId(value: unknown): string {
   const modelId = asText(value).trim();
   if (!modelId) {
@@ -2514,6 +2647,17 @@ function ensureSub2ApiConfigured(config: Sub2ApiConfig): void {
   }
 }
 
+function ensureCodexLoginConfigured(config: Sub2ApiCodexLoginConfig): void {
+  try {
+    validateCodexLoginConfig(config);
+  } catch (error) {
+    if (error instanceof HTTPException) {
+      throw new HTTPException(400, { message: `请先完成 Codex Login 配置：${error.message}` });
+    }
+    throw error;
+  }
+}
+
 function normalizeTranslationProvider(value: unknown): TranslationProvider | null {
   const provider = asText(value).trim().toLowerCase();
   if (provider === 'openai' || provider === 'deeplx') {
@@ -2556,6 +2700,50 @@ function parsePageNumber(
   return Math.min(Math.max(parsed, min), max);
 }
 
+function normalizeCodexLoginRunPayload(input: Partial<CodexLoginRunPayload>): CodexLoginRunPayload {
+  const commandText = asText(input.command).trim();
+  const command: CodexLoginCommand = commandText === 'register' || commandText === 'login' ? commandText : 'all';
+
+  if (command === 'all') {
+    const count = normalizeInteger(input.count, 1, 1, 100);
+    return {
+      command,
+      count,
+      workers: normalizeInteger(input.workers, Math.min(3, count), 1, 20)
+    };
+  }
+
+  if (command === 'register') {
+    return { command };
+  }
+
+  const phone = asText(input.phone).trim();
+  const password = asText(input.password).trim();
+  const latest = input.latest === undefined || input.latest === null || asText(input.latest).trim() === ''
+    ? undefined
+    : normalizeInteger(input.latest, 0, 1, 1000);
+
+  if ((phone && !password) || (!phone && password)) {
+    throw new HTTPException(400, { message: '手机号和密码必须同时填写' });
+  }
+
+  if (!phone && !latest) {
+    throw new HTTPException(400, { message: '登录模式请填写手机号和密码，或填写 latest 重试数量' });
+  }
+
+  if (phone.length > 80 || password.length > 256) {
+    throw new HTTPException(400, { message: '手机号或密码长度过长' });
+  }
+
+  return {
+    command,
+    phone,
+    password,
+    latest,
+    force: input.force === true
+  };
+}
+
 function normalizeCloudMailCreatePayload(
   input: { localPart?: string; domain?: string },
   availableDomains: string[]
@@ -2579,6 +2767,305 @@ function normalizeCloudMailCreatePayload(
     localPart,
     domain
   };
+}
+
+async function validateCodexLoginProject(projectPath: string): Promise<void> {
+  try {
+    await access(join(projectPath, 'main.py'));
+    await access(join(projectPath, 'pyproject.toml'));
+  } catch {
+    throw new HTTPException(400, { message: 'Codex Login 项目路径下未找到 main.py 或 pyproject.toml' });
+  }
+}
+
+async function writeCodexCliConfig(config: Sub2ApiCodexLoginConfig): Promise<void> {
+  const payload = buildCodexCliConfig(config);
+  await writeFile(join(config.projectPath, 'config.json'), `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+}
+
+function buildCodexCliConfig(config: Sub2ApiCodexLoginConfig): Record<string, unknown> {
+  return {
+    mail: {
+      provider: config.mailProvider,
+      domain: config.mailDomain,
+      email_username_length: config.emailUsernameLength,
+      poll_interval: config.mailPollIntervalSeconds
+    },
+    skymail: {
+      base_url: config.skymailBaseUrl,
+      admin_email: config.skymailAdminEmail,
+      admin_password: config.skymailAdminPassword
+    },
+    gptmail: {
+      base_url: config.gptmailBaseUrl,
+      api_key: config.gptmailApiKey,
+      domain: config.gptmailDomain
+    },
+    chatgpt: {
+      auth_base_url: config.authBaseUrl,
+      chat_base_url: config.chatBaseUrl,
+      mail_domain: config.mailDomain,
+      email_username_length: config.emailUsernameLength,
+      chat_web_client_id: config.chatWebClientId,
+      codex_client_id: config.codexClientId
+    },
+    registration: {
+      password_random_length: config.passwordRandomLength,
+      password_suffix: config.passwordSuffix,
+      password_charset: config.passwordCharset,
+      max_captcha_attempts: config.maxCaptchaAttempts
+    },
+    phone_sms: {
+      provider: config.smsProvider,
+      herosms_api_key: config.heroSmsApiKey,
+      fivesim_api_key: config.fiveSimApiKey,
+      fivesim_product: config.fiveSimProduct,
+      fivesim_operator: config.fiveSimOperator,
+      service: config.smsService,
+      country: config.smsCountry,
+      max_price: config.smsMaxPrice,
+      min_price: config.smsMinPrice,
+      blocked_countries: config.blockedCountries,
+      webhook_port: 0
+    },
+    proxy: {
+      default: config.proxyUrl
+    },
+    sentinel: {
+      headless: config.sentinelHeadless,
+      wait_seconds: config.sentinelWaitSeconds,
+      cf_extra_seconds: config.sentinelCfExtraSeconds,
+      channel: config.sentinelChannel,
+      persistent_profile: config.sentinelPersistentProfile,
+      headed_fallback: config.sentinelHeadedFallback,
+      profile_dir: config.sentinelProfileDir
+    },
+    timeouts: {
+      request: config.requestTimeoutSeconds,
+      email_poll: config.emailPollSeconds,
+      poll_interval: config.pollIntervalSeconds,
+      token_cache_ttl: config.tokenCacheTtlSeconds
+    },
+    output: {
+      directory: '.',
+      filename_pattern: 'chatgpt_{email}_{timestamp}.json'
+    },
+    http: {
+      user_agent_chrome: config.userAgentChrome,
+      accept_language: config.acceptLanguage
+    }
+  };
+}
+
+function buildCodexLoginArgs(payload: CodexLoginRunPayload): string[] {
+  if (payload.command === 'all') {
+    return ['all', '--count', String(payload.count ?? 1), '--workers', String(payload.workers ?? 1)];
+  }
+
+  if (payload.command === 'register') {
+    return ['register'];
+  }
+
+  const args = ['login'];
+  if (payload.phone && payload.password) {
+    args.push('--phone', payload.phone, '--password', payload.password);
+  }
+  if (payload.latest) {
+    args.push('--latest', String(payload.latest));
+  }
+  if (payload.force) {
+    args.push('--force');
+  }
+  return args;
+}
+
+function buildSafeCodexCommandPreview(args: string[]): string {
+  return args
+    .map((value, index) => {
+      const previous = args[index - 1];
+      if (previous === '--password') {
+        return '[REDACTED]';
+      }
+      return value.length > 80 ? '[REDACTED]' : value;
+    })
+    .join(' ');
+}
+
+function createDefaultCodexLoginSummary(command: CodexLoginCommand): CodexLoginSummary {
+  return {
+    startedAt: null,
+    finishedAt: null,
+    command,
+    exitCode: null,
+    registered: 0,
+    loginSucceeded: 0,
+    failed: 0,
+    savedFiles: 0
+  };
+}
+
+function createDefaultCodexLoginProgress(command: CodexLoginCommand, payload: CodexLoginRunPayload): CodexLoginProgress {
+  return {
+    running: true,
+    currentStage: command === 'login' ? '登录' : command === 'register' ? '注册' : '注册 + 登录',
+    processed: 0,
+    total: command === 'all' ? payload.count ?? 1 : payload.latest ?? 1
+  };
+}
+
+function streamCodexProcessOutput(
+  stream: Readable,
+  streamName: 'stdout' | 'stderr',
+  emitLog: (level: CodexLoginLogLevel, message: string, streamName: CodexLoginLogStream) => void
+): void {
+  let buffer = '';
+  stream.setEncoding('utf8');
+  stream.on('data', (chunk: string) => {
+    buffer += chunk;
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      const text = line.trimEnd();
+      if (text) {
+        emitLog(resolveCodexLogLevel(text, streamName), text, streamName);
+      }
+    }
+  });
+  stream.on('end', () => {
+    const text = buffer.trimEnd();
+    if (text) {
+      emitLog(resolveCodexLogLevel(text, streamName), text, streamName);
+    }
+  });
+}
+
+function waitForCodexProcess(child: ChildProcessWithoutNullStreams): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (code) => resolve(code));
+  });
+}
+
+function killCodexProcess(child: ChildProcessWithoutNullStreams): void {
+  if (!child.pid) {
+    child.kill();
+    return;
+  }
+
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
+    return;
+  }
+
+  child.kill('SIGTERM');
+}
+
+function resolveCodexLogLevel(line: string, streamName: 'stdout' | 'stderr'): CodexLoginLogLevel {
+  if (/\b(error|failed|traceback|exception)\b/i.test(line)) {
+    return 'error';
+  }
+  if (/\b(success|succeeded|done|saved|ok)\b/i.test(line)) {
+    return 'success';
+  }
+  if (streamName === 'stderr' || /\b(warn|retry|timeout)\b/i.test(line)) {
+    return 'warning';
+  }
+  return 'info';
+}
+
+function updateCodexSummaryFromLog(summary: CodexLoginSummary, line: string): void {
+  const doneMatch = /Done\.\s*(\d+)\s*succeeded,\s*(\d+)\s*failed/i.exec(line);
+  if (doneMatch) {
+    summary.registered = Number(doneMatch[1]);
+    summary.failed = Number(doneMatch[2]);
+  }
+
+  const retryMatch = /Retry login done\.\s*success=(\d+),\s*fail=(\d+)/i.exec(line);
+  if (retryMatch) {
+    summary.loginSucceeded = Number(retryMatch[1]);
+    summary.failed = Number(retryMatch[2]);
+  }
+
+  if (/Saved:/i.test(line)) {
+    summary.savedFiles += 1;
+  }
+
+  if (/Codex login failed/i.test(line)) {
+    summary.failed += 1;
+  }
+
+  if (/Codex login .*success|login succeeded|token.*saved/i.test(line)) {
+    summary.loginSucceeded += 1;
+  }
+}
+
+function updateCodexProgressFromLog(progress: CodexLoginProgress, line: string): void {
+  const batchMatch = /\[(\d+)\/(\d+)\]/.exec(line);
+  if (batchMatch) {
+    progress.processed = Math.max(progress.processed, Number(batchMatch[1]));
+    progress.total = Math.max(progress.total, Number(batchMatch[2]));
+  }
+
+  if (/Sentinel/i.test(line)) {
+    progress.currentStage = 'Sentinel';
+  } else if (/Phone|SMS|OTP/i.test(line)) {
+    progress.currentStage = '短信验证';
+  } else if (/Email|mail/i.test(line)) {
+    progress.currentStage = '邮箱验证';
+  } else if (/Codex|oauth|token/i.test(line)) {
+    progress.currentStage = 'Codex 登录';
+  } else if (/register|account/i.test(line)) {
+    progress.currentStage = '账号注册';
+  }
+}
+
+function sanitizeCodexLogLine(
+  line: string,
+  config: Sub2ApiCodexLoginConfig,
+  payload: CodexLoginRunPayload
+): string {
+  let result = line;
+  const secrets = [
+    config.skymailAdminPassword,
+    config.gptmailApiKey,
+    config.heroSmsApiKey,
+    config.fiveSimApiKey,
+    config.proxyUrl,
+    payload.password
+  ].filter((item): item is string => Boolean(item && item.length >= 3));
+
+  for (const secret of secrets) {
+    result = result.split(secret).join('[REDACTED]');
+  }
+
+  result = result.replace(
+    /\b(password|admin_password|api_key|herosms_api_key|fivesim_api_key|access_token|refresh_token|id_token|sentinel_token|sentinel_so_token|cookie_str)\b\s*[:=]\s*([^\s,}]+)/gi,
+    '$1: [REDACTED]'
+  );
+  result = result.replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '[JWT_REDACTED]');
+  result = result.replace(/\b[A-Za-z0-9_-]{40,}\b/g, '[TOKEN_REDACTED]');
+  result = result.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, maskEmail);
+  result = result.replace(/\+?\d[\d\s().-]{7,}\d/g, maskPhone);
+  result = result.replace(/Saved:\s*.+/gi, 'Saved: [REDACTED_PATH]');
+  return result;
+}
+
+function maskEmail(value: string): string {
+  const [local, domain] = value.split('@');
+  if (!local || !domain) {
+    return '[REDACTED_EMAIL]';
+  }
+  const visible = local.length > 2 ? `${local[0]}***${local[local.length - 1]}` : '***';
+  return `${visible}@${domain}`;
+}
+
+function maskPhone(value: string): string {
+  const digits = value.replace(/\D/g, '');
+  if (digits.length < 8) {
+    return value;
+  }
+  const prefix = value.trim().startsWith('+') ? '+' : '';
+  return `${prefix}${digits.slice(0, 3)}****${digits.slice(-4)}`;
 }
 
 async function validateCloudMailConnection(config: CloudMailConfig): Promise<void> {
@@ -5307,21 +5794,6 @@ function serializeAccountRow(row: AccountRow): AccountRow & {
   };
 }
 
-function serializeSeven79CardRow(row: Seven79CardRow): Seven79CardRow {
-  if (row.status === 'failed' && isSeven79ExpiredMessage(row.errorMessage || '')) {
-    return {
-      ...row,
-      status: 'expired'
-    };
-  }
-
-  return row;
-}
-
-function serializePpSmsItemRow(row: PpSmsItemRow): PpSmsItemRow {
-  return row;
-}
-
 function calculateTokenCountdownDays(tokenBaseAt: string | null): number | null {
   if (!tokenBaseAt) {
     return null;
@@ -5334,1122 +5806,6 @@ function calculateTokenCountdownDays(tokenBaseAt: string | null): number | null 
 
   const elapsedDays = Math.max(0, Math.floor((Date.now() - baseAt.getTime()) / (24 * 60 * 60 * 1000)));
   return Math.max(0, TOKEN_LIFETIME_DAYS - elapsedDays);
-}
-
-async function querySeven79Cards(db: D1Database, keyword: string): Promise<Seven79CardRow[]> {
-  let statement: D1PreparedStatement;
-
-  if (keyword) {
-    const like = `%${keyword}%`;
-    statement = db
-      .prepare(`${SEVEN79_CARD_SELECT_SQL} WHERE card_key LIKE ? OR IFNULL(card_number, '') LIKE ? OR IFNULL(phone, '') LIKE ? ORDER BY id DESC`)
-      .bind(like, like, like);
-  } else {
-    statement = db.prepare(`${SEVEN79_CARD_SELECT_SQL} ORDER BY id DESC`);
-  }
-
-  const result = await statement.all<Seven79CardRow>();
-  return result.results.map(serializeSeven79CardRow);
-}
-
-async function querySeven79CardsByIds(db: D1Database, ids: number[]): Promise<Seven79CardRow[]> {
-  if (ids.length === 0) {
-    return [];
-  }
-
-  const placeholders = ids.map(() => '?').join(',');
-  const result = await db
-    .prepare(`${SEVEN79_CARD_SELECT_SQL} WHERE id IN (${placeholders}) ORDER BY id DESC`)
-    .bind(...ids)
-    .all<Seven79CardRow>();
-
-  return result.results.map(serializeSeven79CardRow);
-}
-
-async function fetchSeven79CardById(db: D1Database, id: number): Promise<Seven79CardRow | null> {
-  const row = await db.prepare(`${SEVEN79_CARD_SELECT_SQL} WHERE id = ?`).bind(id).first<Seven79CardRow>();
-  return row ? serializeSeven79CardRow(row) : null;
-}
-
-async function fetchSeven79CardByKey(db: D1Database, key: string): Promise<Seven79CardRow | null> {
-  const row = await db.prepare(`${SEVEN79_CARD_SELECT_SQL} WHERE card_key = ? LIMIT 1`).bind(key).first<Seven79CardRow>();
-  return row ? serializeSeven79CardRow(row) : null;
-}
-
-async function ensureSeven79CardRefreshedByKey(db: D1Database, key: string): Promise<Seven79CardRow> {
-  let existing = await fetchSeven79CardByKey(db, key);
-
-  if (!existing) {
-    await db
-      .prepare(
-        `INSERT OR IGNORE INTO seven79_cards (card_key, status, created_at, updated_at)
-         VALUES (?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
-      )
-      .bind(key)
-      .run();
-
-    existing = await fetchSeven79CardByKey(db, key);
-  }
-
-  if (!existing) {
-    throw new HTTPException(500, { message: '卡密记录读取失败' });
-  }
-
-  return refreshSeven79Card(db, existing.id);
-}
-
-async function queryPpSmsItems(db: D1Database): Promise<PpSmsItemRow[]> {
-  const result = await db.prepare(`${PP_SMS_ITEM_SELECT_SQL} ORDER BY id DESC`).all<PpSmsItemRow>();
-  return result.results.map(serializePpSmsItemRow);
-}
-
-async function queryPpSmsItemsByIds(db: D1Database, ids: number[]): Promise<PpSmsItemRow[]> {
-  if (ids.length === 0) {
-    return [];
-  }
-
-  const placeholders = ids.map(() => '?').join(',');
-  const result = await db
-    .prepare(`${PP_SMS_ITEM_SELECT_SQL} WHERE id IN (${placeholders}) ORDER BY id DESC`)
-    .bind(...ids)
-    .all<PpSmsItemRow>();
-  return result.results.map(serializePpSmsItemRow);
-}
-
-async function fetchPpSmsItemById(db: D1Database, id: number): Promise<PpSmsItemRow | null> {
-  const row = await db.prepare(`${PP_SMS_ITEM_SELECT_SQL} WHERE id = ?`).bind(id).first<PpSmsItemRow>();
-  return row ? serializePpSmsItemRow(row) : null;
-}
-
-async function refreshSeven79Card(db: D1Database, id: number): Promise<Seven79CardRow> {
-  const existing = await fetchSeven79CardById(db, id);
-  if (!existing) {
-    throw new HTTPException(404, { message: '卡密记录不存在' });
-  }
-
-  try {
-    const result = await fetchSeven79CardDetails(existing.cardKey);
-    const cardValidUntil = resolveSeven79CardValidUntil(result.check.expiryTime);
-    await db
-      .prepare(
-        `UPDATE seven79_cards
-         SET status = ?, category = ?, check_expiry_time = ?, check_remaining_time_ms = ?, card_number = ?, expiry_date = ?, cvv = ?, phone = ?, sms_api = ?, holder_name = ?, address = ?, card_valid_until = ?, expires_at = ?, raw_check_json = ?, raw_verify_json = ?, error_message = NULL, last_checked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`
-      )
-      .bind(
-        'checked',
-        result.check.category,
-        result.check.expiryTime,
-        result.check.remainingTimeMs,
-        result.verify.cardNumber,
-        result.verify.expiryDate,
-        result.verify.cvv,
-        result.verify.phone,
-        result.verify.smsApi,
-        result.verify.holderName,
-        result.verify.address,
-        cardValidUntil,
-        result.verify.expiresAt,
-        JSON.stringify(result.rawCheck),
-        JSON.stringify(result.rawVerify),
-        id
-      )
-      .run();
-  } catch (error) {
-    const message = getErrorMessage(error);
-    const status = error instanceof HTTPException ? error.status : 502;
-    const nextStatus: Seven79CardStatus = isSeven79ExpiredMessage(message) ? 'expired' : 'failed';
-    await db
-      .prepare(
-        `UPDATE seven79_cards
-         SET status = ?, error_message = ?, last_checked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`
-      )
-      .bind(nextStatus, message, id)
-      .run();
-
-    throw new HTTPException(status, { message });
-  }
-
-  const latest = await fetchSeven79CardById(db, id);
-  if (!latest) {
-    throw new HTTPException(500, { message: '提取完成，但读取结果失败' });
-  }
-
-  return latest;
-}
-
-async function refreshPpSmsItem(db: D1Database, id: number): Promise<{
-  item: PpSmsItemRow;
-  code: string | null;
-  message: string;
-}> {
-  const existing = await fetchPpSmsItemById(db, id);
-  if (!existing) {
-    throw new HTTPException(404, { message: 'PP 接码记录不存在' });
-  }
-
-  try {
-    const result = await fetchPpSmsCode(existing.smsApi);
-    await db
-      .prepare(
-        `UPDATE pp_sms_items
-         SET status = ?, expires_at = ?, last_code = ?, last_message = ?, last_checked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`
-      )
-      .bind(result.status, result.expiresAt, result.code, result.message, id)
-      .run();
-
-    const latest = await fetchPpSmsItemById(db, id);
-    if (!latest) {
-      throw new HTTPException(500, { message: 'PP 接码刷新完成，但读取结果失败' });
-    }
-
-    return {
-      item: latest,
-      code: result.code,
-      message: result.message
-    };
-  } catch (error) {
-    const message = getErrorMessage(error);
-    await db
-      .prepare(
-        `UPDATE pp_sms_items
-         SET status = ?, last_message = ?, last_checked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`
-      )
-      .bind('failed', message, id)
-      .run();
-
-    throw new HTTPException(error instanceof HTTPException ? error.status : 502, { message });
-  }
-}
-
-async function refreshSeven79CardSmsCode(db: D1Database, id: number): Promise<{
-  item: Seven79CardRow;
-  code: string | null;
-  message: string;
-}> {
-  const existing = await fetchSeven79CardById(db, id);
-  if (!existing) {
-    throw new HTTPException(404, { message: '卡密记录不存在' });
-  }
-
-  if (!existing.smsApi) {
-    throw new HTTPException(400, { message: '当前卡密没有可用的接码接口' });
-  }
-
-  try {
-    const result = await fetchPpSmsCode(existing.smsApi);
-    await db
-      .prepare(
-        `UPDATE seven79_cards
-         SET expires_at = COALESCE(?, expires_at), last_checked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`
-      )
-      .bind(result.expiresAt, id)
-      .run();
-
-    const latest = await fetchSeven79CardById(db, id);
-    if (!latest) {
-      throw new HTTPException(500, { message: '验证码刷新完成，但读取卡密结果失败' });
-    }
-
-    return {
-      item: latest,
-      code: result.code,
-      message: result.message
-    };
-  } catch (error) {
-    throw new HTTPException(error instanceof HTTPException ? error.status : 502, {
-      message: getErrorMessage(error)
-    });
-  }
-}
-
-async function fetchSeven79CardDetails(key: string): Promise<{
-  check: Seven79CheckResult;
-  verify: Seven79VerifyResult;
-  rawCheck: unknown;
-  rawVerify: unknown;
-}> {
-  const auth = await loginSeven79OpenApi();
-  const rawRedeem = await callSeven79Redeem(key, auth);
-  const normalized = normalizeSeven79Redeem(rawRedeem);
-  return {
-    check: normalized.check,
-    verify: normalized.verify,
-    rawCheck: rawRedeem,
-    rawVerify: rawRedeem
-  };
-}
-
-async function loginSeven79OpenApi(): Promise<{ token: string; inviterCode: string | null }> {
-  const apiKey = getSeven79OpenApiKey();
-  const username = getSeven79OpenApiUsername();
-  const password = getSeven79OpenApiPassword();
-
-  let response: Response;
-  try {
-    response = await fetch(`${SEVEN79_OPEN_API_BASE_URL}${SEVEN79_OPEN_API_LOGIN_PATH}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-API-Key': apiKey
-      },
-      body: JSON.stringify({ username, password })
-    });
-  } catch (error) {
-    throw new HTTPException(502, {
-      message: `779 新接口登录失败: ${error instanceof Error ? error.message : 'unknown error'}`
-    });
-  }
-
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throwSeven79RemoteError(payload, response.status, '779 新接口登录失败');
-  }
-
-  const data = asRecord(asRecord(payload).data);
-  const token = toNullableText(data.token);
-  if (!token) {
-    throw new HTTPException(502, { message: '779 新接口登录失败: 未返回 token' });
-  }
-
-  return {
-    token,
-    inviterCode: getSeven79OpenApiInviterCode()
-  };
-}
-
-async function callSeven79Redeem(key: string, auth: { token: string; inviterCode: string | null }): Promise<unknown> {
-  const apiKey = getSeven79OpenApiKey();
-  const body: Record<string, unknown> = {
-    redeemCode: key,
-    deviceId: buildSeven79DeviceId(key)
-  };
-  if (auth.inviterCode) {
-    body.inviterCode = auth.inviterCode;
-  }
-
-  let response: Response;
-  try {
-    response = await fetch(`${SEVEN79_OPEN_API_BASE_URL}${SEVEN79_OPEN_API_REDEEM_PATH}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-API-Key': apiKey,
-        Authorization: `Bearer ${auth.token}`
-      },
-      body: JSON.stringify(body)
-    });
-  } catch (error) {
-    throw new HTTPException(502, {
-      message: `779 新接口兑换失败: ${error instanceof Error ? error.message : 'unknown error'}`
-    });
-  }
-
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throwSeven79RemoteError(payload, response.status, '779 新接口兑换失败');
-  }
-
-  return payload;
-}
-
-function normalizeSeven79Redeem(payload: unknown): {
-  check: Seven79CheckResult;
-  verify: Seven79VerifyResult;
-} {
-  const data = asRecord(asRecord(payload).data);
-  const delivery = parseSeven79DeliveryContent(toNullableText(data.deliveryContent));
-  const expiresAt = normalizeSeven79DateTime(toNullableText(data.expiresAt));
-
-  return {
-    check: {
-      category: toNullableText(data.categoryName),
-      expiryTime: expiresAt,
-      remainingTimeMs: resolveSeven79RemainingTimeMs(expiresAt)
-    },
-    verify: {
-      cardNumber: delivery.cardNumber,
-      expiryDate: delivery.expiryDate,
-      cvv: delivery.cvv,
-      phone: delivery.phone,
-      smsApi: delivery.smsApi,
-      holderName: delivery.holderName,
-      address: delivery.address,
-      expiresAt
-    }
-  };
-}
-
-function parseSeven79DeliveryContent(value: string | null): {
-  cardNumber: string | null;
-  expiryDate: string | null;
-  cvv: string | null;
-  phone: string | null;
-  smsApi: string | null;
-  holderName: string | null;
-  address: string | null;
-} {
-  const text = toNullableText(value);
-  if (!text) {
-    return {
-      cardNumber: null,
-      expiryDate: null,
-      cvv: null,
-      phone: null,
-      smsApi: null,
-      holderName: null,
-      address: null
-    };
-  }
-
-  const parts = text.split('----').map((part) => part.trim()).filter(Boolean);
-  return {
-    cardNumber: parts[0] || null,
-    expiryDate: normalizeSeven79ExpiryDate(parts[1] || null),
-    cvv: parts[2] || null,
-    phone: parts[3] || null,
-    smsApi: parts[4] || null,
-    holderName: parts[5] || null,
-    address: normalizeSeven79Address(parts.slice(6).join('----') || null)
-  };
-}
-
-function normalizeSeven79Address(value: string | null): string | null {
-  const text = toNullableText(value);
-  if (!text) {
-    return null;
-  }
-
-  const normalized = text.replace(/\s+/g, ' ').trim();
-  const parts = normalized.split(',').map((part) => part.trim()).filter(Boolean);
-  if (parts.length < 2) {
-    return normalized;
-  }
-
-  const country = normalizeSeven79Country(parts.at(-1) ?? null);
-  const locationPart = parts.at(-2) ?? '';
-  const street = parts.slice(0, Math.max(0, parts.length - 2)).join(', ').trim();
-  const location = parseSeven79CityStatePostal(locationPart) ?? parseSeven79CityPostal(locationPart);
-  if (!country || !location) {
-    return [street, locationPart, country].filter(Boolean).join(', ') || normalized;
-  }
-
-  const formattedLocation = [location.city, location.state, location.postalCode].filter(Boolean).join(' ');
-  return [street, formattedLocation, country].filter(Boolean).join(', ');
-}
-
-function normalizeSeven79Country(value: string | null): string | null {
-  const text = toNullableText(value);
-  if (!text) {
-    return null;
-  }
-
-  const upper = text.toUpperCase();
-  if (upper === 'USA' || upper === 'UNITED STATES' || upper === 'UNITED STATES OF AMERICA') {
-    return 'US';
-  }
-
-  return text;
-}
-
-function parseSeven79CityStatePostal(
-  value: string
-): { city: string | null; state: string | null; postalCode: string | null } | null {
-  const text = toNullableText(value);
-  if (!text) {
-    return null;
-  }
-
-  const match = text.match(/^(.*?)(?:\s+|,\s*)([A-Z]{2})(?:\s+|,\s*)(\d{5}(?:-\d{4})?)$/i);
-  if (!match) {
-    return null;
-  }
-
-  const [, city, state, postalCode] = match;
-  return {
-    city: city.replace(/,$/, '').trim() || null,
-    state: normalizeSeven79UsState(state),
-    postalCode
-  };
-}
-
-function parseSeven79CityPostal(
-  value: string
-): { city: string | null; state: string | null; postalCode: string | null } | null {
-  const text = toNullableText(value);
-  if (!text) {
-    return null;
-  }
-
-  const match = text.match(/^(.*?)(?:\s+|,\s*)(\d{5}(?:-\d{4})?)$/);
-  if (!match) {
-    return null;
-  }
-
-  const [, city, postalCode] = match;
-  const parsedCity = city.replace(/,$/, '').trim() || null;
-  if (!parsedCity) {
-    return null;
-  }
-
-  return {
-    city: parsedCity,
-    state: resolveSeven79UsStateByPostalCode(postalCode),
-    postalCode
-  };
-}
-
-const SEVEN79_US_STATE_ZIP_RANGES: Array<{ state: string; start: number; end: number }> = [
-  { state: 'NY', start: 500, end: 599 },
-  { state: 'PR', start: 600, end: 999 },
-  { state: 'MA', start: 1000, end: 2799 },
-  { state: 'RI', start: 2800, end: 2999 },
-  { state: 'NH', start: 3000, end: 3899 },
-  { state: 'ME', start: 3900, end: 4999 },
-  { state: 'VT', start: 5000, end: 5499 },
-  { state: 'MA', start: 5500, end: 5599 },
-  { state: 'VT', start: 5600, end: 5999 },
-  { state: 'CT', start: 6000, end: 6999 },
-  { state: 'NJ', start: 7000, end: 8999 },
-  { state: 'NY', start: 10000, end: 14999 },
-  { state: 'PA', start: 15000, end: 19699 },
-  { state: 'DE', start: 19700, end: 19999 },
-  { state: 'DC', start: 20000, end: 20099 },
-  { state: 'VA', start: 20100, end: 20199 },
-  { state: 'DC', start: 20200, end: 20599 },
-  { state: 'MD', start: 20600, end: 21999 },
-  { state: 'VA', start: 22000, end: 24699 },
-  { state: 'WV', start: 24700, end: 26899 },
-  { state: 'NC', start: 27000, end: 28999 },
-  { state: 'SC', start: 29000, end: 29999 },
-  { state: 'GA', start: 30000, end: 31999 },
-  { state: 'FL', start: 32000, end: 34999 },
-  { state: 'AL', start: 35000, end: 36999 },
-  { state: 'TN', start: 37000, end: 38599 },
-  { state: 'MS', start: 38600, end: 39799 },
-  { state: 'GA', start: 39800, end: 39999 },
-  { state: 'KY', start: 40000, end: 42799 },
-  { state: 'OH', start: 43000, end: 45999 },
-  { state: 'IN', start: 46000, end: 47999 },
-  { state: 'MI', start: 48000, end: 49999 },
-  { state: 'IA', start: 50000, end: 52999 },
-  { state: 'WI', start: 53000, end: 54999 },
-  { state: 'MN', start: 55000, end: 56799 },
-  { state: 'DC', start: 56900, end: 56999 },
-  { state: 'SD', start: 57000, end: 57999 },
-  { state: 'ND', start: 58000, end: 58999 },
-  { state: 'MT', start: 59000, end: 59999 },
-  { state: 'IL', start: 60000, end: 62999 },
-  { state: 'MO', start: 63000, end: 65999 },
-  { state: 'KS', start: 66000, end: 67999 },
-  { state: 'NE', start: 68000, end: 69999 },
-  { state: 'LA', start: 70000, end: 71599 },
-  { state: 'AR', start: 71600, end: 72999 },
-  { state: 'OK', start: 73000, end: 74999 },
-  { state: 'TX', start: 75000, end: 79999 },
-  { state: 'CO', start: 80000, end: 81999 },
-  { state: 'WY', start: 82000, end: 83199 },
-  { state: 'ID', start: 83200, end: 83999 },
-  { state: 'UT', start: 84000, end: 84999 },
-  { state: 'AZ', start: 85000, end: 86999 },
-  { state: 'NM', start: 87000, end: 88499 },
-  { state: 'TX', start: 88500, end: 88599 },
-  { state: 'NV', start: 88900, end: 89999 },
-  { state: 'CA', start: 90000, end: 96199 },
-  { state: 'HI', start: 96700, end: 96899 },
-  { state: 'OR', start: 97000, end: 97999 },
-  { state: 'WA', start: 98000, end: 99499 },
-  { state: 'AK', start: 99500, end: 99999 }
-];
-
-const SEVEN79_US_STATE_NAMES: Record<string, string> = {
-  AK: 'Alaska',
-  AL: 'Alabama',
-  AR: 'Arkansas',
-  AZ: 'Arizona',
-  CA: 'California',
-  CO: 'Colorado',
-  CT: 'Connecticut',
-  DC: 'District of Columbia',
-  DE: 'Delaware',
-  FL: 'Florida',
-  GA: 'Georgia',
-  HI: 'Hawaii',
-  IA: 'Iowa',
-  ID: 'Idaho',
-  IL: 'Illinois',
-  IN: 'Indiana',
-  KS: 'Kansas',
-  KY: 'Kentucky',
-  LA: 'Louisiana',
-  MA: 'Massachusetts',
-  MD: 'Maryland',
-  ME: 'Maine',
-  MI: 'Michigan',
-  MN: 'Minnesota',
-  MO: 'Missouri',
-  MS: 'Mississippi',
-  MT: 'Montana',
-  NC: 'North Carolina',
-  ND: 'North Dakota',
-  NE: 'Nebraska',
-  NH: 'New Hampshire',
-  NJ: 'New Jersey',
-  NM: 'New Mexico',
-  NV: 'Nevada',
-  NY: 'New York',
-  OH: 'Ohio',
-  OK: 'Oklahoma',
-  OR: 'Oregon',
-  PA: 'Pennsylvania',
-  PR: 'Puerto Rico',
-  RI: 'Rhode Island',
-  SC: 'South Carolina',
-  SD: 'South Dakota',
-  TN: 'Tennessee',
-  TX: 'Texas',
-  UT: 'Utah',
-  VA: 'Virginia',
-  VT: 'Vermont',
-  WA: 'Washington',
-  WI: 'Wisconsin',
-  WV: 'West Virginia',
-  WY: 'Wyoming'
-};
-
-function normalizeSeven79UsState(value: string | null): string | null {
-  const text = toNullableText(value);
-  if (!text) {
-    return null;
-  }
-
-  return SEVEN79_US_STATE_NAMES[text.toUpperCase()] ?? text;
-}
-
-function resolveSeven79UsStateByPostalCode(value: string | null): string | null {
-  const text = toNullableText(value);
-  if (!text) {
-    return null;
-  }
-
-  const zip = Number.parseInt(text.slice(0, 5), 10);
-  if (!Number.isInteger(zip)) {
-    return null;
-  }
-
-  const state = SEVEN79_US_STATE_ZIP_RANGES.find((range) => zip >= range.start && zip <= range.end)?.state ?? null;
-  return normalizeSeven79UsState(state);
-}
-
-function normalizeSeven79ExpiryDate(value: string | null): string | null {
-  const text = toNullableText(value);
-  if (!text) {
-    return null;
-  }
-
-  const match = text.match(/^(\d{4})\/(\d{1,2})$/);
-  if (!match) {
-    return text;
-  }
-
-  const [, year, month] = match;
-  return `${String(month).padStart(2, '0')}/${year.slice(-2)}`;
-}
-
-function resolveSeven79RemainingTimeMs(value: string | null): number | null {
-  const parsed = parseSeven79DateTime(value);
-  if (!parsed) {
-    return null;
-  }
-
-  return Math.max(0, parsed.getTime() - Date.now());
-}
-
-function buildSeven79DeviceId(key: string): string {
-  return `mam-${key.toLowerCase()}`;
-}
-
-function splitPhoneNumber(value: string): {
-  fullPhone: string;
-  countryCode: string | null;
-  phoneNumber: string;
-} {
-  const trimmed = value.trim();
-  const normalized = trimmed.replace(/[\s().-]+/g, '');
-  if (!normalized) {
-    throw new HTTPException(400, { message: '手机号不能为空' });
-  }
-
-  if (!/^\+?\d{6,20}$/.test(normalized)) {
-    throw new HTTPException(400, { message: '手机号格式不正确' });
-  }
-
-  if (normalized.startsWith('+1') && normalized.length > 2) {
-    return {
-      fullPhone: normalized,
-      countryCode: '+1',
-      phoneNumber: normalized.slice(2)
-    };
-  }
-
-  return {
-    fullPhone: normalized,
-    countryCode: normalized.startsWith('+') ? null : null,
-    phoneNumber: normalized.startsWith('+') ? normalized.slice(1) : normalized
-  };
-}
-
-async function fetchPpSmsCode(smsApi: string): Promise<PpSmsFetchResult> {
-  let response: Response;
-  try {
-    response = await fetch(smsApi);
-  } catch (error) {
-    throw new HTTPException(502, {
-      message: `PP 接码请求失败: ${error instanceof Error ? error.message : 'unknown error'}`
-    });
-  }
-
-  const raw = (await readSmsResponseText(response)).trim();
-  if (!response.ok) {
-    throw new HTTPException(502, { message: raw || `PP 接码请求失败 (${response.status})` });
-  }
-
-  return parsePpSmsResponse(raw);
-}
-
-function parsePpSmsResponse(raw: string): PpSmsFetchResult {
-  const normalized = normalizeSmsResponseText(raw);
-  const expiresAt = extractPpSmsExpiresAt(normalized);
-  const expired = normalized.includes('过期') || isExpiredAt(expiresAt);
-  const parts = normalized
-    .split('|')
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  const maybeCode = extractSmsCode(parts, normalized);
-  if (expired) {
-    return {
-      status: 'expired',
-      expiresAt,
-      code: maybeCode,
-      message: maybeCode || '已过期',
-      raw: normalized
-    };
-  }
-
-  if (maybeCode) {
-    return {
-      status: 'active',
-      expiresAt,
-      code: maybeCode,
-      message: maybeCode,
-      raw: normalized
-    };
-  }
-
-  return {
-    status: 'active',
-    expiresAt,
-    code: null,
-    message: '暂无验证码',
-    raw: normalized
-  };
-}
-
-function extractPpSmsExpiresAt(value: string): string | null {
-  const text = toNullableText(value);
-  if (!text) {
-    return null;
-  }
-
-  const labelledMatch = text.match(
-    /(?:到期时间|有效期|过期时间|expires?\s+at)\s*[:：]?\s*([0-9]{4}[/-][0-9]{1,2}[/-][0-9]{1,2}(?:[ T][0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?)?)/i
-  );
-  if (labelledMatch?.[1]) {
-    return normalizePpSmsDateTime(labelledMatch[1]);
-  }
-
-  const plainMatch = text.match(/\b([0-9]{4}[/-][0-9]{1,2}[/-][0-9]{1,2}(?:[ T][0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?)?)\b/);
-  if (plainMatch?.[1]) {
-    return normalizePpSmsDateTime(plainMatch[1]);
-  }
-
-  return null;
-}
-
-function resolveSeven79CardValidUntil(expiryTime: string | null): string | null {
-  const parsed = parseSeven79DateTime(expiryTime);
-  if (!parsed) {
-    return null;
-  }
-
-  return formatSqliteDateTime(new Date(parsed.getTime() + 5 * 60 * 60 * 1000));
-}
-
-function splitPpSmsImportText(text: string): PpSmsImportEntry[] {
-  const entries: PpSmsImportEntry[] = [];
-  const lines = text.split(/\r?\n/);
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const raw = lines[index].trim();
-    if (!raw) {
-      continue;
-    }
-
-    const urlMatches = Array.from(raw.matchAll(/https?:\/\/\S+/gi));
-    if (urlMatches.length <= 1) {
-      entries.push({ line: index + 1, raw });
-      continue;
-    }
-
-    let segmentStart = 0;
-    for (const match of urlMatches) {
-      const urlStart = match.index ?? 0;
-      const urlEnd = urlStart + match[0].length;
-      const entryRaw = raw.slice(segmentStart, urlEnd).trim();
-      if (entryRaw) {
-        entries.push({ line: index + 1, raw: entryRaw });
-      }
-      segmentStart = urlEnd;
-    }
-  }
-
-  return entries;
-}
-
-function parsePpSmsImportLine(raw: string): PpSmsParseResult {
-  const urlMatch = raw.match(/https?:\/\/\S+/i);
-  if (!urlMatch || typeof urlMatch.index !== 'number') {
-    throw new HTTPException(400, {
-      message: '格式不正确，应包含手机号和 http(s) 接码 API，中间分隔符可不同'
-    });
-  }
-
-  const smsApi = normalizePpSmsApi(urlMatch[0]);
-  const phoneSource = raw.slice(0, urlMatch.index).trim();
-  const phone = extractPpSmsPhone(phoneSource);
-  if (!phone || !smsApi) {
-    throw new HTTPException(400, { message: '手机号或接码 API 不能为空' });
-  }
-
-  if (!isValidHttpUrl(smsApi)) {
-    throw new HTTPException(400, { message: '接码 API 必须以 http:// 或 https:// 开头' });
-  }
-
-  const phoneParts = splitPhoneNumber(phone);
-  return {
-    fullPhone: phoneParts.fullPhone,
-    countryCode: phoneParts.countryCode,
-    phoneNumber: phoneParts.phoneNumber,
-    smsApi
-  };
-}
-
-function normalizePpSmsApi(value: string): string {
-  return value.trim().replace(/[，,;；。]+$/g, '');
-}
-
-function extractPpSmsPhone(value: string): string {
-  const parts = value
-    .split(/\|+|-{2,}|[,，;；\t]+/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-  const candidate = parts[parts.length - 1] || value.trim();
-  const matches = Array.from(candidate.matchAll(/\+?\d[\d\s().-]{5,}\d/g));
-  return matches[matches.length - 1]?.[0]?.trim() || '';
-}
-
-function isValidHttpUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === 'http:' || url.protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
-
-function getSeven79OpenApiKey(): string {
-  return DEFAULT_SEVEN79_OPEN_API_KEY;
-}
-
-function getSeven79OpenApiUsername(): string {
-  return DEFAULT_SEVEN79_OPEN_API_USERNAME;
-}
-
-function getSeven79OpenApiPassword(): string {
-  return DEFAULT_SEVEN79_OPEN_API_PASSWORD;
-}
-
-function getSeven79OpenApiInviterCode(): string | null {
-  return null;
-}
-
-function normalizeSeven79DateTime(value: string | null): string | null {
-  const text = toNullableText(value);
-  if (!text) {
-    return null;
-  }
-
-  const parsed = parseSeven79DateTime(text);
-  return parsed ? formatSqliteDateTime(parsed) : text;
-}
-
-function parseSeven79DateTime(value: string | null): Date | null {
-  const text = toNullableText(value);
-  if (!text) {
-    return null;
-  }
-
-  const timestamp = Date.parse(text);
-  if (!Number.isNaN(timestamp)) {
-    return new Date(timestamp);
-  }
-
-  const match = text.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
-  if (!match) {
-    return null;
-  }
-
-  const [, year, month, day, hour = '0', minute = '0', second = '0'] = match;
-  const parsed = new Date(
-    Number(year),
-    Number(month) - 1,
-    Number(day),
-    Number(hour),
-    Number(minute),
-    Number(second)
-  );
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
-function formatSqliteDateTime(value: Date): string {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Shanghai',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false
-  }).formatToParts(value);
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second}`;
-}
-
-function extractRemoteErrorMessage(payload: unknown, status: number, fallback: string): string {
-  const record = asRecord(payload);
-  const data = asRecord(record.data);
-  return (
-    toNullableText(record.message)
-    || toNullableText(record.error)
-    || toNullableText(data.message)
-    || `${fallback} (${status})`
-  );
-}
-
-function resolveSeven79BusinessError(payload: unknown): string | null {
-  const record = asRecord(payload);
-  const data = asRecord(record.data);
-  const status = toNullableText(record.status);
-  const rawMessage = toNullableText(record.message) || toNullableText(record.error) || toNullableText(data.message);
-  const valid = typeof record.valid === 'boolean' ? record.valid : null;
-  const code = toNullableNumber(record.code);
-
-  if (status === 'expired' || (rawMessage && /卡密已过期|card has expired|redeem card has expired/i.test(rawMessage))) {
-    return '卡密已过期';
-  }
-
-  if (valid === false) {
-    return rawMessage || '卡密校验失败';
-  }
-
-  if (code !== null && code !== 0) {
-    return rawMessage || '779 接口返回业务错误';
-  }
-
-  return null;
-}
-
-function throwSeven79RemoteError(payload: unknown, status: number, fallback: string): never {
-  const message = resolveSeven79BusinessError(payload) || extractRemoteErrorMessage(payload, status, fallback);
-  const isBusinessError = status >= 400 && status < 500;
-  throw new HTTPException(isBusinessError ? 400 : 502, { message });
-}
-
-function isSeven79ExpiredMessage(message: string): boolean {
-  return /卡密已过期|card has expired/i.test(message);
-}
-
-
-function normalizePpSmsDateTime(value: string | null): string | null {
-  const parsed = parseSeven79DateTime(value);
-  return parsed ? formatSqliteDateTime(parsed) : toNullableText(value);
-}
-
-
-function extractSmsCode(parts: string[], raw: string): string | null {
-  const candidates = [raw, ...parts]
-    .map((part) => stripSmsExpiryMetadata(part))
-    .filter(Boolean);
-
-  for (const candidate of candidates) {
-    const code = findSmsCodeInText(candidate);
-    if (code) {
-      return code;
-    }
-  }
-
-  return null;
-}
-
-function isExpiredAt(value: string | null): boolean {
-  if (!value) {
-    return false;
-  }
-
-  const parsed = Date.parse(value.replace(' ', 'T'));
-  if (Number.isNaN(parsed)) {
-    return false;
-  }
-
-  return parsed <= Date.now();
-}
-
-function stripSmsExpiryMetadata(value: string): string {
-  return value
-    .replace(/(?:到期时间|有效期|过期时间|expires?\s+at)\s*[:：]?\s*[0-9]{4}[/-][0-9]{1,2}[/-][0-9]{1,2}(?:[ T][0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?)?/gi, ' ')
-    .replace(/\b[0-9]{4}[/-][0-9]{1,2}[/-][0-9]{1,2}(?:[ T][0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?)?\b/g, ' ')
-    .trim();
-}
-
-function normalizeSmsCodeCandidateText(value: string): string {
-  return decodeBasicHtmlEntities(value)
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/https?:\/\/\S+/gi, ' ')
-    .replace(/[|]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function decodeBasicHtmlEntities(value: string): string {
-  return value
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'");
-}
-
-function scoreSmsCodeCandidate(code: string, context: string): number {
-  let score = 0;
-
-  if (/your\s+chatgpt\s+code\s+is/i.test(context)) {
-    score += 10;
-  }
-  if (/(temporary\s+verification\s+code|verification\s+code|one-time\s+passcode|passcode|security\s+code|验证码|校验码|动态码|动态验证码|短信码|短信验证码|\botp\b|\bcode\b)/i.test(context)) {
-    score += 6;
-  }
-  if (/(openai|chatgpt|paypal)/i.test(context)) {
-    score += 3;
-  }
-  if (/(到期时间|expires?\s+at|有效期|过期)/i.test(context)) {
-    score -= 4;
-  }
-  if (/^\d{6}$/.test(code)) {
-    score += 2;
-  } else if (/^\d{4}$/.test(code)) {
-    score += 1;
-  }
-
-  return score;
-}
-
-function findSmsCodeInText(value: string): string | null {
-  const sanitized = normalizeSmsCodeCandidateText(value);
-  const matches = [...sanitized.matchAll(/(?<!\d)(\d{4,8})(?!\d)/g)]
-    .map((match) => {
-      const code = match[1];
-      const index = match.index ?? -1;
-      const context = sanitized.slice(Math.max(0, index - 80), Math.min(sanitized.length, index + code.length + 80));
-      return {
-        code,
-        index,
-        score: /^20\d{2}$/.test(code) ? Number.NEGATIVE_INFINITY : scoreSmsCodeCandidate(code, context)
-      };
-    })
-    .filter((match) => Number.isFinite(match.score));
-
-  if (matches.length === 0) {
-    return null;
-  }
-
-  const preferred = matches
-    .filter((match) => match.score > 0)
-    .sort((left, right) => left.score - right.score || left.index - right.index)
-    .at(-1);
-  if (preferred) {
-    return preferred.code;
-  }
-
-  return matches.at(-1)?.code ?? null;
-}
-
-async function readSmsResponseText(response: Response): Promise<string> {
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.length === 0) {
-    return '';
-  }
-
-  const utf8Text = decodeSmsResponse(bytes, 'utf-8');
-  const gbText = decodeSmsResponse(bytes, 'gb18030');
-  return pickPreferredSmsResponseText(utf8Text, gbText);
-}
-
-function decodeSmsResponse(bytes: Uint8Array, encoding: string): string {
-  try {
-    return new TextDecoder(encoding).decode(bytes);
-  } catch {
-    return '';
-  }
-}
-
-function pickPreferredSmsResponseText(primary: string, fallback: string): string {
-  if (!fallback || fallback === primary) {
-    return primary;
-  }
-  if (!primary) {
-    return fallback;
-  }
-
-  return scoreSmsResponseText(fallback) > scoreSmsResponseText(primary) ? fallback : primary;
-}
-
-function scoreSmsResponseText(value: string): number {
-  const text = normalizeSmsResponseText(value);
-  if (!text) {
-    return Number.NEGATIVE_INFINITY;
-  }
-
-  let score = 0;
-  if (/(yes\||no\||paypal|验证码|到期时间|有效期|验证|手机)/i.test(text)) {
-    score += 6;
-  }
-  score += (text.match(/[\u4e00-\u9fff]/g) ?? []).length;
-  score -= (text.match(/�/g) ?? []).length * 4;
-  score -= (text.match(/[ÃÂâæåçð¤¥©]/g) ?? []).length * 2;
-  return score;
-}
-
-function normalizeSmsResponseText(value: string): string {
-  return value.replace(/\u0000/g, '').replace(/\r\n/g, '\n').trim();
 }
 
 async function queryAccounts(db: D1Database, keyword: string): Promise<AccountRow[]> {

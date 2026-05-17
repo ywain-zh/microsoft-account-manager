@@ -23,6 +23,11 @@ export const consoleNavigation: ConsoleNavItem[] = [
     path: '/services/sub2api/checker'
   },
   {
+    key: 'sub2api-codex-login',
+    label: 'Codex Login',
+    path: '/services/sub2api/codex-login'
+  },
+  {
     key: 'system-settings',
     label: '系统设置',
     path: '/services/system/settings'

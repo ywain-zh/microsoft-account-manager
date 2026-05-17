@@ -24,7 +24,7 @@
                 stroke-width="1.7"
               />
             </svg>
-            <svg v-else-if="item.key === 'sub2api'" viewBox="0 0 24 24" fill="none">
+            <svg v-else-if="item.key === 'sub2api' || item.key === 'sub2api-codex-login'" viewBox="0 0 24 24" fill="none">
               <path
                 d="M12 4.5v3"
                 stroke="currentColor"
@@ -76,29 +76,6 @@
               <path
                 d="M15.5 19a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"
                 stroke="currentColor"
-                stroke-width="1.7"
-              />
-            </svg>
-            <svg v-else-if="item.key === '779-cards'" viewBox="0 0 24 24" fill="none">
-              <rect
-                x="3.75"
-                y="6.25"
-                width="16.5"
-                height="11.5"
-                rx="2.25"
-                stroke="currentColor"
-                stroke-width="1.7"
-              />
-              <path
-                d="M3.75 10.25h16.5"
-                stroke="currentColor"
-                stroke-linecap="round"
-                stroke-width="1.7"
-              />
-              <path
-                d="M7.25 14.25h3.5"
-                stroke="currentColor"
-                stroke-linecap="round"
                 stroke-width="1.7"
               />
             </svg>

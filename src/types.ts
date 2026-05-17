@@ -114,6 +114,92 @@ export interface Sub2ApiGptValidityResponse {
   checkedAt: string;
 }
 
+export type CodexLoginCommand = 'all' | 'register' | 'login';
+export type CodexLoginLogLevel = 'info' | 'success' | 'warning' | 'error';
+export type CodexLoginLogStream = 'stdout' | 'stderr' | 'system';
+
+export interface Sub2ApiCodexLoginConfig {
+  projectPath: string;
+  mailProvider: 'skymail' | 'gptmail';
+  mailDomain: string;
+  emailUsernameLength: number;
+  mailPollIntervalSeconds: number;
+  skymailBaseUrl: string;
+  skymailAdminEmail: string;
+  skymailAdminPassword: string;
+  gptmailBaseUrl: string;
+  gptmailApiKey: string;
+  gptmailDomain: string;
+  smsProvider: 'herosms' | 'fivesim';
+  heroSmsApiKey: string;
+  fiveSimApiKey: string;
+  fiveSimProduct: string;
+  fiveSimOperator: string;
+  smsService: string;
+  smsCountry: string;
+  smsMaxPrice: number;
+  smsMinPrice: number;
+  blockedCountries: string[];
+  proxyUrl: string;
+  passwordRandomLength: number;
+  passwordSuffix: string;
+  passwordCharset: string;
+  maxCaptchaAttempts: number;
+  sentinelHeadless: boolean;
+  sentinelWaitSeconds: number;
+  sentinelCfExtraSeconds: number;
+  sentinelChannel: string;
+  sentinelPersistentProfile: boolean;
+  sentinelHeadedFallback: boolean;
+  sentinelProfileDir: string;
+  requestTimeoutSeconds: number;
+  emailPollSeconds: number;
+  pollIntervalSeconds: number;
+  tokenCacheTtlSeconds: number;
+  authBaseUrl: string;
+  chatBaseUrl: string;
+  chatWebClientId: string;
+  codexClientId: string;
+  userAgentChrome: string;
+  acceptLanguage: string;
+}
+
+export interface CodexLoginRunPayload {
+  command: CodexLoginCommand;
+  count?: number;
+  workers?: number;
+  phone?: string;
+  password?: string;
+  latest?: number;
+  force?: boolean;
+}
+
+export interface CodexLoginLogItem {
+  id: string;
+  timestamp: string;
+  level: CodexLoginLogLevel;
+  stream: CodexLoginLogStream;
+  message: string;
+}
+
+export interface CodexLoginSummary {
+  startedAt: string | null;
+  finishedAt: string | null;
+  command: CodexLoginCommand | null;
+  exitCode: number | null;
+  registered: number;
+  loginSucceeded: number;
+  failed: number;
+  savedFiles: number;
+}
+
+export interface CodexLoginProgress {
+  running: boolean;
+  currentStage: string | null;
+  processed: number;
+  total: number;
+}
+
 export type MailGptValidityService = 'microsoft' | 'cloud-mail';
 
 export type TranslationProvider = 'openai' | 'deeplx';
@@ -252,89 +338,4 @@ export interface CloudMailMessagesResponse {
 
 export interface AuthUser {
   username: string;
-}
-
-export type Seven79CardStatus = 'pending' | 'checked' | 'expired' | 'failed';
-
-export interface Seven79CardItem {
-  id: number;
-  cardKey: string;
-  status: Seven79CardStatus;
-  category: string | null;
-  checkExpiryTime: string | null;
-  checkRemainingTimeMs: number | null;
-  cardNumber: string | null;
-  expiryDate: string | null;
-  cvv: string | null;
-  phone: string | null;
-  smsApi: string | null;
-  holderName: string | null;
-  address: string | null;
-  cardValidUntil: string | null;
-  expiresAt: string | null;
-  errorMessage: string | null;
-  lastCheckedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface Seven79ImportResult {
-  inserted: number;
-  skipped: number;
-  errors: Array<{ line: number; raw: string; reason: string }>;
-}
-
-export type PpSmsStatus = 'active' | 'expired' | 'failed';
-
-export interface PpSmsItem {
-  id: number;
-  fullPhone: string;
-  countryCode: string | null;
-  phoneNumber: string;
-  smsApi: string;
-  status: PpSmsStatus;
-  expiresAt: string | null;
-  lastCode: string | null;
-  lastMessage: string | null;
-  lastCheckedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface PpSmsImportResult {
-  inserted: number;
-  skipped: number;
-  errors: Array<{ line: number; raw: string; reason: string }>;
-  items: PpSmsItem[];
-}
-
-export interface PpSmsFetchCodeResponse {
-  item: PpSmsItem;
-  code: string | null;
-  message: string;
-}
-
-export interface Seven79CardSmsCodeResponse {
-  item: Seven79CardItem;
-  code: string | null;
-  message: string;
-}
-
-export interface Seven79CheckResponse {
-  item: Seven79CardItem;
-  check: {
-    category: string | null;
-    expiryTime: string | null;
-    remainingTimeMs: number | null;
-  };
-  verify: {
-    cardNumber: string | null;
-    expiryDate: string | null;
-    cvv: string | null;
-    phone: string | null;
-    smsApi: string | null;
-    holderName: string | null;
-    address: string | null;
-    expiresAt: string | null;
-  };
 }
