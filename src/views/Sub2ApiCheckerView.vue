@@ -188,6 +188,51 @@
     </n-modal>
 
     <n-modal
+      v-model:show="showUnauthorizedAccountsModal"
+      preset="card"
+      title="401 账号列表"
+      style="width: min(920px, 94vw); border-radius: 12px;"
+    >
+      <div class="abnormal-modal-body">
+        <div class="abnormal-modal-summary">
+          共 {{ unauthorizedCandidatesTotal }} 个 401 账号，默认每页 {{ abnormalAccountsPageSize }} 条。
+        </div>
+
+        <div v-if="pagedUnauthorizedCandidates.length === 0" class="abnormal-empty">
+          当前没有 401 账号。
+        </div>
+
+        <div v-else class="abnormal-table-wrap">
+          <table class="abnormal-table">
+            <thead>
+              <tr>
+                <th>账号</th>
+                <th>报错信息</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="item in pagedUnauthorizedCandidates" :key="item.accountId">
+                <td class="account-cell">{{ resolveIssueLabel(item) }}</td>
+                <td class="reason-cell">{{ item.reason }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <template #footer>
+        <div class="abnormal-modal-footer">
+          <n-pagination
+            v-if="unauthorizedCandidatesTotal > abnormalAccountsPageSize"
+            :page="unauthorizedAccountsPage"
+            :page-count="unauthorizedAccountsTotalPages"
+            @update:page="setUnauthorizedAccountsPage"
+          />
+          <n-button @click="closeUnauthorizedAccountsModal">关闭</n-button>
+        </div>
+      </template>
+    </n-modal>
+
+    <n-modal
       v-model:show="showAbnormalAccountsModal"
       preset="card"
       title="异常账号列表"
@@ -251,6 +296,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NButton, NCard, NForm, NFormItem, NInput, NModal, NPagination, NSelect } from 'naive-ui';
 import { useSub2ApiConsole } from '../state/sub2api-console';
 import type { Sub2ApiDetectedIssueItem, Sub2ApiLogLevel } from '../types';
+import { formatTimeBeijing } from '../utils/datetime';
 
 const sub2api = useSub2ApiConsole();
 const {
@@ -264,9 +310,13 @@ const {
   progress,
   logs,
   unauthorizedCandidates,
+  pagedUnauthorizedCandidates,
   pagedAbnormalCandidates,
+  unauthorizedCandidatesTotal,
   abnormalCandidatesTotal,
+  unauthorizedAccountsTotalPages,
   abnormalAccountsTotalPages,
+  unauthorizedAccountsPage,
   abnormalAccountsPage,
   abnormalAccountsPageSize,
   modelId,
@@ -274,11 +324,15 @@ const {
   hasConfiguredSub2Api,
   hasUnauthorizedCandidates,
   hasAbnormalCandidates,
+  showUnauthorizedAccountsModal,
   showAbnormalAccountsModal,
   loadInitialData,
   refreshModels,
   saveConfig,
   clearLogs,
+  openUnauthorizedAccountsModal,
+  closeUnauthorizedAccountsModal,
+  setUnauthorizedAccountsPage,
   openAbnormalAccountsModal,
   closeAbnormalAccountsModal,
   setAbnormalAccountsPage,
@@ -357,7 +411,10 @@ const summaryCards = computed(() => {
       key: 'unauthorizedAccounts',
       label: '401 账号数',
       value: summary.unauthorizedAccounts,
-      tone: 'red'
+      tone: 'red',
+      clickable: true,
+      enabled: hasUnauthorizedCandidates.value,
+      onClick: openUnauthorizedAccountsModal
     },
     {
       key: 'abnormalAccounts',
@@ -372,12 +429,7 @@ const summaryCards = computed(() => {
 });
 
 function formatLogTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return '--:--:--';
-  }
-
-  return date.toLocaleTimeString();
+  return formatTimeBeijing(value);
 }
 
 function resolveLevelLabel(level: Sub2ApiLogLevel): string {

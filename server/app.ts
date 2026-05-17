@@ -4213,7 +4213,7 @@ function applySub2ApiDetectionResult(
   if (result.outcome === 'success') {
     summary.availableAccounts += 1;
 
-    if (result.planType === 'free') {
+    if (result.planType === 'free' || result.planType === '') {
       summary.freeAvailableAccounts += 1;
     } else if (result.planType === 'plus') {
       summary.plusAvailableAccounts += 1;

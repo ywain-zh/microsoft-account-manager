@@ -53,7 +53,9 @@ const configSaving = ref(false);
 const runLoading = ref(false);
 const deleteLoading = ref(false);
 const modelLoading = ref(false);
+const showUnauthorizedAccountsModal = ref(false);
 const showAbnormalAccountsModal = ref(false);
+const unauthorizedAccountsPage = ref(1);
 const abnormalAccountsPage = ref(1);
 const abnormalDeletingAccountIds = ref<number[]>([]);
 const selectedModelId = ref(readStoredModelId());
@@ -79,12 +81,25 @@ const hasAbnormalCandidates = computed(() => {
   return abnormalCandidates.value.length > 0;
 });
 
+const unauthorizedCandidatesTotal = computed(() => {
+  return unauthorizedCandidates.value.length;
+});
+
 const abnormalCandidatesTotal = computed(() => {
   return abnormalCandidates.value.length;
 });
 
+const unauthorizedAccountsTotalPages = computed(() => {
+  return Math.max(1, Math.ceil(unauthorizedCandidatesTotal.value / ABNORMAL_ACCOUNTS_PAGE_SIZE));
+});
+
 const abnormalAccountsTotalPages = computed(() => {
   return Math.max(1, Math.ceil(abnormalCandidatesTotal.value / ABNORMAL_ACCOUNTS_PAGE_SIZE));
+});
+
+const pagedUnauthorizedCandidates = computed(() => {
+  const start = (unauthorizedAccountsPage.value - 1) * ABNORMAL_ACCOUNTS_PAGE_SIZE;
+  return unauthorizedCandidates.value.slice(start, start + ABNORMAL_ACCOUNTS_PAGE_SIZE);
 });
 
 const pagedAbnormalCandidates = computed(() => {
@@ -201,6 +216,7 @@ function clearLogs(): void {
 function resetDetectedIssues(): void {
   unauthorizedCandidates.value = [];
   abnormalCandidates.value = [];
+  closeUnauthorizedAccountsModal();
   closeAbnormalAccountsModal();
   abnormalDeletingAccountIds.value = [];
 }
@@ -290,6 +306,20 @@ function resolveIssueLabel(item: Pick<Sub2ApiDetectedIssueItem, 'accountId' | 'a
   return item.accountName?.trim() || `账号 ID ${item.accountId}`;
 }
 
+function openUnauthorizedAccountsModal(): void {
+  if (!hasUnauthorizedCandidates.value) {
+    return;
+  }
+
+  unauthorizedAccountsPage.value = 1;
+  showUnauthorizedAccountsModal.value = true;
+}
+
+function closeUnauthorizedAccountsModal(): void {
+  showUnauthorizedAccountsModal.value = false;
+  unauthorizedAccountsPage.value = 1;
+}
+
 function openAbnormalAccountsModal(): void {
   if (!hasAbnormalCandidates.value) {
     return;
@@ -304,8 +334,16 @@ function closeAbnormalAccountsModal(): void {
   abnormalAccountsPage.value = 1;
 }
 
+function setUnauthorizedAccountsPage(page: number): void {
+  unauthorizedAccountsPage.value = Math.min(Math.max(1, page), unauthorizedAccountsTotalPages.value);
+}
+
 function setAbnormalAccountsPage(page: number): void {
   abnormalAccountsPage.value = Math.min(Math.max(1, page), abnormalAccountsTotalPages.value);
+}
+
+function ensureUnauthorizedAccountsPageInRange(): void {
+  unauthorizedAccountsPage.value = Math.min(unauthorizedAccountsPage.value, unauthorizedAccountsTotalPages.value);
 }
 
 function ensureAbnormalAccountsPageInRange(): void {
@@ -397,6 +435,7 @@ async function deleteDetectedAccountsByIds(
     removeDetectedIssues(unauthorizedCandidates, deletedIdList);
     removeDetectedIssues(abnormalCandidates, deletedIdList);
     syncSummaryAfterDelete(deletedIds.size, options.source);
+    ensureUnauthorizedAccountsPageInRange();
     ensureAbnormalAccountsPageInRange();
   }
 
@@ -743,7 +782,9 @@ export function useSub2ApiConsole() {
     runLoading,
     deleteLoading,
     modelLoading,
+    showUnauthorizedAccountsModal,
     showAbnormalAccountsModal,
+    unauthorizedAccountsPage,
     abnormalAccountsPage,
     abnormalAccountsPageSize: ABNORMAL_ACCOUNTS_PAGE_SIZE,
     storedConfig,
@@ -753,8 +794,11 @@ export function useSub2ApiConsole() {
     logs,
     unauthorizedCandidates,
     abnormalCandidates,
+    pagedUnauthorizedCandidates,
     pagedAbnormalCandidates,
+    unauthorizedCandidatesTotal,
     abnormalCandidatesTotal,
+    unauthorizedAccountsTotalPages,
     abnormalAccountsTotalPages,
     modelId,
     modelOptions,
@@ -766,6 +810,9 @@ export function useSub2ApiConsole() {
     refreshModels,
     saveConfig,
     clearLogs,
+    openUnauthorizedAccountsModal,
+    closeUnauthorizedAccountsModal,
+    setUnauthorizedAccountsPage,
     openAbnormalAccountsModal,
     closeAbnormalAccountsModal,
     setAbnormalAccountsPage,
