@@ -10,6 +10,12 @@ services:
       - "${PORT:-8787}:8787"
     volumes:
       - ./data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt:/host/opt:ro
+      - /root:/host/root:ro
+      - /etc/nginx:/host/etc/nginx:ro
+      - /etc/cron.d:/host/etc/cron.d:ro
+      - /var/spool/cron:/host/var/spool/cron:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8787/api/health || exit 1"]
       interval: 30s

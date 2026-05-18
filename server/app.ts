@@ -1,8 +1,16 @@
+import { createReadStream } from 'node:fs';
+import { Readable } from 'node:stream';
 import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { cors } from 'hono/cors';
 import { HTTPException } from 'hono/http-exception';
 import type { Context } from 'hono';
+import {
+  cleanupSystemBackupJob,
+  getSystemBackupArchive,
+  getSystemBackupJob,
+  startSystemBackup
+} from './runtime/system-backup.js';
 
 type Bindings = {
   DB: D1Database;
@@ -1211,6 +1219,54 @@ app.post('/api/translation/translate', async (c) => {
   const config = await getTranslationConfig(c.env.DB);
   const result = html ? await translateHtmlToChinese(config, html, text) : await translateTextToChinese(config, text);
   return c.json(result);
+});
+
+app.post('/api/system-backup/create', async (c) => {
+  try {
+    const item = startSystemBackup(c.env.DB);
+    return c.json({ item });
+  } catch (error) {
+    throw new HTTPException(400, { message: getErrorMessage(error) });
+  }
+});
+
+app.get('/api/system-backup/jobs/:id', async (c) => {
+  const item = getSystemBackupJob(c.req.param('id'));
+  if (!item) {
+    throw new HTTPException(404, { message: '备份任务不存在或已清理' });
+  }
+  return c.json({ item });
+});
+
+app.get('/api/system-backup/jobs/:id/download', async (c) => {
+  const archive = getSystemBackupArchive(c.req.param('id'));
+  if (!archive) {
+    throw new HTTPException(404, { message: '备份文件不存在或任务尚未完成' });
+  }
+
+  const stream = createReadStream(archive.path);
+  return new Response(Readable.toWeb(stream) as ReadableStream, {
+    headers: {
+      'Content-Type': 'application/gzip',
+      'Content-Length': String(archive.sizeBytes),
+      'Content-Disposition': `attachment; filename="${archive.filename}"`
+    }
+  });
+});
+
+app.delete('/api/system-backup/jobs/:id', async (c) => {
+  try {
+    const deleted = await cleanupSystemBackupJob(c.req.param('id'));
+    if (!deleted) {
+      throw new HTTPException(404, { message: '备份任务不存在或已清理' });
+    }
+    return c.json({ ok: true as const });
+  } catch (error) {
+    if (error instanceof HTTPException) {
+      throw error;
+    }
+    throw new HTTPException(400, { message: getErrorMessage(error) });
+  }
 });
 
 app.post('/api/sub2api/check', async (c) => {

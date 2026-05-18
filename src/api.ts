@@ -20,6 +20,7 @@ import type {
   Sub2ApiConfig,
   Sub2ApiDeleteAccountsResponse,
   Sub2ApiGptValidityResponse,
+  SystemBackupJobResponse,
   TranslationConfig,
   TranslationProvider,
   TranslationResponse,
@@ -333,6 +334,26 @@ export const api = {
     return request<TranslationResponse>('/api/translation/translate', {
       method: 'POST',
       body: JSON.stringify(payload)
+    });
+  },
+
+  createSystemBackup(): Promise<SystemBackupJobResponse> {
+    return request<SystemBackupJobResponse>('/api/system-backup/create', {
+      method: 'POST'
+    });
+  },
+
+  getSystemBackupJob(id: string): Promise<SystemBackupJobResponse> {
+    return request<SystemBackupJobResponse>(`/api/system-backup/jobs/${id}`);
+  },
+
+  downloadSystemBackup(id: string): Promise<DownloadResponse> {
+    return requestBlob(`/api/system-backup/jobs/${id}/download`);
+  },
+
+  cleanupSystemBackup(id: string): Promise<{ ok: true }> {
+    return request<{ ok: true }>(`/api/system-backup/jobs/${id}`, {
+      method: 'DELETE'
     });
   },
 

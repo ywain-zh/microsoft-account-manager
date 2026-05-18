@@ -151,6 +151,26 @@ export interface OpenAiModelsResponse {
   items: string[];
 }
 
+export type SystemBackupStatus = 'running' | 'success' | 'error';
+
+export interface SystemBackupJob {
+  id: string;
+  status: SystemBackupStatus;
+  createdAt: string;
+  updatedAt: string;
+  progress: number;
+  message: string;
+  logs: string[];
+  filename: string | null;
+  sizeBytes: number | null;
+  sha256: string | null;
+  error: string | null;
+}
+
+export interface SystemBackupJobResponse {
+  item: SystemBackupJob;
+}
+
 export type Sub2ApiPlanType = 'free' | 'plus' | 'team' | '';
 export type Sub2ApiDetectionOutcome = 'success' | 'quota' | 'unauthorized' | 'timeout' | 'abnormal';
 export type Sub2ApiLogLevel = 'info' | 'success' | 'warning' | 'error';

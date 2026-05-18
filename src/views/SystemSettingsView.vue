@@ -6,7 +6,15 @@
       content-style="padding: 0; display: flex; flex-direction: column;"
     >
       <div class="settings-head">
-        <div class="settings-toolbar">
+        <div class="settings-tabs" role="tablist" aria-label="系统设置分类">
+          <n-button :type="activeTab === 'translation' ? 'primary' : 'default'" @click="activeTab = 'translation'">
+            翻译
+          </n-button>
+          <n-button :type="activeTab === 'backup' ? 'primary' : 'default'" @click="activeTab = 'backup'">
+            备份
+          </n-button>
+        </div>
+        <div v-if="activeTab === 'translation'" class="settings-toolbar">
           <span class="settings-toolbar-label">翻译服务首选项</span>
           <n-select
             v-model:value="form.priorityProvider"
@@ -17,7 +25,7 @@
         </div>
       </div>
 
-      <n-form label-placement="top" autocomplete="off" class="settings-form">
+      <n-form v-if="activeTab === 'translation'" label-placement="top" autocomplete="off" class="settings-form">
         <div class="form-autofill-guard" aria-hidden="true">
           <input type="text" tabindex="-1" autocomplete="username" />
           <input type="password" tabindex="-1" autocomplete="new-password" />
@@ -94,7 +102,7 @@
         </section>
       </n-form>
 
-      <div v-if="testResults.length" class="test-results">
+      <div v-if="activeTab === 'translation' && testResults.length" class="test-results">
         <div
           v-for="result in testResults"
           :key="`${result.provider}-${result.ok}`"
@@ -110,7 +118,57 @@
         </div>
       </div>
 
-      <div class="settings-footer">
+      <section v-if="activeTab === 'backup'" class="backup-section">
+        <div class="section-title">
+          <h3>服务器在线备份</h3>
+          <span>不停主项目</span>
+        </div>
+        <n-alert type="info" :bordered="false" class="backup-alert">
+          备份会在线导出当前项目 SQLite、Sub2API PostgreSQL 和 Redis 数据，不会停止望月工具箱。浏览器下载目录请在浏览器设置中设为 D:\aliyun-backups。
+        </n-alert>
+
+        <div class="backup-status-grid">
+          <div>
+            <span class="backup-meta-label">状态</span>
+            <n-tag :type="backupTagType" size="small">{{ backupStatusLabel }}</n-tag>
+          </div>
+          <div>
+            <span class="backup-meta-label">文件大小</span>
+            <strong>{{ backupJob?.sizeBytes ? formatBytes(backupJob.sizeBytes) : '-' }}</strong>
+          </div>
+          <div>
+            <span class="backup-meta-label">SHA256</span>
+            <code>{{ backupJob?.sha256 ? shortenHash(backupJob.sha256) : '-' }}</code>
+          </div>
+        </div>
+
+        <n-progress
+          type="line"
+          :percentage="backupJob?.progress ?? 0"
+          :processing="backupJob?.status === 'running'"
+          :status="backupJob?.status === 'error' ? 'error' : backupJob?.status === 'success' ? 'success' : 'default'"
+        />
+
+        <div class="backup-actions">
+          <n-button type="primary" :loading="backupStarting" :disabled="backupJob?.status === 'running'" @click="startBackup">
+            开始备份
+          </n-button>
+          <n-button :disabled="backupJob?.status !== 'success'" @click="downloadBackup">下载备份</n-button>
+          <n-button :disabled="!backupJob || backupJob.status === 'running'" @click="cleanupBackup">
+            清理服务器临时文件
+          </n-button>
+        </div>
+
+        <div class="backup-log">
+          <div class="backup-log-head">
+            <strong>备份日志</strong>
+            <span>{{ backupJob?.message ?? '尚未开始' }}</span>
+          </div>
+          <pre>{{ backupLogText }}</pre>
+        </div>
+      </section>
+
+      <div v-if="activeTab === 'translation'" class="settings-footer">
         <n-button :loading="loading" @click="loadConfig">重新载入</n-button>
         <n-button type="primary" :loading="saving" @click="saveConfig">保存配置</n-button>
       </div>
@@ -119,22 +177,27 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import {
+  NAlert,
   NButton,
   NCard,
   NForm,
   NFormItem,
   NInput,
+  NProgress,
   NSelect,
+  NTag,
   createDiscreteApi
 } from 'naive-ui';
 import { api } from '../api';
-import type { TranslationConfig, TranslationProvider, TranslationTestResult } from '../types';
+import { downloadBlob } from '../utils/download';
+import type { SystemBackupJob, TranslationConfig, TranslationProvider, TranslationTestResult } from '../types';
 
 const { message } = createDiscreteApi(['message']);
 
 const DEFAULT_MODEL = 'gpt-5.4-mini';
+const BACKUP_JOB_STORAGE_KEY = 'mail-console-system-backup-job-id';
 
 const form = reactive<TranslationConfig>({
   enabled: true,
@@ -152,6 +215,10 @@ const modelLoading = ref(false);
 const testingProvider = ref<TranslationProvider | ''>('');
 const modelItems = ref<string[]>([]);
 const testResults = ref<TranslationTestResult[]>([]);
+const activeTab = ref<'translation' | 'backup'>('translation');
+const backupStarting = ref(false);
+const backupJob = ref<SystemBackupJob | null>(null);
+let backupPollTimer: number | null = null;
 const priorityOptions = [
   { label: 'OpenAI 优先', value: 'openai' },
   { label: 'DeepLX 优先', value: 'deeplx' }
@@ -184,8 +251,46 @@ const modelOptions = computed(() => {
   }));
 });
 
+const backupStatusLabel = computed(() => {
+  if (!backupJob.value) {
+    return '未开始';
+  }
+  if (backupJob.value.status === 'running') {
+    return '备份中';
+  }
+  if (backupJob.value.status === 'success') {
+    return '已完成';
+  }
+  return '失败';
+});
+
+const backupTagType = computed(() => {
+  if (!backupJob.value) {
+    return 'default';
+  }
+  if (backupJob.value.status === 'success') {
+    return 'success';
+  }
+  if (backupJob.value.status === 'error') {
+    return 'error';
+  }
+  return 'info';
+});
+
+const backupLogText = computed(() => {
+  if (!backupJob.value || backupJob.value.logs.length === 0) {
+    return '暂无日志';
+  }
+  return backupJob.value.logs.join('\n');
+});
+
 onMounted(() => {
   void loadConfig();
+  restoreBackupJob();
+});
+
+onBeforeUnmount(() => {
+  stopBackupPolling();
 });
 
 async function loadConfig(): Promise<void> {
@@ -252,6 +357,94 @@ async function testProvider(provider: TranslationProvider): Promise<void> {
   }
 }
 
+async function startBackup(): Promise<void> {
+  backupStarting.value = true;
+  try {
+    const { item } = await api.createSystemBackup();
+    backupJob.value = item;
+    localStorage.setItem(BACKUP_JOB_STORAGE_KEY, item.id);
+    message.success('已开始备份');
+    startBackupPolling(item.id);
+  } catch (error) {
+    message.error(getErrorMessage(error));
+  } finally {
+    backupStarting.value = false;
+  }
+}
+
+async function refreshBackupJob(id: string): Promise<void> {
+  try {
+    const { item } = await api.getSystemBackupJob(id);
+    backupJob.value = item;
+    localStorage.setItem(BACKUP_JOB_STORAGE_KEY, item.id);
+    if (item.status !== 'running') {
+      stopBackupPolling();
+      if (item.status === 'success') {
+        message.success('备份已完成，可以下载');
+      } else {
+        message.error(item.error || '备份失败');
+      }
+    }
+  } catch (error) {
+    stopBackupPolling();
+    localStorage.removeItem(BACKUP_JOB_STORAGE_KEY);
+    message.error(getErrorMessage(error));
+  }
+}
+
+function startBackupPolling(id: string): void {
+  stopBackupPolling();
+  backupPollTimer = window.setInterval(() => {
+    void refreshBackupJob(id);
+  }, 1500);
+  void refreshBackupJob(id);
+}
+
+function stopBackupPolling(): void {
+  if (backupPollTimer !== null) {
+    window.clearInterval(backupPollTimer);
+    backupPollTimer = null;
+  }
+}
+
+async function downloadBackup(): Promise<void> {
+  if (!backupJob.value || backupJob.value.status !== 'success') {
+    return;
+  }
+  try {
+    const { blob, filename } = await api.downloadSystemBackup(backupJob.value.id);
+    downloadBlob(blob, filename);
+  } catch (error) {
+    message.error(getErrorMessage(error));
+  }
+}
+
+async function cleanupBackup(): Promise<void> {
+  if (!backupJob.value || backupJob.value.status === 'running') {
+    return;
+  }
+  try {
+    await api.cleanupSystemBackup(backupJob.value.id);
+    backupJob.value = null;
+    localStorage.removeItem(BACKUP_JOB_STORAGE_KEY);
+    message.success('服务器临时备份文件已清理');
+  } catch (error) {
+    message.error(getErrorMessage(error));
+  }
+}
+
+function restoreBackupJob(): void {
+  const jobId = localStorage.getItem(BACKUP_JOB_STORAGE_KEY);
+  if (!jobId) {
+    return;
+  }
+  void refreshBackupJob(jobId).then(() => {
+    if (backupJob.value?.status === 'running') {
+      startBackupPolling(jobId);
+    }
+  });
+}
+
 function assignForm(config: TranslationConfig): void {
   form.enabled = config.enabled;
   form.priorityProvider = config.priorityProvider;
@@ -276,6 +469,17 @@ function normalizeForm(): TranslationConfig {
 
 function providerLabel(provider: TranslationProvider): string {
   return provider === 'openai' ? 'OpenAI' : 'DeepLX';
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`;
+  }
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function shortenHash(value: string): string {
+  return `${value.slice(0, 12)}...${value.slice(-8)}`;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -304,6 +508,12 @@ function getErrorMessage(error: unknown): string {
   padding: 16px 20px;
   border-bottom: 1px solid #e5e7eb;
   background: #ffffff;
+}
+
+.settings-tabs {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
 }
 
 .settings-toolbar {
@@ -496,6 +706,87 @@ function getErrorMessage(error: unknown): string {
   line-height: 1.7;
 }
 
+.backup-section {
+  display: grid;
+  gap: 16px;
+  padding: 18px 20px 20px;
+}
+
+.backup-alert {
+  border-radius: 6px;
+}
+
+.backup-status-grid {
+  display: grid;
+  grid-template-columns: 0.8fr 1fr 1.5fr;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.backup-status-grid > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.backup-meta-label {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.backup-status-grid code {
+  overflow: hidden;
+  color: #334155;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.backup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.backup-log {
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #0f172a;
+}
+
+.backup-log-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.22);
+  color: #e2e8f0;
+  font-size: 12px;
+}
+
+.backup-log-head span {
+  color: #94a3b8;
+}
+
+.backup-log pre {
+  min-height: 220px;
+  max-height: 360px;
+  margin: 0;
+  overflow: auto;
+  padding: 14px;
+  color: #dbeafe;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
 @media (max-width: 980px) {
   .settings-head,
   .section-actions,
@@ -515,6 +806,10 @@ function getErrorMessage(error: unknown): string {
 
   .form-grid,
   .form-grid.two-cols {
+    grid-template-columns: 1fr;
+  }
+
+  .backup-status-grid {
     grid-template-columns: 1fr;
   }
 }

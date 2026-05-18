@@ -14,7 +14,7 @@ RUN npm ci --omit=dev --no-audit --no-fund
 FROM node:22.22.0-alpine AS runtime
 WORKDIR /app
 
-RUN apk add --no-cache ca-certificates tini wget
+RUN apk add --no-cache ca-certificates docker-cli tini wget
 
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
