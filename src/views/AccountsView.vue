@@ -17,45 +17,10 @@
             <n-button
               size="small"
               class="toolbar-button toolbar-button-muted"
-              :loading="syncLoading"
-              @click="refreshAccounts(false)"
-            >
-              刷新选中
-            </n-button>
-            <n-button
-              size="small"
-              class="toolbar-button toolbar-button-muted"
-              :loading="syncLoading"
-              @click="refreshAccounts(true)"
-            >
-              刷新全部
-            </n-button>
-            <n-button size="small" class="toolbar-button toolbar-button-muted" @click="selectAll">全选</n-button>
-            <n-button size="small" class="toolbar-button toolbar-button-muted" @click="selectInverse">反选</n-button>
-          </div>
-
-          <span class="toolbar-divider" aria-hidden="true"></span>
-
-          <div class="list-toolbar-block toolbar-button-group">
-            <n-tag v-if="checkedRowKeys.length > 0" size="small" class="toolbar-selection-tag" type="warning">
-              已选 {{ checkedRowKeys.length }} 条
-            </n-tag>
-            <n-button
-              size="small"
-              class="toolbar-button toolbar-button-danger"
-              :loading="batchDeleteLoading"
-              :disabled="checkedRowKeys.length === 0"
-              @click="batchDeleteAccounts"
-            >
-              批量删除
-            </n-button>
-            <n-button
-              size="small"
-              class="toolbar-button toolbar-button-muted"
               :loading="tableLoading"
               @click="loadAccounts"
             >
-              刷新列表
+              刷新
             </n-button>
             <n-button
               size="small"
@@ -78,6 +43,34 @@
               @click="openImportModal"
             >
               批量导入
+            </n-button>
+            <n-button
+              size="small"
+              class="toolbar-button toolbar-button-rf"
+              :loading="syncLoading"
+              @click="refreshAccounts(false)"
+            >
+              刷新RF
+            </n-button>
+            <n-button
+              size="small"
+              class="toolbar-button toolbar-button-rf-batch"
+              :loading="syncLoading"
+              @click="refreshAccounts(true)"
+            >
+              批量刷新RF
+            </n-button>
+            <n-tag v-if="checkedRowKeys.length > 0" size="small" class="toolbar-selection-tag" type="warning">
+              已选 {{ checkedRowKeys.length }} 条
+            </n-tag>
+            <n-button
+              size="small"
+              class="toolbar-button toolbar-button-danger"
+              :loading="batchDeleteLoading"
+              :disabled="checkedRowKeys.length === 0"
+              @click="batchDeleteAccounts"
+            >
+              批量删除
             </n-button>
           </div>
         </div>
@@ -533,8 +526,6 @@ const {
   deleteAccount,
   importAccountsText,
   refreshAccounts,
-  selectAll,
-  selectInverse,
   batchDeleteAccounts,
   openMailModal,
   copyAccountValue,
@@ -1168,19 +1159,19 @@ onUnmounted(() => {
 }
 
 :deep(.microsoft-toolbar .toolbar-button-danger) {
-  --n-color: transparent !important;
-  --n-color-hover: #fef0f0 !important;
-  --n-color-pressed: #fef0f0 !important;
-  --n-color-focus: #fef0f0 !important;
-  --n-text-color: #f56c6c !important;
-  --n-text-color-hover: #f56c6c !important;
-  --n-text-color-pressed: #f56c6c !important;
-  --n-text-color-focus: #f56c6c !important;
-  --n-border: 1px solid #f56c6c !important;
-  --n-border-hover: 1px solid #f56c6c !important;
-  --n-border-pressed: 1px solid #f56c6c !important;
-  --n-border-focus: 1px solid #f56c6c !important;
-  --n-ripple-color: rgba(245, 108, 108, 0.16) !important;
+  --n-color: #ef4444 !important;
+  --n-color-hover: #f87171 !important;
+  --n-color-pressed: #dc2626 !important;
+  --n-color-focus: #f87171 !important;
+  --n-text-color: #ffffff !important;
+  --n-text-color-hover: #ffffff !important;
+  --n-text-color-pressed: #ffffff !important;
+  --n-text-color-focus: #ffffff !important;
+  --n-border: 1px solid #ef4444 !important;
+  --n-border-hover: 1px solid #f87171 !important;
+  --n-border-pressed: 1px solid #dc2626 !important;
+  --n-border-focus: 1px solid #f87171 !important;
+  --n-ripple-color: rgba(255, 255, 255, 0.24) !important;
 }
 
 
@@ -1230,6 +1221,38 @@ onUnmounted(() => {
   --n-border-pressed: 1px solid #409eff !important;
   --n-border-focus: 1px solid #66b1ff !important;
   --n-ripple-color: rgba(255, 255, 255, 0.22) !important;
+}
+
+:deep(.microsoft-toolbar .toolbar-button-rf) {
+  --n-color: #ecfdf5 !important;
+  --n-color-hover: #d1fae5 !important;
+  --n-color-pressed: #a7f3d0 !important;
+  --n-color-focus: #d1fae5 !important;
+  --n-text-color: #047857 !important;
+  --n-text-color-hover: #065f46 !important;
+  --n-text-color-pressed: #065f46 !important;
+  --n-text-color-focus: #065f46 !important;
+  --n-border: 1px solid rgba(16, 185, 129, 0.36) !important;
+  --n-border-hover: 1px solid rgba(5, 150, 105, 0.54) !important;
+  --n-border-pressed: 1px solid rgba(5, 150, 105, 0.64) !important;
+  --n-border-focus: 1px solid rgba(5, 150, 105, 0.54) !important;
+  --n-ripple-color: rgba(16, 185, 129, 0.18) !important;
+}
+
+:deep(.microsoft-toolbar .toolbar-button-rf-batch) {
+  --n-color: #f59e0b !important;
+  --n-color-hover: #fbbf24 !important;
+  --n-color-pressed: #d97706 !important;
+  --n-color-focus: #fbbf24 !important;
+  --n-text-color: #ffffff !important;
+  --n-text-color-hover: #ffffff !important;
+  --n-text-color-pressed: #ffffff !important;
+  --n-text-color-focus: #ffffff !important;
+  --n-border: 1px solid #f59e0b !important;
+  --n-border-hover: 1px solid #fbbf24 !important;
+  --n-border-pressed: 1px solid #d97706 !important;
+  --n-border-focus: 1px solid #fbbf24 !important;
+  --n-ripple-color: rgba(255, 255, 255, 0.24) !important;
 }
 
 :deep(.toolbar-selection-tag) {
