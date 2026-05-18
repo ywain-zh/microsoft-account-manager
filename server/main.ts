@@ -1,6 +1,6 @@
 import { serve } from '@hono/node-server';
 
-import app from './app.js';
+import app, { startMicrosoftTokenRefreshScheduler } from './app.js';
 import { resolveRuntimeConfig } from './runtime/env.js';
 import { importLegacyDatabase } from './runtime/legacy-db.js';
 import { runMigrations } from './runtime/migrate.js';
@@ -48,11 +48,13 @@ try {
     hostname: config.host,
     port: config.port
   });
+  const stopTokenRefreshScheduler = startMicrosoftTokenRefreshScheduler(bindings);
 
   console.info(`account-manager 已启动: http://${config.host}:${config.port}`);
 
   const shutdown = (signal: string) => {
     console.info(`收到 ${signal}，正在关闭服务`);
+    stopTokenRefreshScheduler();
     server.close(() => {
       db.close();
       process.exit(0);

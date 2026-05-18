@@ -244,6 +244,13 @@ export interface BatchActionResult {
   details: BatchActionDetail[];
 }
 
+export type TokenRefreshStreamEvent =
+  | { type: 'start'; total: number }
+  | { type: 'account-start'; index: number; total: number; account: string }
+  | { type: 'account-done'; index: number; total: number; detail: BatchActionDetail }
+  | { type: 'done'; result: BatchActionResult }
+  | { type: 'error'; message: string };
+
 export interface AccountMailItem {
   id: string;
   subject: string;

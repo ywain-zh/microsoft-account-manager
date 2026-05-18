@@ -20,7 +20,7 @@
               :loading="syncLoading"
               @click="refreshAccounts(false)"
             >
-              检测选中
+              刷新选中
             </n-button>
             <n-button
               size="small"
@@ -28,7 +28,7 @@
               :loading="syncLoading"
               @click="refreshAccounts(true)"
             >
-              检测全部
+              刷新全部
             </n-button>
             <n-button size="small" class="toolbar-button toolbar-button-muted" @click="selectAll">全选</n-button>
             <n-button size="small" class="toolbar-button toolbar-button-muted" @click="selectInverse">反选</n-button>
@@ -112,6 +112,41 @@
         </div>
       </div>
     </n-card>
+
+    <n-modal
+      v-model:show="tokenRefreshProgressVisible"
+      preset="card"
+      :bordered="false"
+      class="console-modal token-refresh-progress-modal"
+      title="Refresh Token 刷新进度"
+    >
+      <div class="token-refresh-progress">
+        <div class="token-refresh-progress-head">
+          <span>已处理 {{ tokenRefreshProgressCurrent }} / {{ tokenRefreshProgressTotal }}</span>
+          <strong>成功 {{ tokenRefreshProgressSuccess }}，失败 {{ tokenRefreshProgressFailure }}</strong>
+        </div>
+        <n-progress
+          type="line"
+          :percentage="tokenRefreshProgressPercentage"
+          :processing="syncLoading"
+          :status="tokenRefreshProgressFailure > 0 ? 'warning' : tokenRefreshProgressPercentage >= 100 ? 'success' : 'default'"
+        />
+        <div class="token-refresh-log-list">
+          <div
+            v-for="(log, index) in tokenRefreshProgressLogs"
+            :key="`${log.account}-${index}`"
+            class="token-refresh-log-item"
+            :class="log.ok === true ? 'is-success' : log.ok === false ? 'is-error' : 'is-running'"
+          >
+            <strong>{{ log.account }}</strong>
+            <span>{{ log.message }}</span>
+          </div>
+          <div v-if="tokenRefreshProgressLogs.length === 0" class="token-refresh-log-empty">
+            等待刷新任务开始
+          </div>
+        </div>
+      </div>
+    </n-modal>
 
     <n-modal
       v-model:show="createVisible"
@@ -329,6 +364,7 @@ import {
   NInput,
   NModal,
   NPagination,
+  NProgress,
   NSpace,
   NTag,
   type DataTableColumns
@@ -463,6 +499,12 @@ const {
   syncLoading,
   batchDeleteLoading,
   gptJsonExportLoading,
+  tokenRefreshProgressVisible,
+  tokenRefreshProgressTotal,
+  tokenRefreshProgressCurrent,
+  tokenRefreshProgressSuccess,
+  tokenRefreshProgressFailure,
+  tokenRefreshProgressLogs,
   createVisible,
   importVisible,
   editVisible,
@@ -582,6 +624,12 @@ const pageOffset = computed(() => (tablePage.value - 1) * tablePageSize.value);
 const pagedAccounts = computed(() => {
   const start = pageOffset.value;
   return accounts.value.slice(start, start + tablePageSize.value);
+});
+const tokenRefreshProgressPercentage = computed(() => {
+  if (tokenRefreshProgressTotal.value <= 0) {
+    return 0;
+  }
+  return Math.min(100, Math.round((tokenRefreshProgressCurrent.value / tokenRefreshProgressTotal.value) * 100));
 });
 
 watch(searchKeyword, () => {
@@ -1414,6 +1462,68 @@ onUnmounted(() => {
   margin-top: 0;
   padding-top: 0;
   border-top: 0;
+}
+
+.token-refresh-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.token-refresh-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #334155;
+  font-size: 13px;
+}
+
+.token-refresh-log-list {
+  max-height: 320px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.token-refresh-log-item {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(0, 1.4fr);
+  gap: 12px;
+  align-items: center;
+  padding: 9px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+}
+
+.token-refresh-log-item strong,
+.token-refresh-log-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.token-refresh-log-item.is-success {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.token-refresh-log-item.is-error {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.token-refresh-log-empty {
+  padding: 20px 0;
+  color: #94a3b8;
+  text-align: center;
+  font-size: 13px;
 }
 
 @media (max-width: 768px) {

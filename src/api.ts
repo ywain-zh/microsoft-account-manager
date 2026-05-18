@@ -243,6 +243,13 @@ export const api = {
     });
   },
 
+  refreshAccountsStream(payload?: { accountIds?: number[] }): Promise<Response> {
+    return requestStream('/api/accounts/refresh-stream', {
+      method: 'POST',
+      body: JSON.stringify(payload ?? {})
+    });
+  },
+
   batchDeleteAccounts(payload: { accountIds: number[] }): Promise<{
     total: number;
     deleted: number;

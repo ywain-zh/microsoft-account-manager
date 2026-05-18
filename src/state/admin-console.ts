@@ -12,6 +12,7 @@ import type {
   IngestConfig,
   MailFetchMode,
   Sub2ApiGptValidityResponse,
+  TokenRefreshStreamEvent,
   TokenStatus
 } from '../types';
 
@@ -47,6 +48,12 @@ interface MicrosoftOauthResultPayload {
   eventId?: string;
 }
 
+interface TokenRefreshProgressLog {
+  account: string;
+  ok: boolean | null;
+  message: string;
+}
+
 const authChecked = ref(false);
 const initialDataLoaded = ref(false);
 const authLoading = ref(false);
@@ -77,6 +84,12 @@ const batchDeleteLoading = ref(false);
 const gptJsonExportLoading = ref(false);
 const gptValidityLoadingEmails = ref<string[]>([]);
 const gptValidityResults = ref<Record<string, Sub2ApiGptValidityResponse>>({});
+const tokenRefreshProgressVisible = ref(false);
+const tokenRefreshProgressTotal = ref(0);
+const tokenRefreshProgressCurrent = ref(0);
+const tokenRefreshProgressSuccess = ref(0);
+const tokenRefreshProgressFailure = ref(0);
+const tokenRefreshProgressLogs = ref<TokenRefreshProgressLog[]>([]);
 
 const createVisible = ref(false);
 const importVisible = ref(false);
@@ -312,6 +325,107 @@ function showBatchResult(prefix: string, result: BatchActionResult): void {
   }
 
   message.warning(`${prefix}完成：成功 ${result.success}，失败 ${result.failure}`);
+}
+
+function resetTokenRefreshProgress(total = 0): void {
+  tokenRefreshProgressVisible.value = true;
+  tokenRefreshProgressTotal.value = total;
+  tokenRefreshProgressCurrent.value = 0;
+  tokenRefreshProgressSuccess.value = 0;
+  tokenRefreshProgressFailure.value = 0;
+  tokenRefreshProgressLogs.value = [];
+}
+
+function applyTokenRefreshEvent(event: TokenRefreshStreamEvent): BatchActionResult | null {
+  if (event.type === 'start') {
+    resetTokenRefreshProgress(event.total);
+    return null;
+  }
+
+  if (event.type === 'account-start') {
+    tokenRefreshProgressLogs.value = [
+      { account: event.account, ok: null, message: '正在刷新 refresh_token...' },
+      ...tokenRefreshProgressLogs.value
+    ];
+    return null;
+  }
+
+  if (event.type === 'account-done') {
+    tokenRefreshProgressCurrent.value = event.index;
+    if (event.detail.ok) {
+      tokenRefreshProgressSuccess.value += 1;
+    } else {
+      tokenRefreshProgressFailure.value += 1;
+    }
+    tokenRefreshProgressLogs.value = [
+      {
+        account: event.detail.account,
+        ok: event.detail.ok,
+        message: event.detail.message
+      },
+      ...tokenRefreshProgressLogs.value
+    ];
+    return null;
+  }
+
+  if (event.type === 'error') {
+    tokenRefreshProgressLogs.value = [
+      { account: '刷新任务', ok: false, message: event.message },
+      ...tokenRefreshProgressLogs.value
+    ];
+    return null;
+  }
+
+  return event.result;
+}
+
+async function consumeTokenRefreshStream(response: Response): Promise<BatchActionResult> {
+  if (!response.body) {
+    throw new Error('刷新接口没有返回进度流');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finalResult: BatchActionResult | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      const text = line.trim();
+      if (!text) {
+        continue;
+      }
+      const event = JSON.parse(text) as TokenRefreshStreamEvent;
+      const result = applyTokenRefreshEvent(event);
+      if (result) {
+        finalResult = result;
+      }
+    }
+  }
+
+  buffer += decoder.decode();
+  const tail = buffer.trim();
+  if (tail) {
+    const event = JSON.parse(tail) as TokenRefreshStreamEvent;
+    const result = applyTokenRefreshEvent(event);
+    if (result) {
+      finalResult = result;
+    }
+  }
+
+  if (!finalResult) {
+    throw new Error('刷新任务未返回完成状态');
+  }
+
+  return finalResult;
 }
 
 async function loadAccounts(): Promise<boolean> {
@@ -684,11 +798,13 @@ async function refreshAccounts(all: boolean): Promise<void> {
 
   syncLoading.value = true;
   try {
-    const result = await api.refreshAccounts({
+    resetTokenRefreshProgress(all ? accounts.value.length : accountIds.length);
+    const response = await api.refreshAccountsStream({
       accountIds: all ? undefined : accountIds
     });
+    const result = await consumeTokenRefreshStream(response);
     await loadAccounts();
-    showBatchResult('检测', result);
+    showBatchResult('刷新 Token', result);
   } catch (error) {
     handleApiError(error);
   } finally {
@@ -1127,6 +1243,12 @@ export function useAdminConsole() {
     gptJsonExportLoading,
     gptValidityLoadingEmails,
     gptValidityResults,
+    tokenRefreshProgressVisible,
+    tokenRefreshProgressTotal,
+    tokenRefreshProgressCurrent,
+    tokenRefreshProgressSuccess,
+    tokenRefreshProgressFailure,
+    tokenRefreshProgressLogs,
     createVisible,
     importVisible,
     editVisible,

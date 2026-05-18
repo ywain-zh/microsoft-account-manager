@@ -322,6 +322,18 @@ interface BatchActionDetail {
   fetchedCount?: number;
 }
 
+interface BatchActionResult {
+  total: number;
+  success: number;
+  failure: number;
+  details: BatchActionDetail[];
+}
+
+interface TokenRefreshOptions {
+  intervalDays: number;
+  delaySeconds: number;
+}
+
 interface AccountMailItem {
   id: string;
   subject: string;
@@ -362,6 +374,11 @@ const IMAP_SCOPE = 'https://outlook.office.com/IMAP.AccessAsUser.All offline_acc
 const DEFAULT_REFRESH_CONCURRENCY = 8;
 const MAIL_PAGE_SIZE = 100;
 const TOKEN_LIFETIME_DAYS = 90;
+const TOKEN_REFRESH_SCHEDULER_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_TOKEN_REFRESH_OPTIONS: TokenRefreshOptions = {
+  intervalDays: 30,
+  delaySeconds: 1
+};
 const MICROSOFT_OAUTH_STATE_MAX_AGE_SECONDS = 60 * 10;
 const MICROSOFT_OAUTH_AUTHORIZE_SCOPE = 'offline_access openid profile User.Read Mail.Read';
 const MICROSOFT_GRAPH_ME_URL = 'https://graph.microsoft.com/v1.0/me';
@@ -931,6 +948,65 @@ app.post('/api/accounts/refresh', async (c) => {
     success,
     failure: details.length - success,
     details
+  });
+});
+
+app.post('/api/accounts/refresh-stream', async (c) => {
+  const body = await readJson<{ accountIds?: unknown }>(c);
+  const accountIds = parseAccountIds(body.accountIds);
+  const accounts =
+    accountIds.length > 0
+      ? await fetchAccountsByIds(c.env.DB, accountIds)
+      : await fetchAllAccounts(c.env.DB);
+
+  if (accounts.length === 0) {
+    throw new HTTPException(400, { message: '没有可刷新的邮箱' });
+  }
+
+  const env = { MS_CLIENT_ID: c.env.MS_CLIENT_ID, MS_CLIENT_SECRET: c.env.MS_CLIENT_SECRET };
+  const db = c.env.DB;
+  const options = DEFAULT_TOKEN_REFRESH_OPTIONS;
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const details: BatchActionDetail[] = [];
+      const send = (payload: unknown) => {
+        controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`));
+      };
+
+      send({ type: 'start', total: accounts.length });
+
+      try {
+        for (let index = 0; index < accounts.length; index += 1) {
+          const account = accounts[index];
+          send({ type: 'account-start', index: index + 1, total: accounts.length, account: account.account });
+          const detail = await refreshAccountToken(env, db, account);
+          details.push(detail);
+          send({ type: 'account-done', index: index + 1, total: accounts.length, detail });
+
+          if (index < accounts.length - 1 && options.delaySeconds > 0) {
+            await sleep(options.delaySeconds * 1000);
+          }
+        }
+
+        send({ type: 'done', result: buildBatchActionResult(details) });
+      } catch (error) {
+        send({
+          type: 'error',
+          message: error instanceof Error ? error.message : String(error)
+        });
+      } finally {
+        controller.close();
+      }
+    }
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'application/x-ndjson; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform'
+    }
   });
 });
 
@@ -1720,6 +1796,47 @@ app.onError((error, c) => {
   console.error(error);
   return c.json({ message: '服务器内部错误' }, 500);
 });
+
+let tokenRefreshSchedulerRunning = false;
+
+export function startMicrosoftTokenRefreshScheduler(
+  env: Pick<Bindings, 'DB' | 'MS_CLIENT_ID' | 'MS_CLIENT_SECRET'>
+): () => void {
+  let stopped = false;
+
+  const tick = async () => {
+    if (stopped || tokenRefreshSchedulerRunning) {
+      return;
+    }
+
+    tokenRefreshSchedulerRunning = true;
+    try {
+      const result = await refreshDueMicrosoftAccountTokens(env);
+      if (result.total > 0) {
+        console.info(
+          `微软邮箱定时刷新完成(30天): total=${result.total}, success=${result.success}, failure=${result.failure}`
+        );
+      }
+    } catch (error) {
+      console.error('微软邮箱定时刷新失败:', error);
+    } finally {
+      tokenRefreshSchedulerRunning = false;
+    }
+  };
+
+  const startupTimer = setTimeout(() => {
+    void tick();
+  }, 15_000);
+  const intervalTimer = setInterval(() => {
+    void tick();
+  }, TOKEN_REFRESH_SCHEDULER_INTERVAL_MS);
+
+  return () => {
+    stopped = true;
+    clearTimeout(startupTimer);
+    clearInterval(intervalTimer);
+  };
+}
 
 export default app;
 
@@ -5329,6 +5446,36 @@ async function fetchAccountsByIds(db: D1Database, ids: number[]): Promise<Accoun
   return results ?? [];
 }
 
+async function fetchDueTokenRefreshAccounts(db: D1Database, intervalDays: number): Promise<AccountRow[]> {
+  const safeDays = Math.max(1, Math.min(90, intervalDays));
+  const { results } = await db
+    .prepare(
+      `${ACCOUNT_SELECT_SQL}
+       WHERE a.client_id IS NOT NULL
+         AND TRIM(a.client_id) <> ''
+         AND a.refresh_token IS NOT NULL
+         AND TRIM(a.refresh_token) <> ''
+         AND (
+           a.token_checked_at IS NULL
+           OR datetime(COALESCE(a.refreshed_at, a.token_checked_at)) <= datetime('now', ?)
+         )
+       ORDER BY COALESCE(a.refreshed_at, a.created_at), a.id ASC`
+    )
+    .bind(`-${safeDays} days`)
+    .all<AccountRow>();
+  return results ?? [];
+}
+
+function buildBatchActionResult(details: BatchActionDetail[]): BatchActionResult {
+  const success = details.filter((item) => item.ok).length;
+  return {
+    total: details.length,
+    success,
+    failure: details.length - success,
+    details
+  };
+}
+
 async function updateTokenState(
   db: D1Database,
   accountId: number,
@@ -5376,6 +5523,32 @@ function sortMailMessages(messages: AccountMailItem[]): AccountMailItem[] {
     }
     return rightTime - leftTime;
   });
+}
+
+export async function refreshDueMicrosoftAccountTokens(
+  env: Pick<Bindings, 'DB' | 'MS_CLIENT_ID' | 'MS_CLIENT_SECRET'>,
+  options = DEFAULT_TOKEN_REFRESH_OPTIONS
+): Promise<BatchActionResult> {
+  const accounts = await fetchDueTokenRefreshAccounts(env.DB, options.intervalDays);
+  return refreshMicrosoftAccountTokens(env, accounts, options);
+}
+
+async function refreshMicrosoftAccountTokens(
+  env: Pick<Bindings, 'DB' | 'MS_CLIENT_ID' | 'MS_CLIENT_SECRET'>,
+  accounts: AccountRow[],
+  options: TokenRefreshOptions
+): Promise<BatchActionResult> {
+  const details: BatchActionDetail[] = [];
+  for (let index = 0; index < accounts.length; index += 1) {
+    const detail = await refreshAccountToken(env, env.DB, accounts[index]);
+    details.push(detail);
+
+    if (index < accounts.length - 1 && options.delaySeconds > 0) {
+      await sleep(options.delaySeconds * 1000);
+    }
+  }
+
+  return buildBatchActionResult(details);
 }
 
 async function refreshAccountToken(
@@ -6203,6 +6376,12 @@ function truncate(input: string, limit: number): string {
     return input;
   }
   return `${input.slice(0, limit)}...`;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, Math.max(0, ms));
+  });
 }
 
 function isPublicApiPath(pathname: string): boolean {
