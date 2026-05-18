@@ -231,39 +231,61 @@ async function writeBackupDocs(payloadDir: string, job: SystemBackupJob): Promis
   };
 
   await writeFile(join(payloadDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
-  await writeFile(
-    join(payloadDir, '恢复说明.md'),
-    [
-      '# 在线备份恢复说明',
-      '',
-      `备份时间：${createdAt}`,
-      '',
-      '本备份由望月工具箱系统设置页生成，备份过程中未停止 `microsoft-account-manager` 主容器。',
-      '',
-      '## 内容',
-      '',
-      '- `online-dumps/microsoft-account-manager/account-manager.db`：当前项目 SQLite 一致副本。',
-      '- `online-dumps/sub2api/postgres.sql`：Sub2API PostgreSQL `pg_dumpall` 导出。',
-      '- `online-dumps/sub2api/redis-dump.rdb`：Sub2API Redis 快照。',
-      '- `projects/`：项目配置、`.env`、compose 文件等，已尽量排除运行时数据库目录。',
-      '- `system/`：nginx、cron 等系统配置，取决于容器挂载权限。',
-      '',
-      '## 恢复要点',
-      '',
-      '1. 新服务器先安装 Docker 和 Docker Compose。',
-      '2. 恢复项目目录和 `.env` / compose 文件。',
-      '3. 将 SQLite 文件放回 `microsoft-account-manager` 的 `data/account-manager.db`。',
-      '4. 启动 Sub2API PostgreSQL 后导入 `postgres.sql`。',
-      '5. 停止 Redis 后替换 `dump.rdb`，再启动 Redis。',
-      '6. 执行 `docker compose pull && docker compose up -d`，最后检查容器健康状态。',
-      '',
-      '## 安全提醒',
-      '',
-      '备份包包含数据库、`.env`、API Key 和管理员密码，请只保存到可信本地磁盘。'
-    ].join('\n'),
-    'utf8'
-  );
-  appendLog(job, '已生成 manifest.json 和恢复说明.md');
+  const restoreReadme = [
+    '# 在线备份恢复说明',
+    '',
+    `备份时间：${createdAt}`,
+    '',
+    '本备份由望月工具箱系统设置页生成，备份过程中未停止 `microsoft-account-manager` 主容器。',
+    '',
+    '## 内容',
+    '',
+    '- `online-dumps/microsoft-account-manager/account-manager.db`：当前项目 SQLite 一致副本。',
+    '- `online-dumps/sub2api/postgres.sql`：Sub2API PostgreSQL `pg_dumpall` 导出。',
+    '- `online-dumps/sub2api/redis-dump.rdb`：Sub2API Redis 快照。',
+    '- `projects/`：项目配置、`.env`、compose 文件等，已尽量排除运行时数据库目录。',
+    '- `system/`：nginx、cron 等系统配置，取决于容器挂载权限。',
+    '- `CHECKSUMS.txt`：关键数据库备份文件的 SHA256 校验值。',
+    '',
+    '## 恢复要点',
+    '',
+    '1. 新服务器先安装 Docker 和 Docker Compose。',
+    '2. 恢复项目目录和 `.env` / compose 文件。',
+    '3. 将 SQLite 文件放回 `microsoft-account-manager` 的 `data/account-manager.db`。',
+    '4. 启动 Sub2API PostgreSQL 后导入 `postgres.sql`。',
+    '5. 停止 Redis 后替换 `dump.rdb`，再启动 Redis。',
+    '6. 执行 `docker compose pull && docker compose up -d`，最后检查容器健康状态。',
+    '',
+    '## 安全提醒',
+    '',
+    '备份包包含数据库、`.env`、API Key 和管理员密码，请只保存到可信本地磁盘。'
+  ].join('\n');
+  await writeFile(join(payloadDir, '恢复说明.md'), `${restoreReadme}\n`, 'utf8');
+  await writeFile(join(payloadDir, 'RESTORE_README.md'), `${restoreReadme}\n`, 'utf8');
+  await writePayloadChecksums(payloadDir);
+  appendLog(job, '已生成 manifest.json、RESTORE_README.md、恢复说明.md 和 CHECKSUMS.txt');
+}
+
+async function writePayloadChecksums(payloadDir: string): Promise<void> {
+  const files = [
+    'online-dumps/microsoft-account-manager/account-manager.db',
+    'online-dumps/sub2api/postgres.sql',
+    'online-dumps/sub2api/redis-dump.rdb',
+    'manifest.json',
+    'RESTORE_README.md',
+    '恢复说明.md'
+  ];
+  const lines: string[] = [];
+  for (const relativePath of files) {
+    const absolutePath = join(payloadDir, ...relativePath.split('/'));
+    try {
+      const checksum = await hashFile(absolutePath);
+      lines.push(`${checksum}  ${relativePath}`);
+    } catch {
+      lines.push(`MISSING  ${relativePath}`);
+    }
+  }
+  await writeFile(join(payloadDir, 'CHECKSUMS.txt'), `${lines.join('\n')}\n`, 'utf8');
 }
 
 function shouldCopyProjectPath(projectRoot: string, source: string): boolean {
