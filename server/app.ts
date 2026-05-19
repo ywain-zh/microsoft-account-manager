@@ -370,6 +370,7 @@ const MICROSOFT_TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.
 const GRAPH_MAIL_FOLDERS_URL = 'https://graph.microsoft.com/v1.0/me/mailFolders';
 const OUTLOOK_MAIL_FOLDERS_URL = 'https://outlook.office.com/api/v2.0/me/mailFolders';
 const GRAPH_SCOPE = 'https://graph.microsoft.com/Mail.Read offline_access';
+const GRAPH_LEGACY_SCOPE = 'https://graph.microsoft.com/.default';
 const IMAP_SCOPE = 'https://outlook.office.com/IMAP.AccessAsUser.All offline_access';
 const DEFAULT_REFRESH_CONCURRENCY = 8;
 const MAIL_PAGE_SIZE = 100;
@@ -5140,11 +5141,11 @@ function parseMailFetchMode(value: unknown, fallback: MailFetchMode): MailFetchM
   return fallback;
 }
 
-function getScopeByMode(mode: MailFetchMode): string {
+function getScopesByMode(mode: MailFetchMode): string[] {
   if (mode === 'imap') {
-    return IMAP_SCOPE;
+    return [IMAP_SCOPE];
   }
-  return GRAPH_SCOPE;
+  return [GRAPH_SCOPE, GRAPH_LEGACY_SCOPE];
 }
 
 function buildGptValidityResponseFromRow(
@@ -5756,12 +5757,12 @@ async function attemptMailFetch(
       message: string;
     }
 > {
-  const exchanged = await exchangeMicrosoftToken(
+  const exchanged = await exchangeMicrosoftTokenWithFallback(
     env,
     refreshToken,
     clientId,
     clientSecret,
-    getScopeByMode(mode)
+    getScopesByMode(mode)
   );
   if (!exchanged.ok) {
     return {
@@ -5793,6 +5794,27 @@ async function attemptMailFetch(
     refreshToken: nextRefreshToken,
     fetchedCount: fetched.messages.length,
     messages: sortMailMessages(fetched.messages)
+  };
+}
+
+async function exchangeMicrosoftTokenWithFallback(
+  env: Pick<Bindings, 'MS_CLIENT_ID' | 'MS_CLIENT_SECRET'>,
+  refreshToken: string,
+  clientId: string,
+  clientSecret: string | null,
+  scopes: string[]
+): Promise<{ ok: true; result: TokenExchangeResult } | { ok: false; error: string }> {
+  const errors: string[] = [];
+  for (const scope of scopes) {
+    const exchanged = await exchangeMicrosoftToken(env, refreshToken, clientId, clientSecret, scope);
+    if (exchanged.ok) {
+      return exchanged;
+    }
+    errors.push(exchanged.error);
+  }
+  return {
+    ok: false,
+    error: errors.find(Boolean) || '刷新令牌失败'
   };
 }
 
