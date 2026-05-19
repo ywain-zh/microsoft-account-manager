@@ -32,6 +32,8 @@ type Variables = {
 
 type MailFetchMode = 'auto' | 'graph' | 'imap';
 type ResolvedMailFetchMode = 'graph' | 'imap';
+type MailFetchProvider = ResolvedMailFetchMode;
+type MailFetchScopeKey = 'graph-mail-read' | 'graph-default' | 'imap-oauth';
 type TokenStatus = 'unknown' | 'valid' | 'invalid';
 type MailReadService = 'microsoft' | 'cloud-mail';
 type MailGptValidityService = MailReadService;
@@ -55,6 +57,10 @@ interface AccountRow {
   tokenStatus: TokenStatus;
   tokenMessage: string | null;
   tokenCheckedAt: string | null;
+  mailFetchProvider: MailFetchProvider | null;
+  mailFetchScope: MailFetchScopeKey | null;
+  mailFetchErrorCode: string | null;
+  mailFetchStrategyUpdatedAt: string | null;
   gptValidityStatus: MailGptValidityStatus | null;
   gptValidityMessage: string | null;
   gptValidityAccountId: number | null;
@@ -372,6 +378,20 @@ const OUTLOOK_MAIL_FOLDERS_URL = 'https://outlook.office.com/api/v2.0/me/mailFol
 const GRAPH_SCOPE = 'https://graph.microsoft.com/Mail.Read offline_access';
 const GRAPH_LEGACY_SCOPE = 'https://graph.microsoft.com/.default';
 const IMAP_SCOPE = 'https://outlook.office.com/IMAP.AccessAsUser.All offline_access';
+const MAIL_FETCH_SCOPE_CONFIG: Record<MailFetchScopeKey, { provider: MailFetchProvider; scope: string }> = {
+  'graph-mail-read': {
+    provider: 'graph',
+    scope: GRAPH_SCOPE
+  },
+  'graph-default': {
+    provider: 'graph',
+    scope: GRAPH_LEGACY_SCOPE
+  },
+  'imap-oauth': {
+    provider: 'imap',
+    scope: IMAP_SCOPE
+  }
+};
 const DEFAULT_REFRESH_CONCURRENCY = 8;
 const MAIL_PAGE_SIZE = 100;
 const TOKEN_LIFETIME_DAYS = 90;
@@ -453,6 +473,10 @@ const ACCOUNT_SELECT_SQL = `
     IFNULL(a.token_status, 'unknown') AS tokenStatus,
     a.token_message AS tokenMessage,
     a.token_checked_at AS tokenCheckedAt,
+    a.mail_fetch_provider AS mailFetchProvider,
+    a.mail_fetch_scope AS mailFetchScope,
+    a.mail_fetch_error_code AS mailFetchErrorCode,
+    a.mail_fetch_strategy_updated_at AS mailFetchStrategyUpdatedAt,
     gpt.status AS gptValidityStatus,
     gpt.message AS gptValidityMessage,
     gpt.sub2api_account_id AS gptValidityAccountId,
@@ -5141,11 +5165,24 @@ function parseMailFetchMode(value: unknown, fallback: MailFetchMode): MailFetchM
   return fallback;
 }
 
-function getScopesByMode(mode: MailFetchMode): string[] {
-  if (mode === 'imap') {
-    return [IMAP_SCOPE];
+function normalizeMailFetchScope(value: string | null | undefined): MailFetchScopeKey | null {
+  const scope = asText(value).trim();
+  return Object.prototype.hasOwnProperty.call(MAIL_FETCH_SCOPE_CONFIG, scope)
+    ? (scope as MailFetchScopeKey)
+    : null;
+}
+
+function getScopeKeysByMode(
+  mode: ResolvedMailFetchMode,
+  preferredScope: string | null | undefined
+): MailFetchScopeKey[] {
+  const candidates: MailFetchScopeKey[] =
+    mode === 'imap' ? ['imap-oauth'] : ['graph-mail-read', 'graph-default'];
+  const preferred = normalizeMailFetchScope(preferredScope);
+  if (preferred && MAIL_FETCH_SCOPE_CONFIG[preferred].provider === mode) {
+    return [preferred, ...candidates.filter((scope) => scope !== preferred)];
   }
-  return [GRAPH_SCOPE, GRAPH_LEGACY_SCOPE];
+  return candidates;
 }
 
 function buildGptValidityResponseFromRow(
@@ -5508,6 +5545,43 @@ async function updateTokenState(
     .run();
 }
 
+async function updateMailFetchStrategySuccess(
+  db: D1Database,
+  accountId: number,
+  provider: MailFetchProvider,
+  scope: MailFetchScopeKey
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE accounts
+       SET
+         mail_fetch_provider = ?,
+         mail_fetch_scope = ?,
+         mail_fetch_error_code = NULL,
+         mail_fetch_strategy_updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`
+    )
+    .bind(provider, scope, accountId)
+    .run();
+}
+
+async function updateMailFetchStrategyError(
+  db: D1Database,
+  accountId: number,
+  errorCode: string | null
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE accounts
+       SET
+         mail_fetch_error_code = ?,
+         mail_fetch_strategy_updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`
+    )
+    .bind(errorCode, accountId)
+    .run();
+}
+
 function sortMailMessages(messages: AccountMailItem[]): AccountMailItem[] {
   return [...messages].sort((left, right) => {
     const leftTime = Date.parse(left.receivedAt);
@@ -5676,6 +5750,10 @@ async function fetchAccountMessages(
       account.clientSecret,
       latestRefreshToken,
       resolvedMode,
+      getScopeKeysByMode(
+        resolvedMode,
+        account.mailFetchProvider === resolvedMode ? account.mailFetchScope : null
+      ),
       includeBody
     );
 
@@ -5684,6 +5762,7 @@ async function fetchAccountMessages(
 
     if (attempt.ok) {
       const message = `取件成功(${resolvedMode.toUpperCase()})，共 ${attempt.fetchedCount} 封`;
+      await updateMailFetchStrategySuccess(db, account.id, resolvedMode, attempt.scopeKey);
       await updateTokenState(db, account.id, {
         status: 'valid',
         message: `Token 有效，已通过 ${resolvedMode.toUpperCase()} 校验`,
@@ -5706,6 +5785,7 @@ async function fetchAccountMessages(
       };
     }
 
+    await updateMailFetchStrategyError(db, account.id, attempt.errorCode);
     failures.push(`${resolvedMode.toUpperCase()}：${attempt.message}`);
   }
 
@@ -5741,12 +5821,14 @@ async function attemptMailFetch(
   clientSecret: string | null,
   refreshToken: string,
   mode: ResolvedMailFetchMode,
+  scopeKeys: MailFetchScopeKey[],
   includeBody: boolean
 ): Promise<
   | {
       ok: true;
       tokenExchangeSucceeded: true;
       refreshToken: string;
+      scopeKey: MailFetchScopeKey;
       fetchedCount: number;
       messages: AccountMailItem[];
     }
@@ -5755,66 +5837,58 @@ async function attemptMailFetch(
       tokenExchangeSucceeded: boolean;
       refreshToken: string;
       message: string;
+      errorCode: string | null;
     }
 > {
-  const exchanged = await exchangeMicrosoftTokenWithFallback(
-    env,
-    refreshToken,
-    clientId,
-    clientSecret,
-    getScopesByMode(mode)
-  );
-  if (!exchanged.ok) {
-    return {
-      ok: false,
-      tokenExchangeSucceeded: false,
-      refreshToken,
-      message: exchanged.error || `${mode.toUpperCase()}取件前刷新令牌失败`
-    };
-  }
+  const failures: string[] = [];
+  let latestRefreshToken = refreshToken;
+  let tokenExchangeSucceeded = false;
+  let lastErrorCode: string | null = null;
 
-  const nextRefreshToken = exchanged.result.refreshToken || refreshToken;
-  const fetched =
-    mode === 'imap'
-      ? await readImapMessagesViaOutlookApi(exchanged.result.accessToken, includeBody)
-      : await readGraphMessages(exchanged.result.accessToken, includeBody);
-
-  if (!fetched.ok) {
-    return {
-      ok: false,
-      tokenExchangeSucceeded: true,
-      refreshToken: nextRefreshToken,
-      message: fetched.error || `${mode.toUpperCase()}取件失败`
-    };
-  }
-
-  return {
-    ok: true,
-    tokenExchangeSucceeded: true,
-    refreshToken: nextRefreshToken,
-    fetchedCount: fetched.messages.length,
-    messages: sortMailMessages(fetched.messages)
-  };
-}
-
-async function exchangeMicrosoftTokenWithFallback(
-  env: Pick<Bindings, 'MS_CLIENT_ID' | 'MS_CLIENT_SECRET'>,
-  refreshToken: string,
-  clientId: string,
-  clientSecret: string | null,
-  scopes: string[]
-): Promise<{ ok: true; result: TokenExchangeResult } | { ok: false; error: string }> {
-  const errors: string[] = [];
-  for (const scope of scopes) {
-    const exchanged = await exchangeMicrosoftToken(env, refreshToken, clientId, clientSecret, scope);
-    if (exchanged.ok) {
-      return exchanged;
+  for (const scopeKey of scopeKeys) {
+    const scopeConfig = MAIL_FETCH_SCOPE_CONFIG[scopeKey];
+    const exchanged = await exchangeMicrosoftToken(
+      env,
+      latestRefreshToken,
+      clientId,
+      clientSecret,
+      scopeConfig.scope
+    );
+    if (!exchanged.ok) {
+      lastErrorCode = classifyMicrosoftErrorCode(exchanged.error);
+      failures.push(`${scopeKey}：${exchanged.error || `${mode.toUpperCase()}取件前刷新令牌失败`}`);
+      continue;
     }
-    errors.push(exchanged.error);
+
+    tokenExchangeSucceeded = true;
+    latestRefreshToken = exchanged.result.refreshToken || latestRefreshToken;
+    const fetched =
+      mode === 'imap'
+        ? await readImapMessagesViaOutlookApi(exchanged.result.accessToken, includeBody)
+        : await readGraphMessages(exchanged.result.accessToken, includeBody);
+
+    if (!fetched.ok) {
+      lastErrorCode = classifyMicrosoftErrorCode(fetched.error);
+      failures.push(`${scopeKey}：${fetched.error || `${mode.toUpperCase()}取件失败`}`);
+      continue;
+    }
+
+    return {
+      ok: true,
+      tokenExchangeSucceeded: true,
+      refreshToken: latestRefreshToken,
+      scopeKey,
+      fetchedCount: fetched.messages.length,
+      messages: sortMailMessages(fetched.messages)
+    };
   }
+
   return {
     ok: false,
-    error: errors.find(Boolean) || '刷新令牌失败'
+    tokenExchangeSucceeded,
+    refreshToken: latestRefreshToken,
+    message: failures.find(Boolean) || `${mode.toUpperCase()}取件失败`,
+    errorCode: lastErrorCode
   };
 }
 
@@ -6180,6 +6254,34 @@ function extractMicrosoftError(payload: unknown, status: number): string {
   }
 
   return `请求失败(${status})`;
+}
+
+function classifyMicrosoftErrorCode(message: string): string | null {
+  const aadsts = message.match(/\bAADSTS\d+\b/i)?.[0];
+  if (aadsts) {
+    return aadsts.toUpperCase();
+  }
+
+  const normalized = message.toLowerCase();
+  if (normalized.includes('invalid_grant')) {
+    return 'invalid_grant';
+  }
+  if (normalized.includes('invalid_client')) {
+    return 'invalid_client';
+  }
+  if (normalized.includes('temporarily_unavailable')) {
+    return 'temporarily_unavailable';
+  }
+  if (normalized.includes('too many requests') || normalized.includes('429')) {
+    return 'throttled';
+  }
+  if (normalized.includes('unauthorized') || normalized.includes('401')) {
+    return 'unauthorized';
+  }
+  if (normalized.includes('forbidden') || normalized.includes('403')) {
+    return 'forbidden';
+  }
+  return null;
 }
 
 async function updateSyncStatus(

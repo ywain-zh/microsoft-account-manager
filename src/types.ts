@@ -16,6 +16,10 @@ export interface AccountItem {
   tokenStatus: TokenStatus;
   tokenMessage: string | null;
   tokenCheckedAt: string | null;
+  mailFetchProvider: 'graph' | 'imap' | null;
+  mailFetchScope: 'graph-mail-read' | 'graph-default' | 'imap-oauth' | null;
+  mailFetchErrorCode: string | null;
+  mailFetchStrategyUpdatedAt: string | null;
   tokenCountdownDays: number | null;
   tokenBaseAt: string | null;
   gptValidity: Sub2ApiGptValidityResponse | null;
