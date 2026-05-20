@@ -1176,10 +1176,6 @@ app.get('/api/external/microsoft/accounts', async (c) => {
   await validateMailApiRequest(c);
 
   const email = asText(c.req.query('email')).trim();
-  if (!email) {
-    throw new HTTPException(400, { message: 'email 不能为空' });
-  }
-
   const items = await queryAccounts(c.env.DB, email);
   return c.json({
     items: items.map(serializeExternalMicrosoftAccount),

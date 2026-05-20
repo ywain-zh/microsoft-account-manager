@@ -45,7 +45,7 @@
 
       <section class="api-doc-section">
         <h3>查询微软邮箱列表</h3>
-        <p>接口说明：按邮箱关键词模糊查询微软邮箱账号列表，不返回密码、client_id、client_secret、refresh_token。</p>
+        <p>接口说明：查询全部微软邮箱账号列表，不返回密码、client_id、client_secret、refresh_token。需要筛选时可传 email 关键词。</p>
 
         <div class="endpoint-line">
           <span>接口地址</span>
@@ -67,9 +67,9 @@
             <tr>
               <td><code>email</code></td>
               <td>string</td>
-              <td>是</td>
+              <td>否</td>
               <td>-</td>
-              <td>邮箱关键词，支持模糊搜索，例如 <code>hotmail</code>、<code>example@outlook.com</code>。</td>
+              <td>邮箱关键词。不传返回全部，传入后按邮箱模糊搜索，例如 <code>hotmail</code>、<code>example@outlook.com</code>。</td>
             </tr>
           </tbody>
         </n-table>
@@ -192,7 +192,7 @@
           <tbody>
             <tr>
               <td>400</td>
-              <td>参数为空、参数格式错误，或微软取件失败。</td>
+              <td>参数格式错误，邮件接口 email 为空，或微软取件失败。</td>
               <td><code>{"message":"email 不能为空"}</code></td>
             </tr>
             <tr>
@@ -363,7 +363,7 @@ const curlExample = computed(() => {
 });
 
 const externalMicrosoftAccountsCurl = computed(() => {
-  return `curl "${apiBaseUrl.value}/api/external/microsoft/accounts?email=hotmail" \\
+  return `curl "${apiBaseUrl.value}/api/external/microsoft/accounts" \\
   -H "${mailApiTokenHeader.value}: <MAIL_API_TOKEN>"`;
 });
 
