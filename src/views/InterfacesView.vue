@@ -1,207 +1,328 @@
 <template>
-  <div class="page-stack page-stack-compact interface-page interface-page-compact page-container">
-    <div class="interface-grid interface-grid-balanced">
-      <n-card :bordered="false" size="small" class="content-card interface-card main-card">
-        <div class="card-section-stack">
-          <div class="card-section-header">
-            <p class="section-kicker">Upload Endpoint</p>
-            <h3 class="section-title">外部上传接口说明</h3>
-            <p class="section-copy">用于外部平台向系统批量写入账号数据，适合自动化导入流程。</p>
-          </div>
-
-          <div class="api-box">
-            <p><strong>接口地址：</strong>{{ ingestEndpointUrl }}</p>
-            <p><strong>请求方法：</strong>POST</p>
-            <p><strong>Content-Type：</strong>application/json 或 text/plain</p>
-            <p><strong>鉴权头：</strong>{{ ingestTokenHeader }}: &lt;INGEST_TOKEN&gt;</p>
-          </div>
+  <div class="page-container api-doc-page">
+    <n-card :bordered="false" class="main-card api-doc-card">
+      <div class="api-doc-header">
+        <div>
+          <h2>接口文档</h2>
+          <p>给外部系统调用微软邮箱列表、读取邮件和上传账号使用。</p>
         </div>
-      </n-card>
-
-      <n-card :bordered="false" size="small" class="content-card interface-card main-card">
-        <div class="card-section-stack">
-          <div class="card-section-header">
-            <p class="section-kicker">Mapping Config</p>
-            <h3 class="section-title">上传字段映射配置</h3>
-            <p class="section-copy">保留现有字段绑定与保存逻辑，只对表单分组与视觉层次做前端重构。</p>
-          </div>
-
-          <n-form label-placement="top">
-            <n-grid :cols="24" :x-gap="14" :y-gap="8">
-              <n-gi :span="24" :md="8">
-                <n-form-item label="分隔符">
-                  <n-input v-model:value="ingestConfig.delimiter" placeholder="----" />
-                </n-form-item>
-              </n-gi>
-              <n-gi :span="24" :md="8">
-                <n-form-item label="captcha 行字段名">
-                  <n-input v-model:value="ingestConfig.captchaField" placeholder="data" />
-                </n-form-item>
-              </n-gi>
-              <n-gi :span="24" :md="8">
-                <n-form-item label="账号字段名">
-                  <n-input v-model:value="ingestConfig.accountField" placeholder="a" />
-                </n-form-item>
-              </n-gi>
-              <n-gi :span="24" :md="8">
-                <n-form-item label="密码字段名">
-                  <n-input v-model:value="ingestConfig.passwordField" placeholder="p" />
-                </n-form-item>
-              </n-gi>
-              <n-gi :span="24" :md="8">
-                <n-form-item label="client_id 字段名">
-                  <n-input v-model:value="ingestConfig.clientIdField" placeholder="c" />
-                </n-form-item>
-              </n-gi>
-              <n-gi :span="24" :md="8">
-                <n-form-item label="client_secret 字段名">
-                  <n-input v-model:value="ingestConfig.clientSecretField" placeholder="s" />
-                </n-form-item>
-              </n-gi>
-              <n-gi :span="24" :md="8">
-                <n-form-item label="refresh_token 字段名">
-                  <n-input v-model:value="ingestConfig.tokenField" placeholder="t" />
-                </n-form-item>
-              </n-gi>
-            </n-grid>
-          </n-form>
-
-          <div class="section-actions">
-            <n-button class="section-primary-button" type="primary" :loading="saveIngestLoading" @click="saveIngestConfig">
-              保存映射配置
-            </n-button>
-          </div>
+        <div class="api-doc-base">
+          <span>Base URL</span>
+          <code>{{ apiBaseUrl }}</code>
         </div>
-      </n-card>
-    </div>
-
-    <n-card :bordered="false" size="small" class="content-card interface-card main-card">
-      <div class="card-section-stack">
-        <div class="card-section-header">
-          <p class="section-kicker">Examples</p>
-          <h3 class="section-title">常用请求示例</h3>
-          <p class="section-copy">用同一套视觉规范整理 JSON 与 curl 示例，方便复制和对照字段结构。</p>
-        </div>
-
-        <n-space vertical class="code-example-stack">
-          <p class="hint">示例 1（captchaurn 格式）：</p>
-          <n-code :code="captchaPayloadExample" language="json" word-wrap />
-          <p class="hint">示例 2（字段映射格式）：</p>
-          <n-code :code="mappedPayloadExample" language="json" word-wrap />
-          <p class="hint">curl 示例：</p>
-          <n-code :code="curlExample" language="bash" word-wrap />
-        </n-space>
       </div>
+
+      <n-alert type="info" :bordered="false" class="api-doc-tip">
+        外部接口 Key 可在“系统设置 - 接口鉴权”里手动配置、复制或生成新 Key。支持请求头
+        <code>{{ mailApiTokenHeader }}</code>，也支持 <code>Authorization: Bearer &lt;KEY&gt;</code>。
+      </n-alert>
+
+      <section class="api-doc-section">
+        <h3>鉴权说明</h3>
+        <p>所有外部读取接口都需要传入开放接口 Key。未传或传错会返回 401。</p>
+        <n-table size="small" :bordered="false" :single-line="false">
+          <thead>
+            <tr>
+              <th>Header</th>
+              <th>必填</th>
+              <th>说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>{{ mailApiTokenHeader }}</code></td>
+              <td>是</td>
+              <td>推荐方式，值为系统设置里配置的开放接口 Key。</td>
+            </tr>
+            <tr>
+              <td><code>Authorization</code></td>
+              <td>否</td>
+              <td>可传 <code>Bearer &lt;KEY&gt;</code>，和上方 Header 二选一。</td>
+            </tr>
+          </tbody>
+        </n-table>
+      </section>
+
+      <section class="api-doc-section">
+        <h3>查询微软邮箱列表</h3>
+        <p>接口说明：按邮箱关键词模糊查询微软邮箱账号列表，不返回密码、client_id、client_secret、refresh_token。</p>
+
+        <div class="endpoint-line">
+          <span>接口地址</span>
+          <code>GET /api/external/microsoft/accounts</code>
+        </div>
+
+        <h4>请求参数</h4>
+        <n-table size="small" :bordered="false" :single-line="false">
+          <thead>
+            <tr>
+              <th>参数</th>
+              <th>类型</th>
+              <th>必填</th>
+              <th>默认值</th>
+              <th>说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>email</code></td>
+              <td>string</td>
+              <td>是</td>
+              <td>-</td>
+              <td>邮箱关键词，支持模糊搜索，例如 <code>hotmail</code>、<code>example@outlook.com</code>。</td>
+            </tr>
+          </tbody>
+        </n-table>
+
+        <h4>返回字段</h4>
+        <n-table size="small" :bordered="false" :single-line="false">
+          <thead>
+            <tr>
+              <th>字段</th>
+              <th>类型</th>
+              <th>说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>items</code></td><td>array</td><td>邮箱账号数组。</td></tr>
+            <tr><td><code>id</code></td><td>number</td><td>本系统账号 ID。</td></tr>
+            <tr><td><code>account</code></td><td>string</td><td>微软邮箱地址。</td></tr>
+            <tr><td><code>remark</code></td><td>string</td><td>账号备注。</td></tr>
+            <tr><td><code>authType</code></td><td>string</td><td>账号来源或授权类型。</td></tr>
+            <tr><td><code>syncStatus</code></td><td>string</td><td>最近一次取件状态。</td></tr>
+            <tr><td><code>syncMessage</code></td><td>string</td><td>最近一次取件说明。</td></tr>
+            <tr><td><code>fetchedAt</code></td><td>string</td><td>最近取件时间。</td></tr>
+            <tr><td><code>fetchedCount</code></td><td>number</td><td>最近取件数量。</td></tr>
+            <tr><td><code>mailFetchProvider</code></td><td>string</td><td>实际使用的取件方式，例如 graph 或 imap。</td></tr>
+            <tr><td><code>mailFetchScope</code></td><td>string</td><td>实际使用的权限范围。</td></tr>
+            <tr><td><code>createdAt</code></td><td>string</td><td>账号创建时间。</td></tr>
+            <tr><td><code>total</code></td><td>number</td><td>本次查询结果数量。</td></tr>
+          </tbody>
+        </n-table>
+
+        <h4>请求示例</h4>
+        <n-code :code="externalMicrosoftAccountsCurl" language="bash" word-wrap />
+
+        <h4>返回示例</h4>
+        <n-code :code="accountsResponseExample" language="json" word-wrap />
+      </section>
+
+      <section class="api-doc-section">
+        <h3>查询微软邮箱邮件</h3>
+        <p>接口说明：输入完整邮箱地址读取该邮箱邮件，默认自动选择最兼容的取件方式，并返回邮件正文。</p>
+
+        <div class="endpoint-line">
+          <span>接口地址</span>
+          <code>GET /api/external/microsoft/messages</code>
+        </div>
+
+        <h4>请求参数</h4>
+        <n-table size="small" :bordered="false" :single-line="false">
+          <thead>
+            <tr>
+              <th>参数</th>
+              <th>类型</th>
+              <th>必填</th>
+              <th>默认值</th>
+              <th>说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>email</code></td>
+              <td>string</td>
+              <td>是</td>
+              <td>-</td>
+              <td>完整邮箱地址，必须精确匹配一个账号。</td>
+            </tr>
+            <tr>
+              <td><code>mode</code></td>
+              <td>string</td>
+              <td>否</td>
+              <td>auto</td>
+              <td><code>auto</code>、<code>graph</code>、<code>imap</code>。建议外部系统使用默认 <code>auto</code>。</td>
+            </tr>
+          </tbody>
+        </n-table>
+
+        <h4>返回字段</h4>
+        <n-table size="small" :bordered="false" :single-line="false">
+          <thead>
+            <tr>
+              <th>字段</th>
+              <th>类型</th>
+              <th>说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>account</code></td><td>string</td><td>本次查询的邮箱。</td></tr>
+            <tr><td><code>resolvedMode</code></td><td>string</td><td>最终使用的取件方式。</td></tr>
+            <tr><td><code>fetchedCount</code></td><td>number</td><td>返回邮件数量。</td></tr>
+            <tr><td><code>messages</code></td><td>array</td><td>邮件数组。</td></tr>
+            <tr><td><code>id</code></td><td>string</td><td>邮件 ID。</td></tr>
+            <tr><td><code>subject</code></td><td>string</td><td>邮件主题。</td></tr>
+            <tr><td><code>from</code></td><td>string</td><td>发件人。</td></tr>
+            <tr><td><code>receivedAt</code></td><td>string</td><td>收件时间。</td></tr>
+            <tr><td><code>preview</code></td><td>string</td><td>邮件预览。</td></tr>
+            <tr><td><code>contentType</code></td><td>string</td><td>正文类型，常见为 html 或 text。</td></tr>
+            <tr><td><code>content</code></td><td>string</td><td>邮件正文，外部系统可从这里提取验证码。</td></tr>
+            <tr><td><code>folderKind</code></td><td>string</td><td>邮件所在文件夹类型。</td></tr>
+            <tr><td><code>folderLabel</code></td><td>string</td><td>邮件所在文件夹显示名。</td></tr>
+            <tr><td><code>isRead</code></td><td>boolean</td><td>是否已读。</td></tr>
+          </tbody>
+        </n-table>
+
+        <h4>请求示例</h4>
+        <n-code :code="externalMicrosoftMessagesCurl" language="bash" word-wrap />
+
+        <h4>返回示例</h4>
+        <n-code :code="messagesResponseExample" language="json" word-wrap />
+      </section>
+
+      <section class="api-doc-section">
+        <h3>错误返回</h3>
+        <n-table size="small" :bordered="false" :single-line="false">
+          <thead>
+            <tr>
+              <th>HTTP 状态码</th>
+              <th>说明</th>
+              <th>返回示例</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>400</td>
+              <td>参数为空、参数格式错误，或微软取件失败。</td>
+              <td><code>{"message":"email 不能为空"}</code></td>
+            </tr>
+            <tr>
+              <td>401</td>
+              <td>没有传 Key，或 Key 错误。</td>
+              <td><code>{"message":"开放接口令牌无效"}</code></td>
+            </tr>
+            <tr>
+              <td>404</td>
+              <td>邮箱不存在。</td>
+              <td><code>{"message":"邮箱不存在"}</code></td>
+            </tr>
+          </tbody>
+        </n-table>
+      </section>
+
+      <section class="api-doc-section">
+        <h3>上传账号接口</h3>
+        <p>接口说明：外部平台可以把微软邮箱账号批量写入本系统。字段名可在下面的映射配置中调整。</p>
+
+        <div class="endpoint-line">
+          <span>接口地址</span>
+          <code>POST {{ ingestEndpointPath }}</code>
+        </div>
+
+        <h4>请求头</h4>
+        <n-table size="small" :bordered="false" :single-line="false">
+          <thead>
+            <tr>
+              <th>Header</th>
+              <th>必填</th>
+              <th>说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>Content-Type</code></td>
+              <td>是</td>
+              <td><code>application/json</code> 或 <code>text/plain</code>。</td>
+            </tr>
+            <tr>
+              <td><code>{{ ingestTokenHeader }}</code></td>
+              <td>是</td>
+              <td>上传接口专用 Token。</td>
+            </tr>
+          </tbody>
+        </n-table>
+
+        <h4>请求参数</h4>
+        <n-table size="small" :bordered="false" :single-line="false">
+          <thead>
+            <tr>
+              <th>参数</th>
+              <th>类型</th>
+              <th>必填</th>
+              <th>说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>{{ ingestConfig.accountField }}</code></td><td>string</td><td>是</td><td>邮箱账号。</td></tr>
+            <tr><td><code>{{ ingestConfig.passwordField }}</code></td><td>string</td><td>否</td><td>邮箱密码。</td></tr>
+            <tr><td><code>{{ ingestConfig.clientIdField }}</code></td><td>string</td><td>否</td><td>Microsoft OAuth client_id。</td></tr>
+            <tr><td><code>{{ ingestConfig.clientSecretField }}</code></td><td>string</td><td>否</td><td>Microsoft OAuth client_secret。</td></tr>
+            <tr><td><code>{{ ingestConfig.tokenField }}</code></td><td>string</td><td>否</td><td>Microsoft OAuth refresh_token。</td></tr>
+            <tr><td><code>{{ ingestConfig.captchaField }}</code></td><td>string</td><td>否</td><td>整行账号数据，按分隔符 <code>{{ ingestConfig.delimiter }}</code> 拆分。</td></tr>
+          </tbody>
+        </n-table>
+
+        <h4>请求示例</h4>
+        <n-code :code="curlExample" language="bash" word-wrap />
+
+        <h4>JSON 示例</h4>
+        <n-code :code="mappedPayloadExample" language="json" word-wrap />
+      </section>
+
+      <section class="api-doc-section api-config-section">
+        <h3>上传字段映射配置</h3>
+        <p>这里只影响上传账号接口的字段名，不影响微软邮箱读取接口。</p>
+
+        <n-form label-placement="top">
+          <n-grid :cols="24" :x-gap="14" :y-gap="8">
+            <n-gi :span="24" :md="8">
+              <n-form-item label="分隔符">
+                <n-input v-model:value="ingestConfig.delimiter" placeholder="----" />
+              </n-form-item>
+            </n-gi>
+            <n-gi :span="24" :md="8">
+              <n-form-item label="captcha 行字段名">
+                <n-input v-model:value="ingestConfig.captchaField" placeholder="data" />
+              </n-form-item>
+            </n-gi>
+            <n-gi :span="24" :md="8">
+              <n-form-item label="账号字段名">
+                <n-input v-model:value="ingestConfig.accountField" placeholder="a" />
+              </n-form-item>
+            </n-gi>
+            <n-gi :span="24" :md="8">
+              <n-form-item label="密码字段名">
+                <n-input v-model:value="ingestConfig.passwordField" placeholder="p" />
+              </n-form-item>
+            </n-gi>
+            <n-gi :span="24" :md="8">
+              <n-form-item label="client_id 字段名">
+                <n-input v-model:value="ingestConfig.clientIdField" placeholder="c" />
+              </n-form-item>
+            </n-gi>
+            <n-gi :span="24" :md="8">
+              <n-form-item label="client_secret 字段名">
+                <n-input v-model:value="ingestConfig.clientSecretField" placeholder="s" />
+              </n-form-item>
+            </n-gi>
+            <n-gi :span="24" :md="8">
+              <n-form-item label="refresh_token 字段名">
+                <n-input v-model:value="ingestConfig.tokenField" placeholder="t" />
+              </n-form-item>
+            </n-gi>
+          </n-grid>
+        </n-form>
+
+        <div class="api-doc-actions">
+          <n-button type="primary" :loading="saveIngestLoading" @click="saveIngestConfig">保存映射配置</n-button>
+        </div>
+      </section>
     </n-card>
-
-    <n-card :bordered="false" size="small" class="content-card interface-card main-card">
-      <div class="card-section-stack">
-        <div class="card-section-header">
-          <p class="section-kicker">Overview</p>
-          <h3 class="section-title">接口总览</h3>
-          <p class="section-copy">快速查看开放 API 与后台 API 的关键入口，减少在多个文档间来回切换。</p>
-        </div>
-
-        <p class="hint">Base URL：{{ apiBaseUrl }}</p>
-        <ul class="api-list">
-          <li><code>POST /api/upload/ingest</code>：外部平台上传账号到本系统（token 鉴权）。</li>
-          <li><code>GET /api/open/accounts</code>：获取账号列表（开放 API，支持 keyword 查询）。</li>
-          <li><code>GET /api/external/microsoft/accounts</code>：按邮箱关键词查询微软邮箱列表（外部专用，只返回安全字段）。</li>
-          <li><code>GET /api/external/microsoft/messages</code>：按完整邮箱查询微软邮箱邮件（外部专用，默认返回正文）。</li>
-          <li>
-            <code>GET /api/open/accounts/:id/messages?mode=auto|graph|imap</code>
-            ：按账号 ID 获取合并后的收件箱与垃圾邮件，默认 <code>auto</code>。
-          </li>
-          <li>
-            <code>POST /api/open/messages</code>
-            ：按账号 ID 或邮箱地址获取全部邮件（开放 API，响应含 <code>resolvedMode</code>）。
-          </li>
-          <li><code>PATCH /api/open/accounts/:id/remark</code>：更新指定账号备注（开放 API）。</li>
-          <li><code>DELETE /api/open/accounts/:id</code>：删除指定账号（开放 API，token 鉴权）。</li>
-          <li><code>POST /api/auth/login</code>：后台登录，登录后可调用管理端 API。</li>
-        </ul>
-      </div>
-    </n-card>
-
-    <n-card :bordered="false" size="small" class="content-card interface-card main-card">
-      <div class="card-section-stack">
-        <div class="card-section-header">
-          <p class="section-kicker">Microsoft Mail API</p>
-          <h3 class="section-title">外部微软邮箱接口文档</h3>
-          <p class="section-copy">外部系统只需要传邮箱名称和鉴权 Key，即可查询邮箱列表或读取邮件正文。</p>
-        </div>
-
-        <n-space vertical class="code-example-stack">
-          <p class="hint">鉴权方式：{{ mailApiTokenHeader }}: &lt;MAIL_API_TOKEN&gt;，或 Authorization: Bearer &lt;MAIL_API_TOKEN&gt;。</p>
-          <n-code :code="externalMicrosoftDoc" language="text" word-wrap />
-        </n-space>
-      </div>
-    </n-card>
-
-    <div class="interface-grid">
-      <n-card :bordered="false" size="small" class="content-card interface-card main-card">
-        <div class="card-section-stack">
-          <div class="card-section-header">
-            <p class="section-kicker">Open API</p>
-            <h3 class="section-title">开放取件接口</h3>
-            <p class="section-copy">用于外部服务按账号 ID 或邮箱地址取件，并支持备注更新与账号删除。</p>
-          </div>
-
-          <n-space vertical class="code-example-stack">
-            <p class="hint">支持 Header：{{ mailApiTokenHeader }} 或 Authorization: Bearer token，可在系统设置的接口鉴权里配置。</p>
-            <p class="hint">
-              管理后台默认使用 <code>mode=auto</code>，会优先尝试 Graph，失败后回退 Outlook/IMAP 兼容读取。
-            </p>
-            <p class="hint">外部专用：按邮箱关键词查询微软邮箱列表：</p>
-            <n-code :code="externalMicrosoftAccountsCurl" language="bash" word-wrap />
-            <p class="hint">外部专用：按完整邮箱查询邮件：</p>
-            <n-code :code="externalMicrosoftMessagesCurl" language="bash" word-wrap />
-            <p class="hint">获取账号列表：</p>
-            <n-code :code="openApiCurlListAccounts" language="bash" word-wrap />
-            <p class="hint">按账号 ID 取件：</p>
-            <n-code :code="openApiCurlById" language="bash" word-wrap />
-            <p class="hint">按邮箱地址取件：</p>
-            <n-code :code="openApiCurlByAccount" language="bash" word-wrap />
-            <p class="hint">更新账号备注：</p>
-            <n-code :code="openApiCurlUpdateRemark" language="bash" word-wrap />
-            <p class="hint">删除账号：</p>
-            <n-code :code="openApiCurlDeleteAccount" language="bash" word-wrap />
-          </n-space>
-        </div>
-      </n-card>
-
-      <n-card :bordered="false" size="small" class="content-card interface-card main-card">
-        <div class="card-section-stack">
-          <div class="card-section-header">
-            <p class="section-kicker">Admin API</p>
-            <h3 class="section-title">管理端接口</h3>
-            <p class="section-copy">保留当前登录态调用方式，用更清晰的文档排版呈现管理端接口清单与调用示例。</p>
-          </div>
-
-          <n-space vertical class="code-example-stack">
-            <n-code :code="adminApiDoc" language="text" word-wrap />
-            <p class="hint">登录并使用 Cookie 调用管理端接口：</p>
-            <n-code :code="adminLoginCurl" language="bash" word-wrap />
-          </n-space>
-        </div>
-      </n-card>
-    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted } from 'vue';
-import {
-  NButton,
-  NCard,
-  NCode,
-  NForm,
-  NFormItem,
-  NGi,
-  NGrid,
-  NInput,
-  NSpace
-} from 'naive-ui';
+import { NAlert, NButton, NCard, NCode, NForm, NFormItem, NGi, NGrid, NInput, NTable } from 'naive-ui';
 import { useAdminConsole } from '../state/admin-console';
 
 const admin = useAdminConsole();
@@ -220,21 +341,10 @@ const {
 
 const apiBaseUrl = computed(() => siteOrigin.value || 'https://your-domain');
 
-const ingestEndpointUrl = computed(() => {
-  return siteOrigin.value ? `${siteOrigin.value}${ingestEndpointPath.value}` : ingestEndpointPath.value;
-});
-
-const captchaPayloadExample = computed(() => {
-  const key = ingestConfig.captchaField;
-  const delimiter = ingestConfig.delimiter;
-  const value = `your_account${delimiter}your_password${delimiter}your_client_id${delimiter}your_refresh_token${delimiter}your_client_secret`;
-  return JSON.stringify({ [key]: value }, null, 2);
-});
-
 const mappedPayloadExample = computed(() =>
   JSON.stringify(
     {
-      [ingestConfig.accountField]: 'your_account',
+      [ingestConfig.accountField]: 'example@hotmail.com',
       [ingestConfig.passwordField]: 'your_password',
       [ingestConfig.clientIdField]: 'your_client_id',
       [ingestConfig.clientSecretField]: 'your_client_secret',
@@ -246,15 +356,10 @@ const mappedPayloadExample = computed(() =>
 );
 
 const curlExample = computed(() => {
-  return `curl -X POST '${ingestEndpointUrl.value}' \\
-  -H 'Content-Type: application/json' \\
-  -H '${ingestTokenHeader.value}: <INGEST_TOKEN>' \\
-  -d '${captchaPayloadExample.value.replace(/\n/g, '')}'`;
-});
-
-const openApiCurlListAccounts = computed(() => {
-  return `curl "${apiBaseUrl.value}/api/open/accounts?keyword=outlook" \\
-  -H "${mailApiTokenHeader.value}: <MAIL_API_TOKEN>"`;
+  return `curl -X POST "${apiBaseUrl.value}${ingestEndpointPath.value}" \\
+  -H "Content-Type: application/json" \\
+  -H "${ingestTokenHeader.value}: <INGEST_TOKEN>" \\
+  -d '${mappedPayloadExample.value.replace(/\n/g, '')}'`;
 });
 
 const externalMicrosoftAccountsCurl = computed(() => {
@@ -267,71 +372,52 @@ const externalMicrosoftMessagesCurl = computed(() => {
   -H "${mailApiTokenHeader.value}: <MAIL_API_TOKEN>"`;
 });
 
-const openApiCurlById = computed(() => {
-  return `curl "${apiBaseUrl.value}/api/open/accounts/1/messages?mode=auto" \\
-  -H "${mailApiTokenHeader.value}: <MAIL_API_TOKEN>"`;
-});
+const accountsResponseExample = JSON.stringify(
+  {
+    items: [
+      {
+        id: 90,
+        account: 'example@hotmail.com',
+        remark: '',
+        authType: 'manual',
+        syncStatus: 'fetch_success',
+        syncMessage: '取件成功(GRAPH)，共 1 封',
+        fetchedAt: '2026-05-20 10:42:47',
+        fetchedCount: 1,
+        mailFetchProvider: 'graph',
+        mailFetchScope: 'graph-default',
+        createdAt: '2026-05-16 11:33:00'
+      }
+    ],
+    total: 1
+  },
+  null,
+  2
+);
 
-const openApiCurlByAccount = computed(() => {
-  return `curl -X POST "${apiBaseUrl.value}/api/open/messages" \\
-  -H "Content-Type: application/json" \\
-  -H "${mailApiTokenHeader.value}: <MAIL_API_TOKEN>" \\
-  -d '{"account":"example@outlook.com","mode":"auto"}'`;
-});
-
-const openApiCurlUpdateRemark = computed(() => {
-  return `curl -X PATCH "${apiBaseUrl.value}/api/open/accounts/1/remark" \\
-  -H "Content-Type: application/json" \\
-  -H "${mailApiTokenHeader.value}: <MAIL_API_TOKEN>" \\
-  -d '{"remark":"需要重点跟进"}'`;
-});
-
-const openApiCurlDeleteAccount = computed(() => {
-  return `curl -X DELETE "${apiBaseUrl.value}/api/open/accounts/1" \\
-  -H "${mailApiTokenHeader.value}: <MAIL_API_TOKEN>"`;
-});
-
-const externalMicrosoftDoc = `GET /api/external/microsoft/accounts?email=<邮箱关键词>
-用途：模糊查询微软邮箱列表
-必填参数：email
-返回字段：id, account, remark, authType, syncStatus, syncMessage, fetchedAt, fetchedCount, mailFetchProvider, mailFetchScope, createdAt
-不会返回：password, client_id, client_secret, refresh_token
-
-GET /api/external/microsoft/messages?email=<完整邮箱>&mode=auto
-用途：按完整邮箱精确读取邮件，默认返回邮件正文
-必填参数：email
-可选参数：mode=auto|graph|imap，默认 auto
-返回字段：account, resolvedMode, fetchedCount, messages
-邮件字段：id, subject, from, receivedAt, preview, contentType, content, folderKind, folderLabel, isRead
-
-错误规则：
-401 token 缺失或错误
-400 email 为空，或微软取件失败
-404 邮箱不存在`;
-
-const adminApiDoc = `POST /api/auth/login                     后台管理员登录
-POST /api/auth/logout                    退出登录
-GET  /api/auth/me                        获取当前登录用户
-GET  /api/accounts                       获取账号列表
-GET  /api/external/microsoft/accounts    外部按邮箱关键词查询微软邮箱列表
-GET  /api/external/microsoft/messages    外部按完整邮箱查询微软邮箱邮件
-POST /api/accounts                       新增账号
-PUT  /api/accounts/:id                   更新账号
-DELETE /api/accounts/:id                 删除账号
-POST /api/accounts/import                批量导入账号
-PATCH /api/accounts/:id/remark           更新备注
-POST /api/accounts/refresh               检测并刷新 refresh_token
-GET  /api/accounts/:id/messages?mode=... 管理端按账号取件（默认 auto）
-GET  /api/ingest-config                  获取上传映射配置
-PUT  /api/ingest-config                  保存上传映射配置`;
-
-const adminLoginCurl = computed(() => {
-  return `curl -c cookie.txt -X POST "${apiBaseUrl.value}/api/auth/login" \\
-  -H "Content-Type: application/json" \\
-  -d '{"username":"admin","password":"<ADMIN_PASSWORD>"}'
-
-curl -b cookie.txt "${apiBaseUrl.value}/api/accounts"`;
-});
+const messagesResponseExample = JSON.stringify(
+  {
+    account: 'example@hotmail.com',
+    resolvedMode: 'graph',
+    fetchedCount: 1,
+    messages: [
+      {
+        id: 'message-id',
+        subject: 'Your verification code',
+        from: 'OpenAI <noreply@example.com>',
+        receivedAt: '2026-05-20T02:30:00Z',
+        preview: 'Your verification code is...',
+        contentType: 'html',
+        content: '<html>验证码内容</html>',
+        folderKind: 'inbox',
+        folderLabel: '收件箱',
+        isRead: false
+      }
+    ]
+  },
+  null,
+  2
+);
 
 onMounted(async () => {
   if (!initialDataLoaded.value && isAuthenticated.value) {
@@ -339,3 +425,154 @@ onMounted(async () => {
   }
 });
 </script>
+
+<style scoped>
+.api-doc-page {
+  display: flex;
+  justify-content: center;
+}
+
+.api-doc-card {
+  width: min(1180px, 100%);
+}
+
+.api-doc-card :deep(.n-card__content) {
+  padding: 28px 32px;
+}
+
+.api-doc-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.api-doc-header h2 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 26px;
+  line-height: 1.25;
+}
+
+.api-doc-header p {
+  margin: 8px 0 0;
+  color: #64748b;
+  font-size: 14px;
+}
+
+.api-doc-base {
+  display: grid;
+  gap: 6px;
+  min-width: 260px;
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.api-doc-base span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.api-doc-base code,
+.endpoint-line code,
+.api-doc-section code {
+  color: #1d4ed8;
+  font-family: "Cascadia Mono", Consolas, monospace;
+}
+
+.api-doc-tip {
+  margin-top: 18px;
+  border-radius: 8px;
+}
+
+.api-doc-section {
+  display: grid;
+  gap: 12px;
+  padding: 26px 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.api-doc-section:last-child {
+  border-bottom: 0;
+}
+
+.api-doc-section h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 20px;
+}
+
+.api-doc-section h4 {
+  margin: 10px 0 0;
+  color: #1e293b;
+  font-size: 15px;
+}
+
+.api-doc-section p {
+  margin: 0;
+  color: #475569;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.endpoint-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #eff6ff;
+}
+
+.endpoint-line span {
+  flex: 0 0 auto;
+  color: #1e40af;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.api-doc-section :deep(.n-table) {
+  font-size: 13px;
+}
+
+.api-doc-section :deep(th) {
+  color: #334155;
+  font-weight: 700;
+  background: #f8fafc;
+}
+
+.api-doc-section :deep(td) {
+  vertical-align: top;
+}
+
+.api-config-section {
+  background: #fbfdff;
+}
+
+.api-doc-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 760px) {
+  .api-doc-card :deep(.n-card__content) {
+    padding: 20px 16px;
+  }
+
+  .api-doc-header,
+  .endpoint-line {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .api-doc-base {
+    min-width: 0;
+  }
+}
+</style>
