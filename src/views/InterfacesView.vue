@@ -106,6 +106,8 @@
         <ul class="api-list">
           <li><code>POST /api/upload/ingest</code>：外部平台上传账号到本系统（token 鉴权）。</li>
           <li><code>GET /api/open/accounts</code>：获取账号列表（开放 API，支持 keyword 查询）。</li>
+          <li><code>GET /api/external/microsoft/accounts</code>：按邮箱关键词查询微软邮箱列表（外部专用，只返回安全字段）。</li>
+          <li><code>GET /api/external/microsoft/messages</code>：按完整邮箱查询微软邮箱邮件（外部专用，默认返回正文）。</li>
           <li>
             <code>GET /api/open/accounts/:id/messages?mode=auto|graph|imap</code>
             ：按账号 ID 获取合并后的收件箱与垃圾邮件，默认 <code>auto</code>。
@@ -135,6 +137,10 @@
             <p class="hint">
               管理后台默认使用 <code>mode=auto</code>，会优先尝试 Graph，失败后回退 Outlook/IMAP 兼容读取。
             </p>
+            <p class="hint">外部专用：按邮箱关键词查询微软邮箱列表：</p>
+            <n-code :code="externalMicrosoftAccountsCurl" language="bash" word-wrap />
+            <p class="hint">外部专用：按完整邮箱查询邮件：</p>
+            <n-code :code="externalMicrosoftMessagesCurl" language="bash" word-wrap />
             <p class="hint">获取账号列表：</p>
             <n-code :code="openApiCurlListAccounts" language="bash" word-wrap />
             <p class="hint">按账号 ID 取件：</p>
@@ -236,6 +242,16 @@ const openApiCurlListAccounts = computed(() => {
   -H "${mailApiTokenHeader.value}: <MAIL_API_TOKEN>"`;
 });
 
+const externalMicrosoftAccountsCurl = computed(() => {
+  return `curl "${apiBaseUrl.value}/api/external/microsoft/accounts?email=hotmail" \\
+  -H "${mailApiTokenHeader.value}: <MAIL_API_TOKEN>"`;
+});
+
+const externalMicrosoftMessagesCurl = computed(() => {
+  return `curl "${apiBaseUrl.value}/api/external/microsoft/messages?email=example@hotmail.com&mode=auto" \\
+  -H "${mailApiTokenHeader.value}: <MAIL_API_TOKEN>"`;
+});
+
 const openApiCurlById = computed(() => {
   return `curl "${apiBaseUrl.value}/api/open/accounts/1/messages?mode=auto" \\
   -H "${mailApiTokenHeader.value}: <MAIL_API_TOKEN>"`;
@@ -264,6 +280,8 @@ const adminApiDoc = `POST /api/auth/login                     后台管理员登
 POST /api/auth/logout                    退出登录
 GET  /api/auth/me                        获取当前登录用户
 GET  /api/accounts                       获取账号列表
+GET  /api/external/microsoft/accounts    外部按邮箱关键词查询微软邮箱列表
+GET  /api/external/microsoft/messages    外部按完整邮箱查询微软邮箱邮件
 POST /api/accounts                       新增账号
 PUT  /api/accounts/:id                   更新账号
 DELETE /api/accounts/:id                 删除账号

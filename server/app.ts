@@ -78,6 +78,20 @@ interface AccountPayload {
   remark?: string;
 }
 
+interface ExternalMicrosoftAccountItem {
+  id: number;
+  account: string;
+  remark: string | null;
+  authType: AccountRow['authType'];
+  syncStatus: string;
+  syncMessage: string | null;
+  fetchedAt: string | null;
+  fetchedCount: number;
+  mailFetchProvider: MailFetchProvider | null;
+  mailFetchScope: MailFetchScopeKey | null;
+  createdAt: string;
+}
+
 interface IngestConfig {
   delimiter: string;
   captchaField: string;
@@ -1145,6 +1159,55 @@ app.post('/api/open/messages', async (c) => {
     account: account.account,
     mode,
     resolvedMode: result.resolvedMode,
+    messages
+  });
+});
+
+app.get('/api/external/microsoft/accounts', async (c) => {
+  validateOpenApiToken(c, getMailApiToken(c.env));
+
+  const email = asText(c.req.query('email')).trim();
+  if (!email) {
+    throw new HTTPException(400, { message: 'email 不能为空' });
+  }
+
+  const items = await queryAccounts(c.env.DB, email);
+  return c.json({
+    items: items.map(serializeExternalMicrosoftAccount),
+    total: items.length
+  });
+});
+
+app.get('/api/external/microsoft/messages', async (c) => {
+  validateOpenApiToken(c, getMailApiToken(c.env));
+
+  const email = asText(c.req.query('email')).trim();
+  if (!email) {
+    throw new HTTPException(400, { message: 'email 不能为空' });
+  }
+
+  const mode = parseMailFetchMode(c.req.query('mode'), 'auto');
+  const account = await fetchAccountByAccount(c.env.DB, email);
+  if (!account) {
+    throw new HTTPException(404, { message: '邮箱不存在' });
+  }
+
+  const result = await fetchAccountMessages(
+    { MS_CLIENT_ID: c.env.MS_CLIENT_ID, MS_CLIENT_SECRET: c.env.MS_CLIENT_SECRET },
+    c.env.DB,
+    account,
+    mode,
+    true
+  );
+  if (!result.ok) {
+    throw new HTTPException(400, { message: result.message });
+  }
+
+  const messages = await applyMailReadMarks(c.env.DB, 'microsoft', account.account, result.messages);
+  return c.json({
+    account: account.account,
+    resolvedMode: result.resolvedMode,
+    fetchedCount: messages.length,
     messages
   });
 });
@@ -5226,6 +5289,22 @@ function serializeAccountRow(row: AccountRow): AccountRow & {
   };
 }
 
+function serializeExternalMicrosoftAccount(row: AccountRow): ExternalMicrosoftAccountItem {
+  return {
+    id: row.id,
+    account: row.account,
+    remark: row.remark,
+    authType: row.authType,
+    syncStatus: row.syncStatus,
+    syncMessage: row.syncMessage,
+    fetchedAt: row.fetchedAt,
+    fetchedCount: row.fetchedCount,
+    mailFetchProvider: row.mailFetchProvider,
+    mailFetchScope: row.mailFetchScope,
+    createdAt: row.createdAt
+  };
+}
+
 function calculateTokenCountdownDays(tokenBaseAt: string | null): number | null {
   if (!tokenBaseAt) {
     return null;
@@ -5465,7 +5544,7 @@ async function updateAccountPassword(db: D1Database, id: number, password: strin
 
 async function fetchAccountByAccount(db: D1Database, account: string): Promise<AccountRow | null> {
   const row = await db
-    .prepare(`${ACCOUNT_SELECT_SQL} WHERE a.account = ? ORDER BY a.id DESC LIMIT 1`)
+    .prepare(`${ACCOUNT_SELECT_SQL} WHERE LOWER(TRIM(a.account)) = LOWER(TRIM(?)) ORDER BY a.id DESC LIMIT 1`)
     .bind(account)
     .first<AccountRow>();
   return row ?? null;
@@ -6517,6 +6596,8 @@ function isPublicApiPath(pathname: string): boolean {
     pathname === OPEN_MESSAGES_PATH ||
     /^\/api\/public\/cloud-mail\/shares\/[^/]+$/.test(pathname) ||
     pathname === '/api/open/accounts' ||
+    pathname === '/api/external/microsoft/accounts' ||
+    pathname === '/api/external/microsoft/messages' ||
     /^\/api\/open\/accounts\/\d+\/messages$/.test(pathname) ||
     /^\/api\/open\/accounts\/\d+\/remark$/.test(pathname) ||
     /^\/api\/open\/accounts\/\d+$/.test(pathname)
