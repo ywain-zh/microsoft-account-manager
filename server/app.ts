@@ -203,6 +203,10 @@ interface TranslationConfig {
   deeplxApiKey: string;
 }
 
+interface ExternalApiConfig {
+  mailApiToken: string;
+}
+
 interface TranslationResponsePayload {
   provider: TranslationProvider;
   model?: string;
@@ -450,6 +454,7 @@ const DEFAULT_SUB2API_CONFIG: Sub2ApiConfig = {
 };
 
 const TRANSLATION_CONFIG_KEY = 'translation_config';
+const EXTERNAL_API_CONFIG_KEY = 'external_api_config';
 const DEFAULT_TRANSLATION_MODEL = 'gpt-5.4-mini';
 const TRANSLATION_TIMEOUT_MS = 45000;
 const TRANSLATION_MAX_TEXT_LENGTH = 30000;
@@ -466,6 +471,10 @@ const DEFAULT_TRANSLATION_CONFIG: TranslationConfig = {
   openaiModel: DEFAULT_TRANSLATION_MODEL,
   deeplxBaseUrl: '',
   deeplxApiKey: ''
+};
+
+const DEFAULT_EXTERNAL_API_CONFIG: ExternalApiConfig = {
+  mailApiToken: ''
 };
 
 const ACCOUNT_SELECT_SQL = `
@@ -746,7 +755,7 @@ app.get('/api/accounts', async (c) => {
 });
 
 app.get('/api/open/accounts', async (c) => {
-  validateOpenApiToken(c, getMailApiToken(c.env));
+  await validateMailApiRequest(c);
 
   const keyword = (c.req.query('keyword') ?? '').trim();
   const items = await queryAccounts(c.env.DB, keyword);
@@ -1094,7 +1103,7 @@ app.post('/api/accounts/:id/messages/read', async (c) => {
 });
 
 app.get('/api/open/accounts/:id/messages', async (c) => {
-  validateOpenApiToken(c, getMailApiToken(c.env));
+  await validateMailApiRequest(c);
 
   const id = parseNumericId(c.req.param('id'));
   const mode = parseMailFetchMode(c.req.query('mode'), 'auto');
@@ -1126,7 +1135,7 @@ app.get('/api/open/accounts/:id/messages', async (c) => {
 });
 
 app.post('/api/open/messages', async (c) => {
-  validateOpenApiToken(c, getMailApiToken(c.env));
+  await validateMailApiRequest(c);
 
   const body = await readJson<{ id?: unknown; account?: unknown; mode?: unknown }>(c);
   const mode = parseMailFetchMode(body.mode, 'auto');
@@ -1164,7 +1173,7 @@ app.post('/api/open/messages', async (c) => {
 });
 
 app.get('/api/external/microsoft/accounts', async (c) => {
-  validateOpenApiToken(c, getMailApiToken(c.env));
+  await validateMailApiRequest(c);
 
   const email = asText(c.req.query('email')).trim();
   if (!email) {
@@ -1179,7 +1188,7 @@ app.get('/api/external/microsoft/accounts', async (c) => {
 });
 
 app.get('/api/external/microsoft/messages', async (c) => {
-  validateOpenApiToken(c, getMailApiToken(c.env));
+  await validateMailApiRequest(c);
 
   const email = asText(c.req.query('email')).trim();
   if (!email) {
@@ -1213,7 +1222,7 @@ app.get('/api/external/microsoft/messages', async (c) => {
 });
 
 app.patch('/api/open/accounts/:id/remark', async (c) => {
-  validateOpenApiToken(c, getMailApiToken(c.env));
+  await validateMailApiRequest(c);
 
   const id = parseNumericId(c.req.param('id'));
   const body = await readJson<{ remark?: unknown }>(c);
@@ -1233,7 +1242,7 @@ app.patch('/api/open/accounts/:id/remark', async (c) => {
 });
 
 app.delete('/api/open/accounts/:id', async (c) => {
-  validateOpenApiToken(c, getMailApiToken(c.env));
+  await validateMailApiRequest(c);
 
   const id = parseNumericId(c.req.param('id'));
   const result = await c.env.DB.prepare('DELETE FROM accounts WHERE id = ?').bind(id).run();
@@ -1261,6 +1270,22 @@ app.put('/api/ingest-config', async (c) => {
 
   await setAppSetting(c.env.DB, 'ingest_config', JSON.stringify(item));
 
+  return c.json({ item });
+});
+
+app.get('/api/external-api/config', async (c) => {
+  const item = await getExternalApiConfig(c.env.DB, c.env);
+  return c.json({
+    item,
+    tokenHeader: MAIL_API_TOKEN_HEADER
+  });
+});
+
+app.put('/api/external-api/config', async (c) => {
+  const body = await readJson<Partial<ExternalApiConfig>>(c);
+  const item = normalizeExternalApiConfig(body);
+  validateExternalApiConfig(item);
+  await setAppSetting(c.env.DB, EXTERNAL_API_CONFIG_KEY, JSON.stringify(item));
   return c.json({ item });
 });
 
@@ -2200,6 +2225,23 @@ async function getTranslationConfig(db: D1Database): Promise<TranslationConfig> 
   }
 }
 
+async function getExternalApiConfig(db: D1Database, env?: Pick<Bindings, 'MAIL_API_TOKEN' | 'INGEST_TOKEN'>): Promise<ExternalApiConfig> {
+  const value = await getAppSetting(db, EXTERNAL_API_CONFIG_KEY);
+
+  if (value) {
+    try {
+      const parsed = JSON.parse(value) as Partial<ExternalApiConfig>;
+      return normalizeExternalApiConfig(parsed);
+    } catch {
+      return DEFAULT_EXTERNAL_API_CONFIG;
+    }
+  }
+
+  return {
+    mailApiToken: asText(env?.MAIL_API_TOKEN || env?.INGEST_TOKEN).trim()
+  };
+}
+
 function normalizeIngestConfig(input: Partial<IngestConfig>): IngestConfig {
   return {
     delimiter: asText(input.delimiter).trim() || DEFAULT_INGEST_CONFIG.delimiter,
@@ -2407,6 +2449,21 @@ function validateSub2ApiConfig(config: Sub2ApiConfig): void {
 
   if (config.adminApiKey.length > 1024) {
     throw new HTTPException(400, { message: '管理员 API Key 长度不能超过 1024 个字符' });
+  }
+}
+
+function validateExternalApiConfig(config: ExternalApiConfig): void {
+  if (!config.mailApiToken) {
+    throw new HTTPException(400, { message: '请填写开放接口鉴权 Key' });
+  }
+  if (config.mailApiToken.length < 24) {
+    throw new HTTPException(400, { message: '开放接口鉴权 Key 长度不能少于 24 个字符' });
+  }
+  if (config.mailApiToken.length > 256) {
+    throw new HTTPException(400, { message: '开放接口鉴权 Key 长度不能超过 256 个字符' });
+  }
+  if (/\s/.test(config.mailApiToken)) {
+    throw new HTTPException(400, { message: '开放接口鉴权 Key 不能包含空白字符' });
   }
 }
 
@@ -5235,6 +5292,12 @@ function normalizeMailFetchScope(value: string | null | undefined): MailFetchSco
     : null;
 }
 
+function normalizeExternalApiConfig(input: Partial<ExternalApiConfig>): ExternalApiConfig {
+  return {
+    mailApiToken: asText(input.mailApiToken).trim()
+  };
+}
+
 function getScopeKeysByMode(
   mode: ResolvedMailFetchMode,
   preferredScope: string | null | undefined
@@ -7025,8 +7088,12 @@ function getIngestToken(env: Bindings): string {
   return token;
 }
 
-function getMailApiToken(env: Bindings): string {
-  const token = asText(env.MAIL_API_TOKEN || env.INGEST_TOKEN).trim();
+async function getConfiguredMailApiToken(
+  db: D1Database,
+  env: Pick<Bindings, 'MAIL_API_TOKEN' | 'INGEST_TOKEN'>
+): Promise<string> {
+  const config = await getExternalApiConfig(db, env);
+  const token = asText(config.mailApiToken).trim();
   if (!token) {
     throw new HTTPException(500, {
       message: '服务端未配置 MAIL_API_TOKEN（或可复用 INGEST_TOKEN）环境变量'
@@ -7081,6 +7148,11 @@ function validateOpenApiToken(
   if (!receivedToken || !timingSafeEqual(receivedToken, expectedToken)) {
     throw new HTTPException(401, { message: '开放接口令牌无效' });
   }
+}
+
+async function validateMailApiRequest(c: Context<{ Bindings: Bindings; Variables: Variables }>): Promise<void> {
+  const expectedToken = await getConfiguredMailApiToken(c.env.DB, c.env);
+  validateOpenApiToken(c, expectedToken);
 }
 
 async function createSessionToken(username: string, secret: string): Promise<string> {

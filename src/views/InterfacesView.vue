@@ -123,6 +123,21 @@
       </div>
     </n-card>
 
+    <n-card :bordered="false" size="small" class="content-card interface-card main-card">
+      <div class="card-section-stack">
+        <div class="card-section-header">
+          <p class="section-kicker">Microsoft Mail API</p>
+          <h3 class="section-title">外部微软邮箱接口文档</h3>
+          <p class="section-copy">外部系统只需要传邮箱名称和鉴权 Key，即可查询邮箱列表或读取邮件正文。</p>
+        </div>
+
+        <n-space vertical class="code-example-stack">
+          <p class="hint">鉴权方式：{{ mailApiTokenHeader }}: &lt;MAIL_API_TOKEN&gt;，或 Authorization: Bearer &lt;MAIL_API_TOKEN&gt;。</p>
+          <n-code :code="externalMicrosoftDoc" language="text" word-wrap />
+        </n-space>
+      </div>
+    </n-card>
+
     <div class="interface-grid">
       <n-card :bordered="false" size="small" class="content-card interface-card main-card">
         <div class="card-section-stack">
@@ -133,7 +148,7 @@
           </div>
 
           <n-space vertical class="code-example-stack">
-            <p class="hint">支持 Header：{{ mailApiTokenHeader }} 或 Authorization: Bearer token。</p>
+            <p class="hint">支持 Header：{{ mailApiTokenHeader }} 或 Authorization: Bearer token，可在系统设置的接口鉴权里配置。</p>
             <p class="hint">
               管理后台默认使用 <code>mode=auto</code>，会优先尝试 Graph，失败后回退 Outlook/IMAP 兼容读取。
             </p>
@@ -275,6 +290,24 @@ const openApiCurlDeleteAccount = computed(() => {
   return `curl -X DELETE "${apiBaseUrl.value}/api/open/accounts/1" \\
   -H "${mailApiTokenHeader.value}: <MAIL_API_TOKEN>"`;
 });
+
+const externalMicrosoftDoc = `GET /api/external/microsoft/accounts?email=<邮箱关键词>
+用途：模糊查询微软邮箱列表
+必填参数：email
+返回字段：id, account, remark, authType, syncStatus, syncMessage, fetchedAt, fetchedCount, mailFetchProvider, mailFetchScope, createdAt
+不会返回：password, client_id, client_secret, refresh_token
+
+GET /api/external/microsoft/messages?email=<完整邮箱>&mode=auto
+用途：按完整邮箱精确读取邮件，默认返回邮件正文
+必填参数：email
+可选参数：mode=auto|graph|imap，默认 auto
+返回字段：account, resolvedMode, fetchedCount, messages
+邮件字段：id, subject, from, receivedAt, preview, contentType, content, folderKind, folderLabel, isRead
+
+错误规则：
+401 token 缺失或错误
+400 email 为空，或微软取件失败
+404 邮箱不存在`;
 
 const adminApiDoc = `POST /api/auth/login                     后台管理员登录
 POST /api/auth/logout                    退出登录

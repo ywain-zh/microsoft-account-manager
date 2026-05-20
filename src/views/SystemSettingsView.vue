@@ -13,6 +13,9 @@
           <n-button :type="activeTab === 'backup' ? 'primary' : 'default'" @click="activeTab = 'backup'">
             备份
           </n-button>
+          <n-button :type="activeTab === 'externalApi' ? 'primary' : 'default'" @click="activeTab = 'externalApi'">
+            接口鉴权
+          </n-button>
         </div>
         <div v-if="activeTab === 'translation'" class="settings-toolbar">
           <span class="settings-toolbar-label">翻译服务首选项</span>
@@ -168,6 +171,37 @@
         </div>
       </section>
 
+      <section v-if="activeTab === 'externalApi'" class="backup-section">
+        <div class="section-title">
+          <h3>开放接口鉴权</h3>
+          <span>{{ externalTokenHeader || 'x-mail-api-token' }}</span>
+        </div>
+        <n-alert type="info" :bordered="false" class="backup-alert">
+          该 Key 用于外部系统调用微软邮箱接口，支持请求头 x-mail-api-token 或 Authorization: Bearer。保存后立即生效。
+        </n-alert>
+
+        <div class="external-api-panel">
+          <n-form label-placement="top" autocomplete="off">
+            <n-form-item label="鉴权 Key">
+              <n-input
+                v-model:value="externalApiForm.mailApiToken"
+                type="password"
+                show-password-on="click"
+                placeholder="请输入至少 24 位的开放接口鉴权 Key"
+                :input-props="externalApiKeyInputProps"
+              />
+            </n-form-item>
+          </n-form>
+
+          <div class="external-api-actions">
+            <n-button :loading="externalApiLoading" @click="loadExternalApiConfig">重新载入</n-button>
+            <n-button @click="generateExternalApiKey">生成新 Key</n-button>
+            <n-button :disabled="!externalApiForm.mailApiToken" @click="copyExternalApiKey">复制 Key</n-button>
+            <n-button type="primary" :loading="externalApiSaving" @click="saveExternalApiConfig">保存 Key</n-button>
+          </div>
+        </div>
+      </section>
+
       <div v-if="activeTab === 'translation'" class="settings-footer">
         <n-button :loading="loading" @click="loadConfig">重新载入</n-button>
         <n-button type="primary" :loading="saving" @click="saveConfig">保存配置</n-button>
@@ -191,8 +225,9 @@ import {
   createDiscreteApi
 } from 'naive-ui';
 import { api } from '../api';
+import { copyToClipboard } from '../utils/clipboard';
 import { downloadBlob } from '../utils/download';
-import type { SystemBackupJob, TranslationConfig, TranslationProvider, TranslationTestResult } from '../types';
+import type { ExternalApiConfig, SystemBackupJob, TranslationConfig, TranslationProvider, TranslationTestResult } from '../types';
 
 const { message } = createDiscreteApi(['message']);
 
@@ -209,13 +244,20 @@ const form = reactive<TranslationConfig>({
   deeplxApiKey: ''
 });
 
+const externalApiForm = reactive<ExternalApiConfig>({
+  mailApiToken: ''
+});
+
 const loading = ref(false);
 const saving = ref(false);
+const externalApiLoading = ref(false);
+const externalApiSaving = ref(false);
+const externalTokenHeader = ref('x-mail-api-token');
 const modelLoading = ref(false);
 const testingProvider = ref<TranslationProvider | ''>('');
 const modelItems = ref<string[]>([]);
 const testResults = ref<TranslationTestResult[]>([]);
-const activeTab = ref<'translation' | 'backup'>('translation');
+const activeTab = ref<'translation' | 'backup' | 'externalApi'>('translation');
 const backupStarting = ref(false);
 const backupJob = ref<SystemBackupJob | null>(null);
 let backupPollTimer: number | null = null;
@@ -239,6 +281,14 @@ const openAiKeyInputProps = {
 const deeplxKeyInputProps = {
   name: 'translation-deeplx-api-key',
   autocomplete: 'new-password',
+  'data-lpignore': 'true',
+  'data-1p-ignore': 'true'
+};
+
+const externalApiKeyInputProps = {
+  name: 'external-mail-api-token',
+  autocomplete: 'new-password',
+  spellcheck: false,
   'data-lpignore': 'true',
   'data-1p-ignore': 'true'
 };
@@ -286,6 +336,7 @@ const backupLogText = computed(() => {
 
 onMounted(() => {
   void loadConfig();
+  void loadExternalApiConfig();
   restoreBackupJob();
 });
 
@@ -316,6 +367,58 @@ async function saveConfig(): Promise<void> {
     message.error(getErrorMessage(error));
   } finally {
     saving.value = false;
+  }
+}
+
+async function loadExternalApiConfig(): Promise<void> {
+  externalApiLoading.value = true;
+  try {
+    const { item, tokenHeader } = await api.getExternalApiConfig();
+    externalApiForm.mailApiToken = item.mailApiToken;
+    externalTokenHeader.value = tokenHeader || 'x-mail-api-token';
+  } catch (error) {
+    message.error(getErrorMessage(error));
+  } finally {
+    externalApiLoading.value = false;
+  }
+}
+
+async function saveExternalApiConfig(): Promise<void> {
+  externalApiSaving.value = true;
+  try {
+    const { item } = await api.updateExternalApiConfig({
+      mailApiToken: externalApiForm.mailApiToken.trim()
+    });
+    externalApiForm.mailApiToken = item.mailApiToken;
+    message.success('开放接口鉴权 Key 已保存');
+  } catch (error) {
+    message.error(getErrorMessage(error));
+  } finally {
+    externalApiSaving.value = false;
+  }
+}
+
+function generateExternalApiKey(): void {
+  const bytes = new Uint8Array(36);
+  crypto.getRandomValues(bytes);
+  externalApiForm.mailApiToken = Array.from(bytes)
+    .map((value) => value.toString(16).padStart(2, '0'))
+    .join('');
+  message.success('已生成新 Key，保存后生效');
+}
+
+async function copyExternalApiKey(): Promise<void> {
+  const token = externalApiForm.mailApiToken.trim();
+  if (!token) {
+    message.warning('当前没有可复制的 Key');
+    return;
+  }
+
+  const copied = await copyToClipboard(token);
+  if (copied) {
+    message.success('Key 已复制');
+  } else {
+    message.error('复制失败，请检查浏览器权限');
   }
 }
 
@@ -747,6 +850,18 @@ function getErrorMessage(error: unknown): string {
 }
 
 .backup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.external-api-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.external-api-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;

@@ -12,6 +12,7 @@ import type {
   CloudMailPublicShareInboxResponse,
   CloudMailShareResponse,
   CloudMailSyncResponse,
+  ExternalApiConfig,
   IngestConfig,
   ImportResult,
   MailGptValidityService,
@@ -231,6 +232,17 @@ export const api = {
 
   updateIngestConfig(payload: IngestConfig): Promise<{ item: IngestConfig }> {
     return request<{ item: IngestConfig }>('/api/ingest-config', {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  getExternalApiConfig(): Promise<{ item: ExternalApiConfig; tokenHeader: string }> {
+    return request<{ item: ExternalApiConfig; tokenHeader: string }>('/api/external-api/config');
+  },
+
+  updateExternalApiConfig(payload: ExternalApiConfig): Promise<{ item: ExternalApiConfig }> {
+    return request<{ item: ExternalApiConfig }>('/api/external-api/config', {
       method: 'PUT',
       body: JSON.stringify(payload)
     });

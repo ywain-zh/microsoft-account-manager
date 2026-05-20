@@ -56,6 +56,16 @@ const router = createRouter({
           }
         },
         {
+          path: 'services/sub2api/interfaces',
+          name: 'sub2api-interfaces',
+          component: () => import('./views/InterfacesView.vue'),
+          meta: {
+            requiresAuth: true,
+            title: '接口文档',
+            description: '查看外部接口调用方式、鉴权 Header 和请求示例。'
+          }
+        },
+        {
           path: 'services/system/settings',
           name: 'system-settings',
           component: () => import('./views/SystemSettingsView.vue'),

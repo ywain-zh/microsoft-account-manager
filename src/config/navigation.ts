@@ -23,6 +23,11 @@ export const consoleNavigation: ConsoleNavItem[] = [
     path: '/services/sub2api/checker'
   },
   {
+    key: 'sub2api-interfaces',
+    label: '接口文档',
+    path: '/services/sub2api/interfaces'
+  },
+  {
     key: 'system-settings',
     label: '系统设置',
     path: '/services/system/settings'

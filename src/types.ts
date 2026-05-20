@@ -50,6 +50,10 @@ export interface IngestConfig {
   tokenField: string;
 }
 
+export interface ExternalApiConfig {
+  mailApiToken: string;
+}
+
 export interface CloudMailConfig {
   apiBaseUrl: string;
   adminEmail: string;
