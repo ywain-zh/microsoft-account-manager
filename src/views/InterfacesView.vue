@@ -101,10 +101,10 @@
         </n-table>
 
         <h4>请求示例</h4>
-        <n-code :code="externalMicrosoftAccountsCurl" language="bash" word-wrap />
+        <api-code-block :code="externalMicrosoftAccountsCurl" language="bash" />
 
         <h4>返回示例</h4>
-        <n-code :code="accountsResponseExample" language="json" word-wrap />
+        <api-code-block :code="accountsResponseExample" language="json" />
       </section>
 
       <section class="api-doc-section">
@@ -173,10 +173,10 @@
         </n-table>
 
         <h4>请求示例</h4>
-        <n-code :code="externalMicrosoftMessagesCurl" language="bash" word-wrap />
+        <api-code-block :code="externalMicrosoftMessagesCurl" language="bash" />
 
         <h4>返回示例</h4>
-        <n-code :code="messagesResponseExample" language="json" word-wrap />
+        <api-code-block :code="messagesResponseExample" language="json" />
       </section>
 
       <section class="api-doc-section">
@@ -262,10 +262,10 @@
         </n-table>
 
         <h4>请求示例</h4>
-        <n-code :code="curlExample" language="bash" word-wrap />
+        <api-code-block :code="curlExample" language="bash" />
 
         <h4>JSON 示例</h4>
-        <n-code :code="mappedPayloadExample" language="json" word-wrap />
+        <api-code-block :code="mappedPayloadExample" language="json" />
       </section>
 
       <section class="api-doc-section api-config-section">
@@ -322,7 +322,8 @@
 
 <script setup lang="ts">
 import { computed, onMounted } from 'vue';
-import { NAlert, NButton, NCard, NCode, NForm, NFormItem, NGi, NGrid, NInput, NTable } from 'naive-ui';
+import { NAlert, NButton, NCard, NForm, NFormItem, NGi, NGrid, NInput, NTable } from 'naive-ui';
+import ApiCodeBlock from '../components/ApiCodeBlock.vue';
 import { useAdminConsole } from '../state/admin-console';
 
 const admin = useAdminConsole();
