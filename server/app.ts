@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
 import { Hono } from 'hono';
@@ -1326,10 +1327,7 @@ app.get('/api/sub2api/accounts/gpt-json-export', async (c) => {
   ensureSub2ApiConfigured(config);
 
   const rawAccounts = await searchRawSub2ApiAccounts(config, email);
-  const items = rawAccounts
-    .filter((item) => doesSub2ApiRecordMatchEmail(item, email))
-    .map((item) => normalizeSub2ApiGptExportItem(item))
-    .filter((item): item is Sub2ApiGptExportItem => item !== null);
+  const items = await collectSub2ApiGptExportItems(email, rawAccounts);
 
   if (items.length === 0) {
     throw new HTTPException(400, { message: `未找到 ${email} 的可导出 GPT 账号凭据` });
@@ -3461,6 +3459,67 @@ async function searchRawSub2ApiAccounts(config: Sub2ApiConfig, email: string): P
   return extractSub2ApiItems(payload);
 }
 
+async function collectSub2ApiGptExportItems(email: string, rawAccounts: unknown[]): Promise<Sub2ApiGptExportItem[]> {
+  const items: Sub2ApiGptExportItem[] = [];
+
+  for (const rawAccount of rawAccounts) {
+    if (!doesSub2ApiRecordMatchEmail(rawAccount, email)) {
+      continue;
+    }
+
+    const item = normalizeSub2ApiGptExportItem(rawAccount);
+    if (item) {
+      items.push(item);
+      continue;
+    }
+
+    const account = normalizeSub2ApiAccount(rawAccount);
+    if (!account) {
+      continue;
+    }
+
+    const databaseItem = await getSub2ApiGptExportItemFromPostgres(account.id, email);
+    if (databaseItem) {
+      items.push(databaseItem);
+    }
+  }
+
+  return items;
+}
+
+async function getSub2ApiGptExportItemFromPostgres(accountId: number, email: string): Promise<Sub2ApiGptExportItem | null> {
+  const sql = `
+    SELECT jsonb_build_object(
+      'id', id,
+      'name', name,
+      'email', COALESCE(credentials->>'email', name),
+      'credentials', credentials,
+      'expires_at', expires_at,
+      'updated_at', updated_at
+    )::text
+    FROM public.accounts
+    WHERE id = ${accountId}
+      AND lower(COALESCE(credentials->>'email', name)) = ${toPostgresLiteral(email)}
+      AND deleted_at IS NULL
+    LIMIT 1;
+  `;
+  const rawText = await runDockerCommand(
+    'sub2api-postgres',
+    'psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" -At',
+    sql
+  );
+  const payloadText = rawText.trim();
+  if (!payloadText) {
+    return null;
+  }
+
+  try {
+    return normalizeSub2ApiGptExportItem(JSON.parse(payloadText) as unknown);
+  } catch {
+    throw new HTTPException(502, { message: 'Sub2API 数据库返回的数据格式不正确' });
+  }
+}
+
 async function deleteSub2ApiAccounts(
   config: Sub2ApiConfig,
   accountIds: number[]
@@ -3708,6 +3767,41 @@ function formatSub2ApiDeleteResultMessage(rawText: string): string {
   }
 
   return '账号已删除';
+}
+
+function toPostgresLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function runDockerCommand(containerName: string, command: string, stdin = ''): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('docker', ['exec', '-i', containerName, 'sh', '-lc', command], {
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+    child.on('error', () => {
+      reject(new HTTPException(502, { message: '无法读取 Sub2API 数据库，请检查服务器 Docker 权限' }));
+    });
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(stdout);
+        return;
+      }
+
+      reject(new HTTPException(502, { message: truncate(stderr.trim() || 'Sub2API 数据库查询失败', 240) }));
+    });
+    child.stdin.end(stdin);
+  });
 }
 
 function extractSub2ApiItems(payload: unknown): unknown[] {
