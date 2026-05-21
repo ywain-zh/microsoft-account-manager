@@ -435,6 +435,8 @@ const DEFAULT_INGEST_CONFIG: IngestConfig = {
 };
 
 const CLOUD_MAIL_CONFIG_KEY = 'cloud_mail_config';
+const CLOUD_MAIL_UPSTREAM_PAGE_SIZE = 50;
+const CLOUD_MAIL_EXACT_SEARCH_PAGE_LIMIT = 20;
 const CLOUD_MAIL_SHARE_TOKEN_BYTES = 24;
 const CLOUD_MAIL_SHARE_TOKEN_PREFIX = 'cloud-mail-share';
 
@@ -1622,7 +1624,7 @@ app.get('/api/cloud-mail/accounts', async (c) => {
   const pageSize = parsePageNumber(c.req.query('pageSize'), 20, 1, 100);
   const keyword = asText(c.req.query('keyword')).trim();
 
-  const result = await listCloudMailAccountCache(c.env.DB, config, {
+  const result = await listCloudMailAccounts(c.env.DB, config, {
     page,
     pageSize,
     keyword
@@ -4589,12 +4591,20 @@ function normalizeCloudMailListPayload(
   };
 }
 
-async function listCloudMailAccounts(
-  db: D1Database,
+function normalizeCloudMailAccountEmail(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function isCompleteEmailKeyword(value: string): boolean {
+  const normalized = normalizeCloudMailAccountEmail(value);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized);
+}
+
+async function requestCloudMailAccountPage(
   config: CloudMailConfig,
+  token: string,
   options: { page: number; pageSize: number; keyword: string }
 ): Promise<CloudMailListResponse> {
-  const token = await getCloudMailAdminToken(config);
   const params = new URLSearchParams({
     num: String(options.page),
     size: String(options.pageSize),
@@ -4612,19 +4622,157 @@ async function listCloudMailAccounts(
     }
   });
 
-  const result = normalizeCloudMailListPayload(data, options.page, options.pageSize);
+  return normalizeCloudMailListPayload(data, options.page, options.pageSize);
+}
+
+async function attachCloudMailLocalState(
+  db: D1Database,
+  items: CloudMailAccountItem[]
+): Promise<CloudMailAccountItem[]> {
   const remarks = await queryCloudMailAccountRemarks(
     db,
-    result.items.map((item) => item.userId)
+    items.map((item) => item.userId)
+  );
+  const validity = await queryCloudMailGptValidity(
+    db,
+    items.map((item) => item.email)
   );
 
+  return items.map((item) => ({
+    ...item,
+    remark: remarks.get(item.userId) ?? null,
+    gptValidity: validity.get(normalizeGptValidityEmail(item.email)) ?? null
+  }));
+}
+
+async function upsertCloudMailAccountCacheItems(
+  db: D1Database,
+  config: CloudMailConfig,
+  items: CloudMailAccountItem[]
+): Promise<string> {
+  const syncedAt = new Date().toISOString();
+  const configKey = getCloudMailCacheKey(config);
+
+  for (const item of items) {
+    await upsertCloudMailAccountCache(db, configKey, item, syncedAt);
+  }
+
+  return syncedAt;
+}
+
+async function findCloudMailAccountByExactEmail(
+  config: CloudMailConfig,
+  token: string,
+  email: string
+): Promise<{ item: CloudMailAccountItem | null; total: number }> {
+  const normalizedEmail = normalizeCloudMailAccountEmail(email);
+  const items: CloudMailAccountItem[] = [];
+  let page = 1;
+  let total = 0;
+
+  do {
+    const result = await requestCloudMailAccountPage(config, token, {
+      page,
+      pageSize: CLOUD_MAIL_UPSTREAM_PAGE_SIZE,
+      keyword: normalizedEmail
+    });
+    total = result.total;
+    items.push(...result.items);
+
+    const matched = result.items.find((item) => normalizeCloudMailAccountEmail(item.email) === normalizedEmail);
+    if (matched) {
+      return { item: matched, total: 1 };
+    }
+
+    if (result.items.length === 0) {
+      break;
+    }
+
+    page += 1;
+  } while (items.length < total && page <= CLOUD_MAIL_EXACT_SEARCH_PAGE_LIMIT);
+
+  return { item: null, total: 0 };
+}
+
+async function listCloudMailAccountsFromRemote(
+  db: D1Database,
+  config: CloudMailConfig,
+  options: { page: number; pageSize: number; keyword: string }
+): Promise<CloudMailListResponse> {
+  const page = Math.max(1, options.page);
+  const pageSize = Math.max(1, Math.min(options.pageSize, 100));
+  const keyword = options.keyword.trim();
+  const token = await getCloudMailAdminToken(config);
+
+  if (keyword && isCompleteEmailKeyword(keyword)) {
+    const exact = await findCloudMailAccountByExactEmail(config, token, keyword);
+    const matchedItems = exact.item ? [exact.item] : [];
+    const items = page === 1 ? matchedItems : [];
+    const syncedAt = await upsertCloudMailAccountCacheItems(db, config, matchedItems);
+    return {
+      items: await attachCloudMailLocalState(db, items),
+      total: exact.total,
+      page,
+      pageSize,
+      syncedAt,
+      cacheEmpty: false
+    };
+  }
+
+  const start = (page - 1) * pageSize;
+  const end = start + pageSize;
+  const firstRemotePage = Math.floor(start / CLOUD_MAIL_UPSTREAM_PAGE_SIZE) + 1;
+  const lastRemotePage = Math.max(firstRemotePage, Math.ceil(end / CLOUD_MAIL_UPSTREAM_PAGE_SIZE));
+  const collected: CloudMailAccountItem[] = [];
+  let total = 0;
+
+  for (let remotePage = firstRemotePage; remotePage <= lastRemotePage; remotePage += 1) {
+    const result = await requestCloudMailAccountPage(config, token, {
+      page: remotePage,
+      pageSize: CLOUD_MAIL_UPSTREAM_PAGE_SIZE,
+      keyword
+    });
+    total = result.total;
+    collected.push(...result.items);
+
+    if (result.items.length === 0 || collected.length >= total) {
+      break;
+    }
+  }
+
+  const sliceStart = start - (firstRemotePage - 1) * CLOUD_MAIL_UPSTREAM_PAGE_SIZE;
+  const items = collected.slice(sliceStart, sliceStart + pageSize);
+  const syncedAt = await upsertCloudMailAccountCacheItems(db, config, collected);
+
   return {
-    ...result,
-    items: result.items.map((item) => ({
-      ...item,
-      remark: remarks.get(item.userId) ?? null
-    }))
+    items: await attachCloudMailLocalState(db, items),
+    total,
+    page,
+    pageSize,
+    syncedAt,
+    cacheEmpty: false
   };
+}
+
+async function listCloudMailAccounts(
+  db: D1Database,
+  config: CloudMailConfig,
+  options: { page: number; pageSize: number; keyword: string }
+): Promise<CloudMailListResponse> {
+  try {
+    return await listCloudMailAccountsFromRemote(db, config, options);
+  } catch (error) {
+    const configKey = getCloudMailCacheKey(config);
+    const cachedTotal = await countCloudMailAccountCache(db, configKey);
+    if (cachedTotal === 0) {
+      throw error;
+    }
+
+    return {
+      ...(await queryCloudMailAccountCache(db, configKey, options)),
+      cacheEmpty: false
+    };
+  }
 }
 
 function getCloudMailCacheKey(config: CloudMailConfig): string {
@@ -5520,6 +5668,49 @@ async function queryCloudMailAccountRemarks(db: D1Database, userIds: number[]): 
   return new Map((results ?? []).map((item) => [item.userId, item.remark ?? null]));
 }
 
+async function queryCloudMailGptValidity(
+  db: D1Database,
+  emails: string[]
+): Promise<Map<string, Sub2ApiGptValidityResponse | null>> {
+  const normalizedEmails = Array.from(new Set(emails.map(normalizeGptValidityEmail).filter(Boolean)));
+  if (normalizedEmails.length === 0) {
+    return new Map();
+  }
+
+  const placeholders = normalizedEmails.map(() => '?').join(',');
+  const { results } = await db
+    .prepare(
+      `SELECT
+         normalized_email AS normalizedEmail,
+         status AS gptValidityStatus,
+         message AS gptValidityMessage,
+         sub2api_account_id AS gptValidityAccountId,
+         sub2api_account_name AS gptValidityAccountName,
+         plan_type AS gptValidityPlanType,
+         checked_at AS gptValidityCheckedAt
+       FROM mail_gpt_validity_status
+       WHERE service = 'cloud-mail'
+         AND normalized_email IN (${placeholders})`
+    )
+    .bind(...normalizedEmails)
+    .all<{
+      normalizedEmail: string;
+      gptValidityStatus: MailGptValidityStatus | null;
+      gptValidityMessage: string | null;
+      gptValidityAccountId: number | null;
+      gptValidityAccountName: string | null;
+      gptValidityPlanType: Sub2ApiPlanType | null;
+      gptValidityCheckedAt: string | null;
+    }>();
+
+  return new Map(
+    (results ?? []).map((row) => [
+      row.normalizedEmail,
+      buildGptValidityResponseFromRow(row.normalizedEmail, row)
+    ])
+  );
+}
+
 async function upsertCloudMailAccountRemark(
   db: D1Database,
   item: CloudMailAccountItem,
@@ -5643,7 +5834,7 @@ async function fetchAllCloudMailAccounts(
   config: CloudMailConfig,
   keyword: string
 ): Promise<CloudMailAccountItem[]> {
-  const pageSize = 100;
+  const pageSize = CLOUD_MAIL_UPSTREAM_PAGE_SIZE;
   let page = 1;
   const items: CloudMailAccountItem[] = [];
   let total = 0;
@@ -5668,13 +5859,14 @@ async function fetchAllCloudMailAccounts(
     });
 
     const result = normalizeCloudMailListPayload(data, page, pageSize);
-    items.push(...result.items);
-    total = result.total;
-    if (result.items.length < pageSize) {
+    if (result.items.length === 0) {
       break;
     }
+
+    items.push(...result.items);
+    total = result.total;
     page += 1;
-  } while (items.length < total);
+  } while (!total || items.length < total);
 
   return items;
 }

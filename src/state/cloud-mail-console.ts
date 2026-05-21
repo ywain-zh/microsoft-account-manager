@@ -605,7 +605,7 @@ async function loadInitialData(force = false): Promise<void> {
   initialLoadPromise = (async () => {
     await loadConfig({ force, preferCache: true });
     if (hasConfiguredCloudMail.value) {
-      await loadAccounts({ force, preferCache: true, keepOnError: true });
+      await loadAccounts({ force: true, keepOnError: true });
       const syncKey = getCurrentConfigSyncKey();
       if (syncKey && total.value > 0 && !lastAccountsCacheEmpty.value && lastSilentSyncKey.value !== syncKey) {
         lastSilentSyncKey.value = syncKey;
@@ -903,18 +903,18 @@ async function saveRemark(): Promise<void> {
 
 async function handleSearch(): Promise<void> {
   tablePage.value = 1;
-  await loadAccounts();
+  await loadAccounts({ force: true });
 }
 
 async function handlePageChange(page: number): Promise<void> {
   tablePage.value = page;
-  await loadAccounts();
+  await loadAccounts({ force: true });
 }
 
 async function handlePageSizeChange(pageSize: number): Promise<void> {
   tablePageSize.value = pageSize;
   tablePage.value = 1;
-  await loadAccounts();
+  await loadAccounts({ force: true });
 }
 
 function handleCheckedRowKeysUpdate(keys: Array<string | number>): void {
