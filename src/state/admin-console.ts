@@ -108,6 +108,7 @@ const mailVisible = ref(false);
 const mailLoading = ref(false);
 const aliasLoading = ref(false);
 const aliasCreateLoading = ref(false);
+const aliasDeletingIds = ref<number[]>([]);
 
 const mailAccountId = ref<number | null>(null);
 const mailAccount = ref('');
@@ -858,6 +859,38 @@ async function createAliasAccount(): Promise<void> {
   }
 }
 
+function isDeletingAlias(aliasId: number): boolean {
+  return aliasDeletingIds.value.includes(aliasId);
+}
+
+async function deleteAliasAccount(alias: AccountAliasItem): Promise<void> {
+  const accountId = aliasForm.accountId;
+  if (!accountId) {
+    message.warning('请先选择主邮箱');
+    return;
+  }
+  if (isDeletingAlias(alias.id)) {
+    return;
+  }
+
+  const confirmed = window.confirm(`确认删除别名邮箱 ${alias.aliasAccount}？`);
+  if (!confirmed) {
+    return;
+  }
+
+  aliasDeletingIds.value = [...aliasDeletingIds.value, alias.id];
+  try {
+    const response = await api.deleteAccountAlias(accountId, alias.id);
+    aliasForm.aliases = response.aliases;
+    await loadAccounts();
+    message.success('别名邮箱已删除');
+  } catch (error) {
+    handleApiError(error);
+  } finally {
+    aliasDeletingIds.value = aliasDeletingIds.value.filter((item) => item !== alias.id);
+  }
+}
+
 async function saveRemark(): Promise<void> {
   if (!remarkForm.id) {
     message.warning('请先选择需要备注的邮箱');
@@ -1420,6 +1453,7 @@ export function useAdminConsole() {
     mailLoading,
     aliasLoading,
     aliasCreateLoading,
+    aliasDeletingIds,
     mailAccountId,
     mailAccount,
     mailItems,
@@ -1452,6 +1486,8 @@ export function useAdminConsole() {
     createAccount,
     updateAccount,
     createAliasAccount,
+    deleteAliasAccount,
+    isDeletingAlias,
     saveRemark,
     updateAccountPassword,
     deleteAccount,

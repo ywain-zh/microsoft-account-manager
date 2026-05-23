@@ -368,6 +368,16 @@
               <div v-for="alias in aliasForm.aliases" :key="alias.id" class="alias-list-item">
                 <span>{{ alias.aliasAccount }}</span>
                 <small>{{ formatMailDate(alias.createdAt) }}</small>
+                <n-button
+                  class="alias-delete-button"
+                  size="small"
+                  type="error"
+                  secondary
+                  :loading="isDeletingAlias(alias.id)"
+                  @click="deleteAliasAccount(alias)"
+                >
+                  删除
+                </n-button>
               </div>
             </div>
           </div>
@@ -613,6 +623,8 @@ const {
   createAccount,
   updateAccount,
   createAliasAccount,
+  deleteAliasAccount,
+  isDeletingAlias,
   saveRemark,
   deleteAccount,
   importAccountsText,
@@ -1841,7 +1853,7 @@ onUnmounted(() => {
 
 .alias-list-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 12px;
   align-items: center;
   padding: 9px 10px;
@@ -1867,6 +1879,10 @@ onUnmounted(() => {
 .alias-list-item small {
   color: #94a3b8;
   font-size: 12px;
+}
+
+.alias-delete-button {
+  min-width: 56px;
 }
 
 @media (max-width: 768px) {

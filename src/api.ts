@@ -227,6 +227,22 @@ export const api = {
     });
   },
 
+  deleteAccountAlias(id: number, aliasId: number): Promise<{
+    accountId: number;
+    account: string;
+    deletedAliasId: number;
+    aliases: AccountAliasItem[];
+  }> {
+    return request<{
+      accountId: number;
+      account: string;
+      deletedAliasId: number;
+      aliases: AccountAliasItem[];
+    }>(`/api/accounts/${id}/aliases/${aliasId}`, {
+      method: 'DELETE'
+    });
+  },
+
   updateAccountPassword(id: number, password: string): Promise<{ item: AccountItem }> {
     return request<{ item: AccountItem }>(`/api/accounts/${id}/password`, {
       method: 'PATCH',

@@ -1016,6 +1016,31 @@ app.post('/api/accounts/:id/aliases', async (c) => {
   );
 });
 
+app.delete('/api/accounts/:id/aliases/:aliasId', async (c) => {
+  const id = parseNumericId(c.req.param('id'));
+  const aliasId = parseNumericId(c.req.param('aliasId'));
+  const account = await fetchAccountById(c.env.DB, id);
+  if (!account) {
+    throw new HTTPException(404, { message: '账号不存在' });
+  }
+
+  const result = await c.env.DB
+    .prepare('DELETE FROM account_aliases WHERE id = ? AND account_id = ?')
+    .bind(aliasId, id)
+    .run();
+  if ((result.meta.changes ?? 0) <= 0) {
+    throw new HTTPException(404, { message: '别名邮箱不存在' });
+  }
+
+  const aliases = await fetchAccountAliases(c.env.DB, id);
+  return c.json({
+    accountId: id,
+    account: account.account,
+    deletedAliasId: aliasId,
+    aliases: aliases.map(serializeAccountAliasRow)
+  });
+});
+
 app.post('/api/accounts/import', async (c) => {
   const body = await readJson<{ text?: string }>(c);
   const text = asText(body.text).trim();
