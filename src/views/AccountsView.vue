@@ -84,7 +84,7 @@
             :data="pagedAccounts"
             :row-key="rowKey"
             :loading="tableLoading"
-            :checked-row-keys="checkedRowKeys"
+            :checked-row-keys="checkedTableRowKeys"
             :pagination="false"
             max-height="620"
             @update:checked-row-keys="handleCheckedRowKeysUpdate"
@@ -327,6 +327,60 @@
       </template>
     </n-modal>
 
+    <n-modal
+      v-model:show="aliasVisible"
+      preset="card"
+      :bordered="false"
+      class="console-modal microsoft-alias-modal"
+      title="新增别名邮箱"
+    >
+      <n-spin :show="aliasLoading">
+        <div class="alias-modal-body">
+          <div class="alias-primary-line">
+            <span>主邮箱</span>
+            <strong>{{ aliasForm.account || '-' }}</strong>
+            <n-tag size="small" type="info">已创建 {{ aliasForm.aliases.length }} 个</n-tag>
+          </div>
+          <n-form label-placement="top" autocomplete="off" @submit.prevent>
+            <n-form-item label="别名邮箱">
+              <div class="alias-create-row">
+                <n-input
+                  v-model:value="aliasForm.aliasAccount"
+                  placeholder="随机生成或手动输入别名邮箱"
+                  :input-props="aliasInputProps"
+                />
+                <n-button class="dialog-secondary-button" secondary @click="randomizeAliasAccount">随机</n-button>
+                <n-button
+                  class="dialog-primary-button"
+                  type="primary"
+                  :loading="aliasCreateLoading"
+                  @click="createAliasAccount"
+                >
+                  新建
+                </n-button>
+              </div>
+            </n-form-item>
+          </n-form>
+          <div class="alias-list-panel">
+            <div class="alias-list-title">已创建别名邮箱</div>
+            <div v-if="aliasForm.aliases.length === 0" class="alias-empty">暂无别名邮箱</div>
+            <div v-else class="alias-list">
+              <div v-for="alias in aliasForm.aliases" :key="alias.id" class="alias-list-item">
+                <span>{{ alias.aliasAccount }}</span>
+                <small>{{ formatMailDate(alias.createdAt) }}</small>
+              </div>
+            </div>
+          </div>
+        </div>
+      </n-spin>
+
+      <template #footer>
+        <n-space justify="end">
+          <n-button class="dialog-cancel-button" @click="closeAliasModal">关闭</n-button>
+        </n-space>
+      </template>
+    </n-modal>
+
     <MailInboxViewer
       :show="mailVisible"
       title="邮箱邮件"
@@ -359,6 +413,7 @@ import {
   NPagination,
   NProgress,
   NSpace,
+  NSpin,
   NTag,
   type DataTableColumns
 } from 'naive-ui';
@@ -477,6 +532,34 @@ const EyeOffGlyph = () =>
     ]
   );
 
+const AliasGlyph = () =>
+  h(
+    'svg',
+    { viewBox: '0 0 20 20', fill: 'none', 'aria-hidden': 'true' },
+    [
+      h('path', {
+        d: 'M4.5 6.5h5.25a3.5 3.5 0 0 1 0 7H8',
+        stroke: 'currentColor',
+        'stroke-width': '1.5',
+        'stroke-linecap': 'round',
+        'stroke-linejoin': 'round'
+      }),
+      h('path', {
+        d: 'M7 4 4.5 6.5 7 9',
+        stroke: 'currentColor',
+        'stroke-width': '1.5',
+        'stroke-linecap': 'round',
+        'stroke-linejoin': 'round'
+      }),
+      h('path', {
+        d: 'M13.5 10.25v5M11 12.75h5',
+        stroke: 'currentColor',
+        'stroke-width': '1.5',
+        'stroke-linecap': 'round'
+      })
+    ]
+  );
+
 const admin = useAdminConsole();
 const route = useRoute();
 const router = useRouter();
@@ -503,6 +586,9 @@ const {
   editVisible,
   remarkSaving,
   remarkVisible,
+  aliasVisible,
+  aliasLoading,
+  aliasCreateLoading,
   mailVisible,
   mailLoading,
   mailAccount,
@@ -511,6 +597,7 @@ const {
   createForm,
   editForm,
   remarkForm,
+  aliasForm,
   importText,
   loadAccounts,
   loadInitialData,
@@ -518,10 +605,14 @@ const {
   openImportModal,
   openEditModal,
   openRemarkModal,
+  openAliasModal,
   closeRemarkModal,
+  closeAliasModal,
+  randomizeAliasAccount,
   handleCheckedRowKeysUpdate,
   createAccount,
   updateAccount,
+  createAliasAccount,
   saveRemark,
   deleteAccount,
   importAccountsText,
@@ -601,6 +692,11 @@ const remarkInputProps = {
   name: 'microsoft-mail-remark-text'
 } as const;
 
+const aliasInputProps = {
+  ...noCredentialInputProps,
+  name: 'microsoft-mail-alias-address'
+} as const;
+
 const accountPasswordInputProps = {
   ...noCredentialInputProps,
   autocomplete: 'new-password',
@@ -608,7 +704,7 @@ const accountPasswordInputProps = {
   'aria-autocomplete': 'none'
 } as const;
 
-const rowKey = (row: AccountItem): number => row.id;
+const rowKey = (row: AccountItem): string => row.rowId || `account-${row.id}`;
 
 const pageCount = computed(() => Math.max(1, Math.ceil(accounts.value.length / tablePageSize.value)));
 const pageOffset = computed(() => (tablePage.value - 1) * tablePageSize.value);
@@ -616,6 +712,7 @@ const pagedAccounts = computed(() => {
   const start = pageOffset.value;
   return accounts.value.slice(start, start + tablePageSize.value);
 });
+const checkedTableRowKeys = computed(() => checkedRowKeys.value.map((id) => `account-${id}`));
 const tokenRefreshProgressPercentage = computed(() => {
   if (tokenRefreshProgressTotal.value <= 0) {
     return 0;
@@ -673,12 +770,13 @@ function resolveToneClass(tone: 'success' | 'error' | 'warning' | 'default'): st
 }
 
 function renderEmailCell(row: AccountItem): ReturnType<typeof h> {
+  const isAlias = row.rowType === 'alias';
   return h('div', { class: 'account-cell' }, [
     h(
       'button',
       {
         type: 'button',
-        class: 'account-link',
+        class: ['account-link', isAlias ? 'account-link-alias' : ''],
         title: row.account,
         onClick: (event: MouseEvent) => {
           event.stopPropagation();
@@ -687,6 +785,14 @@ function renderEmailCell(row: AccountItem): ReturnType<typeof h> {
       },
       row.account
     ),
+    isAlias
+      ? h('span', { class: 'account-alias-source', title: `来源主邮箱：${row.primaryAccount}` }, [
+          '来源 ',
+          h('strong', row.primaryAccount)
+        ])
+      : row.aliasCount > 0
+        ? h('span', { class: 'account-alias-count', title: row.aliases.join('\n') }, `别名 ${row.aliasCount}`)
+        : null,
     h(
       'button',
       {
@@ -705,6 +811,10 @@ function renderEmailCell(row: AccountItem): ReturnType<typeof h> {
 }
 
 function renderAuthTypeCell(row: AccountItem): ReturnType<typeof h> {
+  if (row.rowType === 'alias') {
+    return h('span', { class: ['status-pill', 'status-pill-info'] }, '别名邮箱');
+  }
+
   const label = row.authType === 'microsoft_oauth' ? 'OAuth' : '手动';
   const toneClass = row.authType === 'microsoft_oauth' ? 'status-pill-success' : 'status-pill-default';
   return h('span', { class: ['status-pill', toneClass] }, label);
@@ -712,6 +822,12 @@ function renderAuthTypeCell(row: AccountItem): ReturnType<typeof h> {
 
 function renderRemarkCell(row: AccountItem): ReturnType<typeof h> {
   const remark = row.remark?.trim() || '-';
+  if (row.rowType === 'alias') {
+    return h('div', { class: 'microsoft-remark-cell' }, [
+      h('div', { class: 'microsoft-remark-text', title: remark }, remark)
+    ]);
+  }
+
   return h('div', { class: 'microsoft-remark-cell' }, [
     h('div', { class: 'microsoft-remark-text', title: remark }, remark),
     h(
@@ -796,6 +912,10 @@ async function saveInlinePassword(row: AccountItem): Promise<void> {
 }
 
 function renderPasswordCell(row: AccountItem): ReturnType<typeof h> {
+  if (row.rowType === 'alias') {
+    return h('span', { class: 'alias-inherited-text', title: `继承主邮箱 ${row.primaryAccount}` }, '继承主邮箱');
+  }
+
   const draftValue = getPasswordDraft(row);
   const visible = isPasswordVisible(row.id);
   return h('div', { class: 'microsoft-password-cell' }, [
@@ -857,6 +977,10 @@ function renderPasswordCell(row: AccountItem): ReturnType<typeof h> {
 }
 
 function renderGptValidityCell(row: AccountItem): ReturnType<typeof h> {
+  if (row.rowType === 'alias') {
+    return h('span', { class: 'alias-inherited-text', title: '别名邮箱不单独检测 GPT 状态' }, '-');
+  }
+
   const checking = isCheckingGptValidity(row.account);
   const result = getGptValidityResult(row.account) ?? row.gptValidity;
   const isValid = result?.valid === true;
@@ -888,10 +1012,33 @@ function renderGptValidityCell(row: AccountItem): ReturnType<typeof h> {
   ]);
 }
 
+function renderTokenStatusCell(row: AccountItem): ReturnType<typeof h> {
+  if (row.rowType === 'alias') {
+    return h(
+      'span',
+      {
+        class: ['status-pill', resolveToneClass(resolveTokenStatusTone(row.tokenStatus))],
+        title: `继承主邮箱 ${row.primaryAccount} 状态：${row.tokenMessage ?? resolveTokenStatusLabel(row)}`
+      },
+      resolveTokenStatusLabel(row)
+    );
+  }
+
+  return h(
+    'span',
+    {
+      class: ['status-pill', resolveToneClass(resolveTokenStatusTone(row.tokenStatus))],
+      title: row.tokenMessage ?? resolveTokenStatusLabel(row)
+    },
+    resolveTokenStatusLabel(row)
+  );
+}
+
 const accountColumns: DataTableColumns<AccountItem> = [
   {
     type: 'selection',
-    width: 38
+    width: 38,
+    disabled: (row) => row.rowType === 'alias'
   },
   {
     title: '邮箱',
@@ -922,15 +1069,7 @@ const accountColumns: DataTableColumns<AccountItem> = [
     title: '邮箱状态',
     key: 'tokenStatus',
     width: 88,
-    render: (row) =>
-      h(
-        'span',
-        {
-          class: ['status-pill', resolveToneClass(resolveTokenStatusTone(row.tokenStatus))],
-          title: row.tokenMessage ?? resolveTokenStatusLabel(row)
-        },
-        resolveTokenStatusLabel(row)
-      )
+    render: (row) => renderTokenStatusCell(row)
   },
   {
     title: 'GPT有效',
@@ -948,9 +1087,10 @@ const accountColumns: DataTableColumns<AccountItem> = [
   {
     title: '操作',
     key: 'actions',
-    width: 148,
-    render: (row) =>
-      h('div', { class: 'action-cell action-cell-compact' }, [
+    width: 180,
+    render: (row) => {
+      const isAlias = row.rowType === 'alias';
+      const actions = [
         h(
           'button',
           {
@@ -965,32 +1105,54 @@ const accountColumns: DataTableColumns<AccountItem> = [
             }
           },
           '导出'
-        ),
-        h(
-          'button',
-          {
-            type: 'button',
-            class: 'table-action-button',
-            onClick: (event: MouseEvent) => {
-              event.stopPropagation();
-              openEditModal(row);
-            }
-          },
-          '编辑'
-        ),
-        h(
-          'button',
-          {
-            type: 'button',
-            class: 'table-action-button table-action-button-danger',
-            onClick: (event: MouseEvent) => {
-              event.stopPropagation();
-              void deleteAccount(row.id);
-            }
-          },
-          '删除'
         )
-      ])
+      ];
+
+      if (!isAlias) {
+        actions.push(
+          h(
+            'button',
+            {
+              type: 'button',
+              class: 'table-icon-button table-alias-button',
+              title: '新建别名邮箱',
+              'aria-label': `给 ${row.account} 新建别名邮箱`,
+              onClick: (event: MouseEvent) => {
+                event.stopPropagation();
+                void openAliasModal(row);
+              }
+            },
+            [h(AliasGlyph)]
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              class: 'table-action-button',
+              onClick: (event: MouseEvent) => {
+                event.stopPropagation();
+                openEditModal(row);
+              }
+            },
+            '编辑'
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              class: 'table-action-button table-action-button-danger',
+              onClick: (event: MouseEvent) => {
+                event.stopPropagation();
+                void deleteAccount(row.id);
+              }
+            },
+            '删除'
+          )
+        );
+      }
+
+      return h('div', { class: 'action-cell action-cell-compact' }, actions);
+    }
   }
 ];
 
@@ -1337,6 +1499,56 @@ onUnmounted(() => {
   height: 14px;
 }
 
+:deep(.microsoft-account-table .account-cell) {
+  display: inline-grid;
+  max-width: 100%;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+:deep(.microsoft-account-table .account-link-alias) {
+  color: #7c3aed;
+}
+
+:deep(.microsoft-account-table .account-alias-source),
+:deep(.microsoft-account-table .account-alias-count) {
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:deep(.microsoft-account-table .account-alias-source strong) {
+  color: #475569;
+  font-weight: 500;
+}
+
+:deep(.microsoft-account-table .account-alias-count) {
+  width: fit-content;
+  padding: 1px 6px;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+:deep(.microsoft-account-table .status-pill-info) {
+  border-color: #ddd6fe;
+  background: #f5f3ff;
+  color: #7c3aed;
+}
+
+:deep(.microsoft-account-table .alias-inherited-text) {
+  color: #64748b;
+  font-size: 13px;
+}
+
 :deep(.microsoft-account-table .microsoft-password-cell) {
   display: grid;
   grid-template-columns: minmax(150px, 1fr) 28px 28px;
@@ -1412,6 +1624,24 @@ onUnmounted(() => {
 :deep(.microsoft-account-table .table-action-button:disabled) {
   cursor: not-allowed;
   opacity: 0.62;
+}
+
+:deep(.microsoft-account-table .table-alias-button) {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: #f5f3ff;
+  color: #7c3aed;
+}
+
+:deep(.microsoft-account-table .table-alias-button:hover) {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+:deep(.microsoft-account-table .table-alias-button svg) {
+  width: 15px;
+  height: 15px;
 }
 
 :deep(.microsoft-account-table .gpt-validity-control) {
@@ -1549,6 +1779,96 @@ onUnmounted(() => {
   font-size: 13px;
 }
 
+.alias-modal-body {
+  display: grid;
+  gap: 16px;
+}
+
+.alias-primary-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.alias-primary-line strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #1e293b;
+  font-family: 'Fira Code', 'SFMono-Regular', Consolas, monospace;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.alias-create-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+}
+
+.alias-list-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.alias-list-title {
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.alias-empty {
+  padding: 14px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 6px;
+  color: #94a3b8;
+  text-align: center;
+  font-size: 13px;
+}
+
+.alias-list {
+  display: grid;
+  max-height: 220px;
+  overflow: auto;
+  gap: 8px;
+}
+
+.alias-list-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.alias-list-item span,
+.alias-list-item small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.alias-list-item span {
+  color: #334155;
+  font-family: 'Fira Code', 'SFMono-Regular', Consolas, monospace;
+  font-size: 13px;
+}
+
+.alias-list-item small {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
 @media (max-width: 768px) {
   :deep(.microsoft-toolbar .toolbar-divider) {
     display: none;
@@ -1560,6 +1880,16 @@ onUnmounted(() => {
   :deep(.microsoft-toolbar .toolbar-button-group) {
     width: 100% !important;
     flex: 1 1 100% !important;
+  }
+
+  .alias-create-row,
+  .alias-list-item {
+    grid-template-columns: 1fr;
+  }
+
+  .alias-primary-line {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 </style>

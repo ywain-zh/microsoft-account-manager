@@ -1,4 +1,5 @@
 import type {
+  AccountAliasItem,
   AccountMessagesResponse,
   AccountItem,
   AccountPayload,
@@ -194,6 +195,35 @@ export const api = {
     return request<{ item: AccountItem }>(`/api/accounts/${id}`, {
       method: 'PUT',
       body: JSON.stringify(payload)
+    });
+  },
+
+  listAccountAliases(id: number): Promise<{
+    accountId: number;
+    account: string;
+    aliases: AccountAliasItem[];
+  }> {
+    return request<{
+      accountId: number;
+      account: string;
+      aliases: AccountAliasItem[];
+    }>(`/api/accounts/${id}/aliases`);
+  },
+
+  createAccountAlias(id: number, aliasAccount: string): Promise<{
+    accountId: number;
+    account: string;
+    alias: AccountAliasItem;
+    aliases: AccountAliasItem[];
+  }> {
+    return request<{
+      accountId: number;
+      account: string;
+      alias: AccountAliasItem;
+      aliases: AccountAliasItem[];
+    }>(`/api/accounts/${id}/aliases`, {
+      method: 'POST',
+      body: JSON.stringify({ aliasAccount })
     });
   },
 

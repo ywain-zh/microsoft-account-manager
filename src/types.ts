@@ -1,6 +1,14 @@
 export interface AccountItem {
   id: number;
   account: string;
+  rowType: 'primary' | 'alias';
+  rowId: string;
+  primaryAccountId: number;
+  primaryAccount: string;
+  aliasId: number | null;
+  aliases: string[];
+  aliasCount: number;
+  matchedAlias: string | null;
   password: string;
   clientId: string | null;
   clientSecret: string | null;
@@ -32,6 +40,14 @@ export interface AccountPayload {
   clientSecret?: string;
   refreshToken?: string;
   remark?: string;
+}
+
+export interface AccountAliasItem {
+  id: number;
+  accountId: number;
+  aliasAccount: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ImportResult {
@@ -275,6 +291,9 @@ export interface AccountMailItem {
 export interface AccountMessagesResponse {
   accountId: number;
   account: string;
+  requestedEmail?: string;
+  resolvedAccount?: string;
+  matchedAlias?: string | null;
   mode: MailFetchMode;
   resolvedMode: ResolvedMailFetchMode;
   messages: AccountMailItem[];

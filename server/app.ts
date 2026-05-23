@@ -70,6 +70,42 @@ interface AccountRow {
   gptValidityCheckedAt: string | null;
 }
 
+interface AccountAliasRow {
+  id: number;
+  accountId: number;
+  aliasAccount: string;
+  normalizedAlias: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface AccountAliasMatchRow
+  extends AccountRow {
+  aliasId: number;
+  aliasAccount: string;
+  normalizedAlias: string;
+  aliasCreatedAt: string;
+  aliasUpdatedAt: string;
+}
+
+interface AccountResolvedByAddress {
+  account: AccountRow;
+  requestedEmail: string;
+  matchedAlias: string | null;
+}
+
+interface AccountListItem
+  extends AccountRow {
+  rowType: 'primary' | 'alias';
+  rowId: string;
+  primaryAccountId: number;
+  primaryAccount: string;
+  aliasId: number | null;
+  aliases: string[];
+  aliasCount: number;
+  matchedAlias: string | null;
+}
+
 interface AccountPayload {
   account: string;
   password: string;
@@ -82,6 +118,14 @@ interface AccountPayload {
 interface ExternalMicrosoftAccountItem {
   id: number;
   account: string;
+  rowType: 'primary' | 'alias';
+  rowId: string;
+  primaryAccountId: number;
+  primaryAccount: string;
+  aliasId: number | null;
+  aliases: string[];
+  aliasCount: number;
+  matchedAlias: string | null;
   remark: string | null;
   authType: AccountRow['authType'];
   syncStatus: string;
@@ -753,21 +797,22 @@ app.post('/api/auth/logout', (c) => {
 });
 app.get('/api/accounts', async (c) => {
   const keyword = (c.req.query('keyword') ?? '').trim();
-  const items = await queryAccounts(c.env.DB, keyword);
-  return c.json({ items: items.map(serializeAccountRow) });
+  const items = await queryAccountListItems(c.env.DB, keyword);
+  return c.json({ items });
 });
 
 app.get('/api/open/accounts', async (c) => {
   await validateMailApiRequest(c);
 
   const keyword = (c.req.query('keyword') ?? '').trim();
-  const items = await queryAccounts(c.env.DB, keyword);
-  return c.json({ items: items.map(serializeAccountRow) });
+  const items = await queryAccountListItems(c.env.DB, keyword);
+  return c.json({ items });
 });
 
 app.post('/api/accounts', async (c) => {
   const body = await readJson<Partial<AccountPayload>>(c);
   const payload = normalizeAccountPayload(body, true);
+  await ensurePrimaryAccountAvailable(c.env.DB, payload.account);
 
   let insertResult: D1Result;
   try {
@@ -810,6 +855,7 @@ app.put('/api/accounts/:id', async (c) => {
   const id = parseNumericId(c.req.param('id'));
   const body = await readJson<Partial<AccountPayload>>(c);
   const payload = normalizeAccountPayload(body, true);
+  await ensurePrimaryAccountAvailable(c.env.DB, payload.account, id);
 
   let result: D1Result;
   try {
@@ -910,6 +956,66 @@ app.patch('/api/accounts/:id/remark', async (c) => {
   return c.json({ item: serializeAccountRow(item) });
 });
 
+app.get('/api/accounts/:id/aliases', async (c) => {
+  const id = parseNumericId(c.req.param('id'));
+  const account = await fetchAccountById(c.env.DB, id);
+  if (!account) {
+    throw new HTTPException(404, { message: '账号不存在' });
+  }
+
+  const aliases = await fetchAccountAliases(c.env.DB, id);
+  return c.json({
+    accountId: id,
+    account: account.account,
+    aliases: aliases.map(serializeAccountAliasRow)
+  });
+});
+
+app.post('/api/accounts/:id/aliases', async (c) => {
+  const id = parseNumericId(c.req.param('id'));
+  const account = await fetchAccountById(c.env.DB, id);
+  if (!account) {
+    throw new HTTPException(404, { message: '账号不存在' });
+  }
+
+  const body = await readJson<{ aliasAccount?: unknown }>(c);
+  const aliasAccount = normalizeAliasAccount(body.aliasAccount);
+  await ensureAliasAvailable(c.env.DB, id, account.account, aliasAccount);
+
+  let insertedId: number;
+  try {
+    const result = await c.env.DB
+      .prepare(
+        `INSERT INTO account_aliases (account_id, alias_account, normalized_alias, updated_at)
+         VALUES (?, ?, ?, CURRENT_TIMESTAMP)`
+      )
+      .bind(id, aliasAccount, normalizeEmailAddress(aliasAccount))
+      .run();
+    insertedId = Number(result.meta.last_row_id);
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      throw new HTTPException(409, { message: '别名邮箱已存在' });
+    }
+    throw error;
+  }
+
+  const alias = await fetchAccountAliasById(c.env.DB, insertedId);
+  if (!alias) {
+    throw new HTTPException(500, { message: '别名创建成功，但读取结果失败' });
+  }
+
+  const aliases = await fetchAccountAliases(c.env.DB, id);
+  return c.json(
+    {
+      accountId: id,
+      account: account.account,
+      alias: serializeAccountAliasRow(alias),
+      aliases: aliases.map(serializeAccountAliasRow)
+    },
+    201
+  );
+});
+
 app.post('/api/accounts/import', async (c) => {
   const body = await readJson<{ text?: string }>(c);
   const text = asText(body.text).trim();
@@ -941,6 +1047,7 @@ app.post('/api/accounts/import', async (c) => {
     }
 
     try {
+      await ensurePrimaryAccountAvailable(c.env.DB, payload.account);
       const result = await c.env.DB
         .prepare(
           `INSERT OR IGNORE INTO accounts (account, password, client_id, client_secret, refresh_token, auth_type, remark)
@@ -1144,31 +1251,41 @@ app.post('/api/open/messages', async (c) => {
   const mode = parseMailFetchMode(body.mode, 'auto');
 
   const rawId = Number.parseInt(asText(body.id), 10);
-  const accountById = Number.isInteger(rawId) && rawId > 0 ? await fetchAccountById(c.env.DB, rawId) : null;
+  const accountById =
+    Number.isInteger(rawId) && rawId > 0 ? await fetchAccountById(c.env.DB, rawId) : null;
 
   const accountText = asText(body.account).trim();
-  const accountByName = accountText ? await fetchAccountByAccount(c.env.DB, accountText) : null;
+  const accountByName = accountText ? await resolveAccountByAddress(c.env.DB, accountText) : null;
 
-  const account = accountById ?? accountByName;
-  if (!account) {
+  const resolved = accountById
+    ? {
+        account: accountById,
+        requestedEmail: accountById.account,
+        matchedAlias: null
+      }
+    : accountByName;
+  if (!resolved) {
     throw new HTTPException(400, { message: '请传入有效的 id 或 account' });
   }
 
   const result = await fetchAccountMessages(
     { MS_CLIENT_ID: c.env.MS_CLIENT_ID, MS_CLIENT_SECRET: c.env.MS_CLIENT_SECRET },
     c.env.DB,
-    account,
+    resolved.account,
     mode,
     true
   );
   if (!result.ok) {
     throw new HTTPException(400, { message: result.message });
   }
-  const messages = await applyMailReadMarks(c.env.DB, 'microsoft', account.account, result.messages);
+  const messages = await applyMailReadMarks(c.env.DB, 'microsoft', resolved.account.account, result.messages);
 
   return c.json({
-    accountId: account.id,
-    account: account.account,
+    accountId: resolved.account.id,
+    account: resolved.account.account,
+    requestedEmail: resolved.requestedEmail,
+    resolvedAccount: resolved.account.account,
+    matchedAlias: resolved.matchedAlias,
     mode,
     resolvedMode: result.resolvedMode,
     messages
@@ -1179,7 +1296,7 @@ app.get('/api/external/microsoft/accounts', async (c) => {
   await validateMailApiRequest(c);
 
   const email = asText(c.req.query('email')).trim();
-  const items = await queryAccounts(c.env.DB, email);
+  const items = await queryAccountListItems(c.env.DB, email);
   return c.json({
     items: items.map(serializeExternalMicrosoftAccount),
     total: items.length
@@ -1195,15 +1312,15 @@ app.get('/api/external/microsoft/messages', async (c) => {
   }
 
   const mode = parseMailFetchMode(c.req.query('mode'), 'auto');
-  const account = await fetchAccountByAccount(c.env.DB, email);
-  if (!account) {
+  const resolved = await resolveAccountByAddress(c.env.DB, email);
+  if (!resolved) {
     throw new HTTPException(404, { message: '邮箱不存在' });
   }
 
   const result = await fetchAccountMessages(
     { MS_CLIENT_ID: c.env.MS_CLIENT_ID, MS_CLIENT_SECRET: c.env.MS_CLIENT_SECRET },
     c.env.DB,
-    account,
+    resolved.account,
     mode,
     true
   );
@@ -1211,9 +1328,12 @@ app.get('/api/external/microsoft/messages', async (c) => {
     throw new HTTPException(400, { message: result.message });
   }
 
-  const messages = await applyMailReadMarks(c.env.DB, 'microsoft', account.account, result.messages);
+  const messages = await applyMailReadMarks(c.env.DB, 'microsoft', resolved.account.account, result.messages);
   return c.json({
-    account: account.account,
+    account: resolved.account.account,
+    requestedEmail: resolved.requestedEmail,
+    resolvedAccount: resolved.account.account,
+    matchedAlias: resolved.matchedAlias,
     resolvedMode: result.resolvedMode,
     fetchedCount: messages.length,
     messages
@@ -1843,6 +1963,7 @@ app.post('/api/upload/ingest', async (c) => {
   for (const record of parsed.records) {
     try {
       const payload = normalizeAccountPayload(record.payload, true);
+      await ensurePrimaryAccountAvailable(c.env.DB, payload.account);
       const result = await c.env.DB
         .prepare(
           `INSERT OR IGNORE INTO accounts (account, password, client_id, client_secret, refresh_token, auth_type, remark)
@@ -3673,8 +3794,17 @@ async function upsertMailGptValidityStatus(
 
 async function hasMicrosoftMailAccount(db: D1Database, normalizedEmail: string): Promise<boolean> {
   const row = await db
-    .prepare('SELECT 1 AS matched FROM accounts WHERE LOWER(TRIM(account)) = ? LIMIT 1')
-    .bind(normalizedEmail)
+    .prepare(
+      `SELECT 1 AS matched
+       FROM accounts
+       WHERE LOWER(TRIM(account)) = ?
+       UNION
+       SELECT 1 AS matched
+       FROM account_aliases
+       WHERE normalized_alias = ?
+       LIMIT 1`
+    )
+    .bind(normalizedEmail, normalizedEmail)
     .first<{ matched: number }>();
   return Boolean(row);
 }
@@ -5536,6 +5666,24 @@ function normalizeExternalApiConfig(input: Partial<ExternalApiConfig>): External
   };
 }
 
+function normalizeEmailAddress(value: unknown): string {
+  return asText(value).trim().toLowerCase();
+}
+
+function normalizeAliasAccount(value: unknown): string {
+  const aliasAccount = normalizeEmailAddress(value);
+  if (!aliasAccount) {
+    throw new HTTPException(400, { message: '别名邮箱不能为空' });
+  }
+  if (aliasAccount.length > 255) {
+    throw new HTTPException(400, { message: '别名邮箱长度超过限制' });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(aliasAccount)) {
+    throw new HTTPException(400, { message: '别名邮箱格式不合法' });
+  }
+  return aliasAccount;
+}
+
 function getScopeKeysByMode(
   mode: ResolvedMailFetchMode,
   preferredScope: string | null | undefined
@@ -5576,7 +5724,7 @@ function buildGptValidityResponseFromRow(
   };
 }
 
-function serializeAccountRow(row: AccountRow): AccountRow & {
+function serializeAccountRow(row: AccountRow): AccountListItem & {
   gptValidity: Sub2ApiGptValidityResponse | null;
   tokenBaseAt: string | null;
   tokenCountdownDays: number | null;
@@ -5584,16 +5732,32 @@ function serializeAccountRow(row: AccountRow): AccountRow & {
   const tokenBaseAt = row.refreshedAt || row.createdAt || null;
   return {
     ...row,
+    rowType: 'primary',
+    rowId: `account-${row.id}`,
+    primaryAccountId: row.id,
+    primaryAccount: row.account,
+    aliasId: null,
+    aliases: [],
+    aliasCount: 0,
+    matchedAlias: null,
     gptValidity: buildGptValidityResponseFromRow(row.account, row),
     tokenBaseAt,
     tokenCountdownDays: calculateTokenCountdownDays(tokenBaseAt)
   };
 }
 
-function serializeExternalMicrosoftAccount(row: AccountRow): ExternalMicrosoftAccountItem {
+function serializeExternalMicrosoftAccount(row: AccountListItem): ExternalMicrosoftAccountItem {
   return {
     id: row.id,
     account: row.account,
+    rowType: row.rowType,
+    rowId: row.rowId,
+    primaryAccountId: row.primaryAccountId,
+    primaryAccount: row.primaryAccount,
+    aliasId: row.aliasId,
+    aliases: row.aliases,
+    aliasCount: row.aliasCount,
+    matchedAlias: row.matchedAlias,
     remark: row.remark,
     authType: row.authType,
     syncStatus: row.syncStatus,
@@ -5603,6 +5767,22 @@ function serializeExternalMicrosoftAccount(row: AccountRow): ExternalMicrosoftAc
     mailFetchProvider: row.mailFetchProvider,
     mailFetchScope: row.mailFetchScope,
     createdAt: row.createdAt
+  };
+}
+
+function serializeAccountAliasRow(row: AccountAliasRow): {
+  id: number;
+  accountId: number;
+  aliasAccount: string;
+  createdAt: string;
+  updatedAt: string;
+} {
+  return {
+    id: row.id,
+    accountId: row.accountId,
+    aliasAccount: row.aliasAccount,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
   };
 }
 
@@ -5629,15 +5809,87 @@ async function queryAccounts(db: D1Database, keyword: string): Promise<AccountRo
       .prepare(
         `${ACCOUNT_SELECT_SQL}
          WHERE a.account LIKE ?
+            OR a.remark LIKE ?
+            OR EXISTS (
+              SELECT 1
+              FROM account_aliases alias
+              WHERE alias.account_id = a.id
+                AND alias.alias_account LIKE ?
+            )
          ORDER BY a.id DESC`
       )
-      .bind(like);
+      .bind(like, like, like);
   } else {
     statement = db.prepare(`${ACCOUNT_SELECT_SQL} ORDER BY a.id DESC`);
   }
 
   const { results } = await statement.all<AccountRow>();
   return results ?? [];
+}
+
+async function queryAccountListItems(db: D1Database, keyword: string): Promise<
+  Array<AccountListItem & {
+    gptValidity: Sub2ApiGptValidityResponse | null;
+    tokenBaseAt: string | null;
+    tokenCountdownDays: number | null;
+  }>
+> {
+  const accounts = await queryAccounts(db, keyword);
+  const accountIds = accounts.map((item) => item.id);
+  const aliasesByAccount = await queryAccountAliasMap(db, accountIds);
+  const normalizedKeyword = normalizeEmailAddress(keyword);
+  const rows: Array<
+    AccountListItem & {
+      gptValidity: Sub2ApiGptValidityResponse | null;
+      tokenBaseAt: string | null;
+      tokenCountdownDays: number | null;
+    }
+  > = [];
+
+  for (const account of accounts) {
+    const aliases = aliasesByAccount.get(account.id) ?? [];
+    const aliasEmails = aliases.map((alias) => alias.aliasAccount);
+    const primaryRow = {
+      ...serializeAccountRow(account),
+      aliases: aliasEmails,
+      aliasCount: aliasEmails.length
+    };
+    rows.push(primaryRow);
+
+    for (const alias of aliases) {
+      if (normalizedKeyword && !alias.aliasAccount.includes(normalizedKeyword)) {
+        continue;
+      }
+
+      rows.push({
+        ...primaryRow,
+        account: alias.aliasAccount,
+        password: account.password,
+        createdAt: alias.createdAt,
+        rowType: 'alias',
+        rowId: `alias-${alias.id}`,
+        primaryAccountId: account.id,
+        primaryAccount: account.account,
+        aliasId: alias.id,
+        matchedAlias: alias.aliasAccount,
+        gptValidity: buildGptValidityResponseFromRow(alias.aliasAccount, account)
+      });
+    }
+  }
+
+  if (normalizedKeyword) {
+    return rows.filter((row) => {
+      if (row.rowType === 'alias') {
+        return true;
+      }
+      return (
+        row.account.toLowerCase().includes(normalizedKeyword) ||
+        asText(row.remark).toLowerCase().includes(normalizedKeyword)
+      );
+    });
+  }
+
+  return rows;
 }
 
 async function fetchAllAccounts(db: D1Database): Promise<AccountRow[]> {
@@ -5893,6 +6145,217 @@ async function fetchAccountByAccount(db: D1Database, account: string): Promise<A
     .bind(account)
     .first<AccountRow>();
   return row ?? null;
+}
+
+async function fetchAccountAliasById(db: D1Database, id: number): Promise<AccountAliasRow | null> {
+  const row = await db
+    .prepare(
+      `SELECT
+         id,
+         account_id AS accountId,
+         alias_account AS aliasAccount,
+         normalized_alias AS normalizedAlias,
+         created_at AS createdAt,
+         updated_at AS updatedAt
+       FROM account_aliases
+       WHERE id = ?`
+    )
+    .bind(id)
+    .first<AccountAliasRow>();
+  return row ?? null;
+}
+
+async function fetchAccountAliases(db: D1Database, accountId: number): Promise<AccountAliasRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT
+         id,
+         account_id AS accountId,
+         alias_account AS aliasAccount,
+         normalized_alias AS normalizedAlias,
+         created_at AS createdAt,
+         updated_at AS updatedAt
+       FROM account_aliases
+       WHERE account_id = ?
+       ORDER BY id ASC`
+    )
+    .bind(accountId)
+    .all<AccountAliasRow>();
+  return results ?? [];
+}
+
+async function queryAccountAliasMap(
+  db: D1Database,
+  accountIds: number[]
+): Promise<Map<number, AccountAliasRow[]>> {
+  const aliasMap = new Map<number, AccountAliasRow[]>();
+  if (accountIds.length === 0) {
+    return aliasMap;
+  }
+
+  const placeholders = accountIds.map(() => '?').join(',');
+  const { results } = await db
+    .prepare(
+      `SELECT
+         id,
+         account_id AS accountId,
+         alias_account AS aliasAccount,
+         normalized_alias AS normalizedAlias,
+         created_at AS createdAt,
+         updated_at AS updatedAt
+       FROM account_aliases
+       WHERE account_id IN (${placeholders})
+       ORDER BY account_id ASC, id ASC`
+    )
+    .bind(...accountIds)
+    .all<AccountAliasRow>();
+
+  for (const alias of results ?? []) {
+    const aliases = aliasMap.get(alias.accountId) ?? [];
+    aliases.push(alias);
+    aliasMap.set(alias.accountId, aliases);
+  }
+
+  return aliasMap;
+}
+
+async function fetchAccountAliasByAddress(
+  db: D1Database,
+  aliasAccount: string
+): Promise<AccountAliasMatchRow | null> {
+  const normalizedAlias = normalizeEmailAddress(aliasAccount);
+  const row = await db
+    .prepare(
+      `SELECT
+         a.id,
+         a.account,
+         a.password,
+         a.client_id AS clientId,
+         a.client_secret AS clientSecret,
+         a.refresh_token AS refreshToken,
+         IFNULL(a.auth_type, 'manual') AS authType,
+         a.remark,
+         a.created_at AS createdAt,
+         IFNULL(a.sync_status, 'idle') AS syncStatus,
+         a.sync_message AS syncMessage,
+         a.refreshed_at AS refreshedAt,
+         a.fetched_at AS fetchedAt,
+         IFNULL(a.fetched_count, 0) AS fetchedCount,
+         IFNULL(a.token_status, 'unknown') AS tokenStatus,
+         a.token_message AS tokenMessage,
+         a.token_checked_at AS tokenCheckedAt,
+         a.mail_fetch_provider AS mailFetchProvider,
+         a.mail_fetch_scope AS mailFetchScope,
+         a.mail_fetch_error_code AS mailFetchErrorCode,
+         a.mail_fetch_strategy_updated_at AS mailFetchStrategyUpdatedAt,
+         gpt.status AS gptValidityStatus,
+         gpt.message AS gptValidityMessage,
+         gpt.sub2api_account_id AS gptValidityAccountId,
+         gpt.sub2api_account_name AS gptValidityAccountName,
+         gpt.plan_type AS gptValidityPlanType,
+         gpt.checked_at AS gptValidityCheckedAt,
+         alias.id AS aliasId,
+         alias.account_id AS accountId,
+         alias.alias_account AS aliasAccount,
+         alias.normalized_alias AS normalizedAlias,
+         alias.created_at AS aliasCreatedAt,
+         alias.updated_at AS aliasUpdatedAt
+       FROM accounts a
+       LEFT JOIN mail_gpt_validity_status gpt
+         ON gpt.service = 'microsoft'
+        AND gpt.normalized_email = LOWER(TRIM(a.account))
+       JOIN account_aliases alias ON alias.account_id = a.id
+       WHERE alias.normalized_alias = ?
+       ORDER BY alias.id DESC
+       LIMIT 1`
+    )
+    .bind(normalizedAlias)
+    .first<AccountAliasMatchRow>();
+  return row ?? null;
+}
+
+async function resolveAccountByAddress(
+  db: D1Database,
+  email: string
+): Promise<AccountResolvedByAddress | null> {
+  const normalizedEmail = normalizeEmailAddress(email);
+  if (!normalizedEmail) {
+    return null;
+  }
+
+  const primary = await fetchAccountByAccount(db, normalizedEmail);
+  if (primary) {
+    return {
+      account: primary,
+      requestedEmail: normalizedEmail,
+      matchedAlias: null
+    };
+  }
+
+  const alias = await fetchAccountAliasByAddress(db, normalizedEmail);
+  if (!alias) {
+    return null;
+  }
+
+  return {
+    account: alias,
+    requestedEmail: normalizedEmail,
+    matchedAlias: alias.aliasAccount
+  };
+}
+
+async function ensureAliasAvailable(
+  db: D1Database,
+  accountId: number,
+  primaryAccount: string,
+  aliasAccount: string
+): Promise<void> {
+  const normalizedAlias = normalizeEmailAddress(aliasAccount);
+  if (normalizedAlias === normalizeEmailAddress(primaryAccount)) {
+    throw new HTTPException(409, { message: '别名邮箱不能与主邮箱相同' });
+  }
+
+  const primaryConflict = await fetchAccountByAccount(db, normalizedAlias);
+  if (primaryConflict) {
+    throw new HTTPException(409, { message: '别名邮箱已被其他主邮箱占用' });
+  }
+
+  const aliasConflict = await db
+    .prepare(
+      `SELECT account_id AS accountId
+       FROM account_aliases
+       WHERE normalized_alias = ?
+       LIMIT 1`
+    )
+    .bind(normalizedAlias)
+    .first<{ accountId: number }>();
+  if (aliasConflict) {
+    throw new HTTPException(409, { message: '别名邮箱已存在' });
+  }
+}
+
+async function ensurePrimaryAccountAvailable(
+  db: D1Database,
+  account: string,
+  selfAccountId: number | null = null
+): Promise<void> {
+  const normalizedAccount = normalizeEmailAddress(account);
+  const aliasConflict = await db
+    .prepare(
+      `SELECT account_id AS accountId
+       FROM account_aliases
+       WHERE normalized_alias = ?
+       LIMIT 1`
+    )
+    .bind(normalizedAccount)
+    .first<{ accountId: number }>();
+
+  if (aliasConflict && aliasConflict.accountId !== selfAccountId) {
+    throw new HTTPException(409, { message: '账号邮箱已作为其他账号别名存在' });
+  }
+  if (aliasConflict && aliasConflict.accountId === selfAccountId) {
+    throw new HTTPException(409, { message: '账号邮箱不能与自己的别名重复' });
+  }
 }
 
 async function fetchAccountsByIds(db: D1Database, ids: number[]): Promise<AccountRow[]> {
@@ -7276,6 +7739,11 @@ async function upsertMicrosoftOauthAccount(
   db: D1Database,
   payload: { account: string; clientId: string; clientSecret: string; refreshToken: string }
 ): Promise<AccountRow> {
+  const aliasConflict = await fetchAccountAliasByAddress(db, payload.account);
+  if (aliasConflict) {
+    throw new Error(`OAuth 邮箱 ${payload.account} 已作为 ${aliasConflict.account} 的别名存在`);
+  }
+
   const existing = await fetchAccountByAccount(db, payload.account);
   if (existing) {
     await db

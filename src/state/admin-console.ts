@@ -5,6 +5,7 @@ import { copyToClipboard } from '../utils/clipboard';
 import { formatDateTimeBeijing } from '../utils/datetime';
 import { downloadBlob } from '../utils/download';
 import type {
+  AccountAliasItem,
   AccountItem,
   AccountMailItem,
   AccountPayload,
@@ -38,6 +39,13 @@ interface AccountRemarkFormState {
   id: number | null;
   account: string;
   remark: string;
+}
+
+interface AccountAliasFormState {
+  accountId: number | null;
+  account: string;
+  aliasAccount: string;
+  aliases: AccountAliasItem[];
 }
 
 interface MicrosoftOauthResultPayload {
@@ -95,8 +103,11 @@ const createVisible = ref(false);
 const importVisible = ref(false);
 const editVisible = ref(false);
 const remarkVisible = ref(false);
+const aliasVisible = ref(false);
 const mailVisible = ref(false);
 const mailLoading = ref(false);
+const aliasLoading = ref(false);
+const aliasCreateLoading = ref(false);
 
 const mailAccountId = ref<number | null>(null);
 const mailAccount = ref('');
@@ -126,6 +137,13 @@ const remarkForm = reactive<AccountRemarkFormState>({
   id: null,
   account: '',
   remark: ''
+});
+
+const aliasForm = reactive<AccountAliasFormState>({
+  accountId: null,
+  account: '',
+  aliasAccount: '',
+  aliases: []
 });
 
 const ingestConfig = reactive<IngestConfig>({
@@ -236,6 +254,41 @@ function resetRemarkForm(): void {
   remarkForm.remark = '';
 }
 
+function resetAliasForm(): void {
+  aliasForm.accountId = null;
+  aliasForm.account = '';
+  aliasForm.aliasAccount = '';
+  aliasForm.aliases = [];
+}
+
+function getPrimaryAccountId(row: AccountItem): number {
+  return row.primaryAccountId || row.id;
+}
+
+function getPrimaryAccount(row: AccountItem): string {
+  return row.primaryAccount || row.account;
+}
+
+function buildRandomAliasForAccount(account: string): string {
+  const [localPart, domain] = account.trim().toLowerCase().split('@');
+  if (!localPart || !domain) {
+    return '';
+  }
+
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  const bytes = new Uint8Array(6);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * alphabet.length);
+    }
+  }
+
+  const prefix = Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('');
+  return `${prefix}-${localPart}@${domain}`;
+}
+
 function getGptValidityKey(email: string): string {
   return email.trim().toLowerCase();
 }
@@ -243,6 +296,9 @@ function getGptValidityKey(email: string): string {
 function mergeGptValidityResults(items: AccountItem[]): void {
   const nextResults = { ...gptValidityResults.value };
   for (const item of items) {
+    if (item.rowType === 'alias') {
+      continue;
+    }
     if (item.gptValidity) {
       nextResults[getGptValidityKey(item.account)] = item.gptValidity;
     }
@@ -278,6 +334,7 @@ function clearSessionState(): void {
   importVisible.value = false;
   editVisible.value = false;
   remarkVisible.value = false;
+  aliasVisible.value = false;
   mailVisible.value = false;
   mailLoading.value = false;
   mailAccountId.value = null;
@@ -290,6 +347,7 @@ function clearSessionState(): void {
   clearImportForm();
   resetEditForm();
   resetRemarkForm();
+  resetAliasForm();
 }
 
 function handleApiError(error: unknown, showAuthWarning = true): void {
@@ -315,7 +373,14 @@ function normalizePayload(payload: AccountFormState): AccountPayload {
 }
 
 function getTargetAccountIds(all: boolean): number[] {
-  return all ? [] : checkedRowKeys.value;
+  if (all) {
+    return [];
+  }
+
+  const primaryIds = new Set(
+    accounts.value.filter((item) => item.rowType !== 'alias').map((item) => item.id)
+  );
+  return checkedRowKeys.value.filter((id) => primaryIds.has(id));
 }
 
 function showBatchResult(prefix: string, result: BatchActionResult): void {
@@ -434,7 +499,9 @@ async function loadAccounts(): Promise<boolean> {
     const response = await api.listAccounts(searchKeyword.value.trim());
     accounts.value = response.items;
     mergeGptValidityResults(response.items);
-    const available = new Set(response.items.map((item) => item.id));
+    const available = new Set(
+      response.items.filter((item) => item.rowType !== 'alias').map((item) => item.id)
+    );
     checkedRowKeys.value = checkedRowKeys.value.filter((id) => available.has(id));
     return true;
   } catch (error) {
@@ -639,6 +706,11 @@ function openImportModal(): void {
 }
 
 function openEditModal(row: AccountItem): void {
+  if (row.rowType === 'alias') {
+    message.warning('别名邮箱继承主邮箱信息，不支持编辑账号资料');
+    return;
+  }
+
   editForm.id = row.id;
   editForm.account = row.account;
   editForm.password = row.password;
@@ -649,6 +721,11 @@ function openEditModal(row: AccountItem): void {
 }
 
 function openRemarkModal(row: AccountItem): void {
+  if (row.rowType === 'alias') {
+    message.warning('别名邮箱继承主邮箱备注，请在主邮箱上编辑备注');
+    return;
+  }
+
   remarkForm.id = row.id;
   remarkForm.account = row.account;
   remarkForm.remark = row.remark ?? '';
@@ -660,10 +737,53 @@ function closeRemarkModal(): void {
   resetRemarkForm();
 }
 
+async function openAliasModal(row: AccountItem): Promise<void> {
+  if (row.rowType === 'alias') {
+    message.warning('别名邮箱不支持再新建别名邮箱');
+    return;
+  }
+
+  aliasVisible.value = true;
+  aliasLoading.value = true;
+  aliasForm.accountId = row.id;
+  aliasForm.account = row.account;
+  aliasForm.aliasAccount = buildRandomAliasForAccount(row.account);
+  aliasForm.aliases = [];
+
+  try {
+    const response = await api.listAccountAliases(row.id);
+    aliasForm.aliases = response.aliases;
+  } catch (error) {
+    handleApiError(error);
+  } finally {
+    aliasLoading.value = false;
+  }
+}
+
+function closeAliasModal(): void {
+  aliasVisible.value = false;
+  resetAliasForm();
+}
+
+function randomizeAliasAccount(): void {
+  const aliasAccount = buildRandomAliasForAccount(aliasForm.account);
+  if (!aliasAccount) {
+    message.warning('主邮箱格式不完整，无法生成别名');
+    return;
+  }
+  aliasForm.aliasAccount = aliasAccount;
+}
+
 function handleCheckedRowKeysUpdate(keys: Array<number | string>): void {
+  const primaryIds = new Set(
+    accounts.value.filter((item) => item.rowType !== 'alias').map((item) => item.id)
+  );
   checkedRowKeys.value = keys
-    .map((value) => Number(value))
-    .filter((value) => Number.isInteger(value) && value > 0);
+    .map((value) => {
+      const text = String(value);
+      return text.startsWith('account-') ? Number(text.slice('account-'.length)) : Number(value);
+    })
+    .filter((value) => Number.isInteger(value) && value > 0 && primaryIds.has(value));
 }
 
 async function createAccount(): Promise<void> {
@@ -712,6 +832,32 @@ async function updateAccount(): Promise<void> {
   }
 }
 
+async function createAliasAccount(): Promise<void> {
+  const accountId = aliasForm.accountId;
+  const aliasAccount = aliasForm.aliasAccount.trim().toLowerCase();
+  if (!accountId) {
+    message.warning('请先选择主邮箱');
+    return;
+  }
+  if (!aliasAccount) {
+    message.warning('请填写别名邮箱');
+    return;
+  }
+
+  aliasCreateLoading.value = true;
+  try {
+    const response = await api.createAccountAlias(accountId, aliasAccount);
+    aliasForm.aliases = response.aliases;
+    aliasForm.aliasAccount = buildRandomAliasForAccount(aliasForm.account);
+    await loadAccounts();
+    message.success('别名邮箱已创建');
+  } catch (error) {
+    handleApiError(error);
+  } finally {
+    aliasCreateLoading.value = false;
+  }
+}
+
 async function saveRemark(): Promise<void> {
   if (!remarkForm.id) {
     message.warning('请先选择需要备注的邮箱');
@@ -733,6 +879,12 @@ async function saveRemark(): Promise<void> {
 }
 
 async function updateAccountPassword(id: number, password: string): Promise<AccountItem | null> {
+  const target = accounts.value.find((item) => item.id === id);
+  if (target?.rowType === 'alias') {
+    message.warning('别名邮箱继承主邮箱密码，不支持单独修改');
+    return null;
+  }
+
   const nextPassword = password.trim();
   if (!nextPassword) {
     message.warning('密码不能为空');
@@ -741,7 +893,7 @@ async function updateAccountPassword(id: number, password: string): Promise<Acco
 
   try {
     const response = await api.updateAccountPassword(id, nextPassword);
-    accounts.value = accounts.value.map((item) => (item.id === response.item.id ? response.item : item));
+    await loadAccounts();
     message.success('密码已保存');
     return response.item;
   } catch (error) {
@@ -751,6 +903,12 @@ async function updateAccountPassword(id: number, password: string): Promise<Acco
 }
 
 async function deleteAccount(id: number): Promise<void> {
+  const target = accounts.value.find((item) => item.id === id);
+  if (target?.rowType === 'alias') {
+    message.warning('本期暂不支持删除别名邮箱');
+    return;
+  }
+
   const confirmed = window.confirm('确认删除该账号？');
   if (!confirmed) {
     return;
@@ -798,7 +956,8 @@ async function refreshAccounts(all: boolean): Promise<void> {
 
   syncLoading.value = true;
   try {
-    resetTokenRefreshProgress(all ? accounts.value.length : accountIds.length);
+    const primaryCount = accounts.value.filter((item) => item.rowType !== 'alias').length;
+    resetTokenRefreshProgress(all ? primaryCount : accountIds.length);
     const response = await api.refreshAccountsStream({
       accountIds: all ? undefined : accountIds
     });
@@ -813,13 +972,16 @@ async function refreshAccounts(all: boolean): Promise<void> {
 }
 
 function selectAll(): void {
-  checkedRowKeys.value = accounts.value.map((item) => item.id);
+  checkedRowKeys.value = accounts.value
+    .filter((item) => item.rowType !== 'alias')
+    .map((item) => item.id);
   message.success(`已选中 ${checkedRowKeys.value.length} 条账号`);
 }
 
 function selectInverse(): void {
   const currentIds = new Set(checkedRowKeys.value);
   checkedRowKeys.value = accounts.value
+    .filter((item) => item.rowType !== 'alias')
     .map((item) => item.id)
     .filter((id) => !currentIds.has(id));
   message.success(`反选完成，已选中 ${checkedRowKeys.value.length} 条账号`);
@@ -868,7 +1030,7 @@ async function loadMailMessages(id: number, accountLabel: string, openModal = tr
   try {
     const response = await api.getAccountMessages(id, ADMIN_MAIL_FETCH_MODE);
     mailAccountId.value = response.accountId;
-    mailAccount.value = response.account;
+    mailAccount.value = accountLabel || response.account;
     mailItems.value = response.messages;
     selectedMailId.value = response.messages[0]?.id ?? '';
     await loadAccounts();
@@ -880,7 +1042,7 @@ async function loadMailMessages(id: number, accountLabel: string, openModal = tr
 }
 
 async function openMailModal(row: AccountItem): Promise<void> {
-  await loadMailMessages(row.id, row.account, true);
+  await loadMailMessages(getPrimaryAccountId(row), row.account, true);
 }
 
 async function copyText(value: string, successMessage: string): Promise<boolean> {
@@ -1253,8 +1415,11 @@ export function useAdminConsole() {
     importVisible,
     editVisible,
     remarkVisible,
+    aliasVisible,
     mailVisible,
     mailLoading,
+    aliasLoading,
+    aliasCreateLoading,
     mailAccountId,
     mailAccount,
     mailItems,
@@ -1264,6 +1429,7 @@ export function useAdminConsole() {
     createForm,
     editForm,
     remarkForm,
+    aliasForm,
     ingestConfig,
     ingestEndpointPath,
     ingestTokenHeader,
@@ -1278,10 +1444,14 @@ export function useAdminConsole() {
     openImportModal,
     openEditModal,
     openRemarkModal,
+    openAliasModal,
     closeRemarkModal,
+    closeAliasModal,
+    randomizeAliasAccount,
     handleCheckedRowKeysUpdate,
     createAccount,
     updateAccount,
+    createAliasAccount,
     saveRemark,
     updateAccountPassword,
     deleteAccount,
