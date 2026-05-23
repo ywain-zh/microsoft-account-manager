@@ -26,6 +26,29 @@ const MICROSOFT_OAUTH_POPUP_FEATURES = 'popup=yes,width=560,height=760,left=120,
 const MICROSOFT_OAUTH_POPUP_POLL_MS = 800;
 const MICROSOFT_OAUTH_POPUP_TIMEOUT_MS = 120_000;
 const MICROSOFT_OAUTH_RESULT_STORAGE_KEY = 'microsoft-oauth-result';
+const MICROSOFT_ALIAS_SUFFIXES = [
+  'ava',
+  'amy',
+  'ann',
+  'ben',
+  'bob',
+  'dan',
+  'eli',
+  'eva',
+  'ian',
+  'jay',
+  'joe',
+  'kai',
+  'leo',
+  'liz',
+  'max',
+  'mia',
+  'ned',
+  'ray',
+  'sam',
+  'tom',
+  'zoe'
+];
 
 interface AccountFormState {
   account: string;
@@ -270,24 +293,23 @@ function getPrimaryAccount(row: AccountItem): string {
   return row.primaryAccount || row.account;
 }
 
-function buildRandomAliasForAccount(account: string): string {
+function buildRandomAliasForAccount(account: string, existingAliases: AccountAliasItem[] = []): string {
   const [localPart, domain] = account.trim().toLowerCase().split('@');
   if (!localPart || !domain) {
     return '';
   }
 
-  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  const bytes = new Uint8Array(6);
-  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-    crypto.getRandomValues(bytes);
-  } else {
-    for (let index = 0; index < bytes.length; index += 1) {
-      bytes[index] = Math.floor(Math.random() * alphabet.length);
+  const usedAliases = new Set(existingAliases.map((alias) => alias.aliasAccount.trim().toLowerCase()));
+  const suffixes = [...MICROSOFT_ALIAS_SUFFIXES].sort(() => Math.random() - 0.5);
+  for (const suffix of suffixes) {
+    const candidate = `${localPart}+${suffix}@${domain}`;
+    if (!usedAliases.has(candidate)) {
+      return candidate;
     }
   }
 
-  const prefix = Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('');
-  return `${prefix}-${localPart}@${domain}`;
+  const suffix = MICROSOFT_ALIAS_SUFFIXES[Math.floor(Math.random() * MICROSOFT_ALIAS_SUFFIXES.length)] ?? 'ava';
+  return `${localPart}+${suffix}@${domain}`;
 }
 
 function getGptValidityKey(email: string): string {
@@ -754,6 +776,7 @@ async function openAliasModal(row: AccountItem): Promise<void> {
   try {
     const response = await api.listAccountAliases(row.id);
     aliasForm.aliases = response.aliases;
+    aliasForm.aliasAccount = buildRandomAliasForAccount(row.account, response.aliases);
   } catch (error) {
     handleApiError(error);
   } finally {
@@ -767,7 +790,7 @@ function closeAliasModal(): void {
 }
 
 function randomizeAliasAccount(): void {
-  const aliasAccount = buildRandomAliasForAccount(aliasForm.account);
+  const aliasAccount = buildRandomAliasForAccount(aliasForm.account, aliasForm.aliases);
   if (!aliasAccount) {
     message.warning('主邮箱格式不完整，无法生成别名');
     return;
@@ -849,7 +872,7 @@ async function createAliasAccount(): Promise<void> {
   try {
     const response = await api.createAccountAlias(accountId, aliasAccount);
     aliasForm.aliases = response.aliases;
-    aliasForm.aliasAccount = buildRandomAliasForAccount(aliasForm.account);
+    aliasForm.aliasAccount = buildRandomAliasForAccount(aliasForm.account, response.aliases);
     await loadAccounts();
     message.success('别名邮箱已创建');
   } catch (error) {
