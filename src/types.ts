@@ -279,6 +279,10 @@ export interface AccountMailItem {
   id: string;
   subject: string;
   from: string;
+  toRecipients?: MailRecipient[];
+  ccRecipients?: MailRecipient[];
+  matchedRecipients?: string[];
+  recipientMatchKind?: 'requested' | 'other' | 'unknown';
   receivedAt: string;
   preview: string;
   contentType: string;
@@ -286,6 +290,12 @@ export interface AccountMailItem {
   folderKind: 'inbox' | 'junk';
   folderLabel: string;
   isRead: boolean | null;
+}
+
+export interface MailRecipient {
+  name: string;
+  address: string;
+  display: string;
 }
 
 export interface AccountMessagesResponse {

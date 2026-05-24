@@ -407,6 +407,10 @@ interface AccountMailItem {
   id: string;
   subject: string;
   from: string;
+  toRecipients?: MailRecipient[];
+  ccRecipients?: MailRecipient[];
+  matchedRecipients?: string[];
+  recipientMatchKind?: RecipientMatchKind;
   receivedAt: string;
   preview: string;
   contentType: string;
@@ -414,6 +418,21 @@ interface AccountMailItem {
   folderKind: 'inbox' | 'junk';
   folderLabel: string;
   isRead: boolean | null;
+}
+
+interface MailRecipient {
+  name: string;
+  address: string;
+  display: string;
+}
+
+type RecipientMatchKind = 'requested' | 'other' | 'unknown';
+
+interface RecipientFilterContext {
+  requestedEmail: string;
+  primaryAccount: string;
+  aliases: string[];
+  filterForRequestedEmail: boolean;
 }
 
 interface FetchActionResult {
@@ -1196,11 +1215,13 @@ app.post('/api/accounts/refresh-stream', async (c) => {
 app.get('/api/accounts/:id/messages', async (c) => {
   const id = parseNumericId(c.req.param('id'));
   const mode = parseMailFetchMode(c.req.query('mode'), 'auto');
+  const requestedEmail = normalizeEmailAddress(c.req.query('email'));
   const account = await fetchAccountById(c.env.DB, id);
 
   if (!account) {
     throw new HTTPException(404, { message: '账号不存在' });
   }
+  const recipientContext = await buildRecipientFilterContext(c.env.DB, account, requestedEmail);
 
   const result = await fetchAccountMessages(
     { MS_CLIENT_ID: c.env.MS_CLIENT_ID, MS_CLIENT_SECRET: c.env.MS_CLIENT_SECRET },
@@ -1212,11 +1233,18 @@ app.get('/api/accounts/:id/messages', async (c) => {
   if (!result.ok) {
     throw new HTTPException(400, { message: result.message });
   }
-  const messages = await applyMailReadMarks(c.env.DB, 'microsoft', account.account, result.messages);
+  const filteredMessages = applyRecipientFilter(result.messages, recipientContext);
+  const messages = await applyMailReadMarks(c.env.DB, 'microsoft', account.account, filteredMessages);
 
   return c.json({
     accountId: account.id,
     account: account.account,
+    requestedEmail: recipientContext.requestedEmail,
+    resolvedAccount: account.account,
+    matchedAlias:
+      normalizeEmailAddress(recipientContext.requestedEmail) === normalizeEmailAddress(account.account)
+        ? null
+        : recipientContext.requestedEmail,
     mode,
     resolvedMode: result.resolvedMode,
     messages
@@ -1242,11 +1270,13 @@ app.get('/api/open/accounts/:id/messages', async (c) => {
 
   const id = parseNumericId(c.req.param('id'));
   const mode = parseMailFetchMode(c.req.query('mode'), 'auto');
+  const requestedEmail = normalizeEmailAddress(c.req.query('email'));
   const account = await fetchAccountById(c.env.DB, id);
 
   if (!account) {
     throw new HTTPException(404, { message: '账号不存在' });
   }
+  const recipientContext = await buildRecipientFilterContext(c.env.DB, account, requestedEmail);
 
   const result = await fetchAccountMessages(
     { MS_CLIENT_ID: c.env.MS_CLIENT_ID, MS_CLIENT_SECRET: c.env.MS_CLIENT_SECRET },
@@ -1258,11 +1288,18 @@ app.get('/api/open/accounts/:id/messages', async (c) => {
   if (!result.ok) {
     throw new HTTPException(400, { message: result.message });
   }
-  const messages = await applyMailReadMarks(c.env.DB, 'microsoft', account.account, result.messages);
+  const filteredMessages = applyRecipientFilter(result.messages, recipientContext);
+  const messages = await applyMailReadMarks(c.env.DB, 'microsoft', account.account, filteredMessages);
 
   return c.json({
     accountId: account.id,
     account: account.account,
+    requestedEmail: recipientContext.requestedEmail,
+    resolvedAccount: account.account,
+    matchedAlias:
+      normalizeEmailAddress(recipientContext.requestedEmail) === normalizeEmailAddress(account.account)
+        ? null
+        : recipientContext.requestedEmail,
     mode,
     resolvedMode: result.resolvedMode,
     messages
@@ -1303,7 +1340,13 @@ app.post('/api/open/messages', async (c) => {
   if (!result.ok) {
     throw new HTTPException(400, { message: result.message });
   }
-  const messages = await applyMailReadMarks(c.env.DB, 'microsoft', resolved.account.account, result.messages);
+  const recipientContext = await buildRecipientFilterContext(
+    c.env.DB,
+    resolved.account,
+    resolved.requestedEmail
+  );
+  const filteredMessages = applyRecipientFilter(result.messages, recipientContext);
+  const messages = await applyMailReadMarks(c.env.DB, 'microsoft', resolved.account.account, filteredMessages);
 
   return c.json({
     accountId: resolved.account.id,
@@ -1353,7 +1396,13 @@ app.get('/api/external/microsoft/messages', async (c) => {
     throw new HTTPException(400, { message: result.message });
   }
 
-  const messages = await applyMailReadMarks(c.env.DB, 'microsoft', resolved.account.account, result.messages);
+  const recipientContext = await buildRecipientFilterContext(
+    c.env.DB,
+    resolved.account,
+    resolved.requestedEmail
+  );
+  const filteredMessages = applyRecipientFilter(result.messages, recipientContext);
+  const messages = await applyMailReadMarks(c.env.DB, 'microsoft', resolved.account.account, filteredMessages);
   return c.json({
     account: resolved.account.account,
     requestedEmail: resolved.requestedEmail,
@@ -5709,6 +5758,72 @@ function normalizeAliasAccount(value: unknown): string {
   return aliasAccount;
 }
 
+async function buildRecipientFilterContext(
+  db: D1Database,
+  account: AccountRow,
+  requestedEmailInput: string
+): Promise<RecipientFilterContext> {
+  const primaryAccount = normalizeEmailAddress(account.account);
+  const requestedEmail = requestedEmailInput || primaryAccount;
+  const aliases = (await fetchAccountAliases(db, account.id)).map((alias) =>
+    normalizeEmailAddress(alias.aliasAccount)
+  );
+  const allowedEmails = new Set([primaryAccount, ...aliases]);
+  if (!allowedEmails.has(requestedEmail)) {
+    throw new HTTPException(400, { message: '请求邮箱不属于该主邮箱或别名' });
+  }
+
+  return {
+    requestedEmail,
+    primaryAccount,
+    aliases,
+    filterForRequestedEmail: requestedEmail !== primaryAccount
+  };
+}
+
+function applyRecipientFilter(
+  messages: AccountMailItem[],
+  context: RecipientFilterContext
+): AccountMailItem[] {
+  return messages
+    .map((item) => annotateMailRecipientMatch(item, context))
+    .filter((item) => {
+      if (!context.filterForRequestedEmail) {
+        return true;
+      }
+      return item.recipientMatchKind === 'requested' || item.recipientMatchKind === 'unknown';
+    });
+}
+
+function annotateMailRecipientMatch(
+  item: AccountMailItem,
+  context: RecipientFilterContext
+): AccountMailItem {
+  const knownRecipients = [...(item.toRecipients ?? []), ...(item.ccRecipients ?? [])]
+    .map((recipient) => normalizeEmailAddress(recipient.address))
+    .filter(Boolean);
+  const matchedRecipients = Array.from(
+    new Set(
+      knownRecipients.filter(
+        (address) => address === context.primaryAccount || context.aliases.includes(address)
+      )
+    )
+  );
+
+  let recipientMatchKind: RecipientMatchKind = 'unknown';
+  if (matchedRecipients.includes(context.requestedEmail)) {
+    recipientMatchKind = 'requested';
+  } else if (matchedRecipients.length > 0) {
+    recipientMatchKind = 'other';
+  }
+
+  return {
+    ...item,
+    matchedRecipients,
+    recipientMatchKind
+  };
+}
+
 function getScopeKeysByMode(
   mode: ResolvedMailFetchMode,
   preferredScope: string | null | undefined
@@ -6918,8 +7033,8 @@ async function readGraphFolderMessages(
   includeBody = false
 ): Promise<{ ok: true; messages: AccountMailItem[] } | { ok: false; error: string }> {
   const select = includeBody
-    ? 'id,subject,from,receivedDateTime,bodyPreview,body,isRead'
-    : 'id,subject,from,receivedDateTime,bodyPreview,isRead';
+    ? 'id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,body,isRead'
+    : 'id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,isRead';
 
   const firstUrl = new URL(`${GRAPH_MAIL_FOLDERS_URL}/${folderId}/messages`);
   firstUrl.searchParams.set('$top', String(MAIL_PAGE_SIZE));
@@ -6985,8 +7100,8 @@ async function readOutlookFolderMessages(
   includeBody = false
 ): Promise<{ ok: true; messages: AccountMailItem[] } | { ok: false; error: string }> {
   const select = includeBody
-    ? 'Id,Subject,From,DateTimeReceived,BodyPreview,Body,IsRead'
-    : 'Id,Subject,From,DateTimeReceived,BodyPreview,IsRead';
+    ? 'Id,Subject,From,ToRecipients,CcRecipients,DateTimeReceived,BodyPreview,Body,IsRead'
+    : 'Id,Subject,From,ToRecipients,CcRecipients,DateTimeReceived,BodyPreview,IsRead';
 
   const firstUrl = new URL(`${OUTLOOK_MAIL_FOLDERS_URL}/${folderId}/messages`);
   firstUrl.searchParams.set('$top', String(MAIL_PAGE_SIZE));
@@ -7051,16 +7166,7 @@ function normalizeGraphMailItem(
   includeBody: boolean,
   folderKind: 'inbox' | 'junk'
 ): AccountMailItem {
-  const fromNode = item.from;
-  let senderName = '';
-  let senderAddress = '';
-  if (fromNode && typeof fromNode === 'object') {
-    const mailAddressNode = (fromNode as Record<string, unknown>).emailAddress;
-    if (mailAddressNode && typeof mailAddressNode === 'object') {
-      senderName = asText((mailAddressNode as Record<string, unknown>).name).trim();
-      senderAddress = asText((mailAddressNode as Record<string, unknown>).address).trim();
-    }
-  }
+  const sender = normalizeGraphMailbox(item.from);
 
   let contentType = '';
   let content = '';
@@ -7076,7 +7182,9 @@ function normalizeGraphMailItem(
   return {
     id: asText(item.id).trim(),
     subject: asText(item.subject).trim(),
-    from: formatMailboxDisplay(senderName, senderAddress),
+    from: sender.display,
+    toRecipients: normalizeGraphRecipients(item.toRecipients),
+    ccRecipients: normalizeGraphRecipients(item.ccRecipients),
     receivedAt: asText(item.receivedDateTime).trim(),
     preview: asText(item.bodyPreview).trim(),
     contentType,
@@ -7092,16 +7200,7 @@ function normalizeOutlookMailItem(
   includeBody: boolean,
   folderKind: 'inbox' | 'junk'
 ): AccountMailItem {
-  const fromNode = item.From;
-  let senderName = '';
-  let senderAddress = '';
-  if (fromNode && typeof fromNode === 'object') {
-    const emailNode = (fromNode as Record<string, unknown>).EmailAddress;
-    if (emailNode && typeof emailNode === 'object') {
-      senderName = asText((emailNode as Record<string, unknown>).Name).trim();
-      senderAddress = asText((emailNode as Record<string, unknown>).Address).trim();
-    }
-  }
+  const sender = normalizeOutlookMailbox(item.From);
 
   let contentType = '';
   let content = '';
@@ -7117,7 +7216,9 @@ function normalizeOutlookMailItem(
   return {
     id: asText(item.Id).trim(),
     subject: asText(item.Subject).trim(),
-    from: formatMailboxDisplay(senderName, senderAddress),
+    from: sender.display,
+    toRecipients: normalizeOutlookRecipients(item.ToRecipients),
+    ccRecipients: normalizeOutlookRecipients(item.CcRecipients),
     receivedAt: asText(item.DateTimeReceived).trim(),
     preview: asText(item.BodyPreview).trim(),
     contentType,
@@ -7125,6 +7226,48 @@ function normalizeOutlookMailItem(
     folderKind,
     folderLabel: getFolderLabel(folderKind),
     isRead: detectOutlookReadState(item.IsRead)
+  };
+}
+
+function normalizeGraphRecipients(value: unknown): MailRecipient[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((item) => normalizeGraphMailbox(item)).filter((item) => item.address);
+}
+
+function normalizeOutlookRecipients(value: unknown): MailRecipient[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((item) => normalizeOutlookMailbox(item)).filter((item) => item.address);
+}
+
+function normalizeGraphMailbox(value: unknown): MailRecipient {
+  const node = asRecord(value);
+  const emailAddress = asRecord(node.emailAddress);
+  return buildMailRecipient(
+    asText(emailAddress.name).trim(),
+    asText(emailAddress.address).trim()
+  );
+}
+
+function normalizeOutlookMailbox(value: unknown): MailRecipient {
+  const node = asRecord(value);
+  const emailAddress = asRecord(node.EmailAddress);
+  return buildMailRecipient(
+    asText(emailAddress.Name).trim(),
+    asText(emailAddress.Address).trim()
+  );
+}
+
+function buildMailRecipient(name: string, address: string): MailRecipient {
+  const normalizedName = name.trim();
+  const normalizedAddress = address.trim();
+  return {
+    name: normalizedName,
+    address: normalizedAddress,
+    display: formatMailboxDisplay(normalizedName, normalizedAddress)
   };
 }
 

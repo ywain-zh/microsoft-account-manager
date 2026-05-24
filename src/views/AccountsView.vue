@@ -395,6 +395,7 @@
       :show="mailVisible"
       title="邮箱邮件"
       :account="mailAccount"
+      :matched-alias="mailMatchedAlias"
       :items="mailItems"
       :loading="mailLoading"
       :selected-mail-id="selectedMailId"
@@ -602,6 +603,7 @@ const {
   mailVisible,
   mailLoading,
   mailAccount,
+  mailMatchedAlias,
   mailItems,
   selectedMailId,
   createForm,

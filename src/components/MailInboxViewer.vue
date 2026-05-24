@@ -121,6 +121,9 @@
                   </span>
                   <span v-if="item.isRead === false" class="mail-state-badge mail-state-badge-unread">未读</span>
                   <span v-else-if="item.isRead === true" class="mail-state-badge mail-state-badge-read">已读</span>
+                  <span v-if="shouldShowRecipientBadge(item)" class="mail-recipient-badge" :class="recipientBadgeClass(item)">
+                    {{ recipientBadgeLabel(item) }}
+                  </span>
                 </div>
                 <div class="mail-subject" :title="item.subject || '(无主题)'">{{ item.subject || '(无主题)' }}</div>
                 <div class="mail-snippet" :title="resolveSnippet(item)">
@@ -146,11 +149,17 @@
                   </span>
                   <span v-if="selectedMail.isRead === false" class="mail-state-badge mail-state-badge-unread">未读</span>
                   <span v-else-if="selectedMail.isRead === true" class="mail-state-badge mail-state-badge-read">已读</span>
+                  <span v-if="shouldShowRecipientBadge(selectedMail)" class="mail-recipient-badge" :class="recipientBadgeClass(selectedMail)">
+                    {{ recipientBadgeLabel(selectedMail) }}
+                  </span>
                 </div>
               </div>
               <div class="mail-meta-info">
                 <div><strong>发件人:</strong> {{ selectedMail.from || '-' }}</div>
-                <div><strong>收件人:</strong> {{ account || '-' }}</div>
+                <div><strong>收件人:</strong> {{ formatMessageRecipients(selectedMail) }}</div>
+                <div v-if="selectedMail.ccRecipients?.length">
+                  <strong>抄送:</strong> {{ formatRecipients(selectedMail.ccRecipients) }}
+                </div>
                 <div><strong>时 间:</strong> {{ formatDate(selectedMail.receivedAt) }}</div>
               </div>
             </div>
@@ -241,6 +250,7 @@ interface MailInboxViewerProps {
   show: boolean;
   title: string;
   account: string;
+  matchedAlias?: string | null;
   items: AccountMailItem[];
   loading: boolean;
   selectedMailId: string;
@@ -277,6 +287,48 @@ const translationBannerVisible = computed(() => {
       (shouldOfferTranslation.value || translatedEntry.value || translationError.value || translationLoading.value)
   );
 });
+
+function formatRecipients(recipients: AccountMailItem['toRecipients'], fallback = '未知'): string {
+  if (!recipients || recipients.length === 0) {
+    return fallback;
+  }
+  return recipients.map((recipient) => recipient.display || recipient.address).filter(Boolean).join('、') || fallback;
+}
+
+function formatMessageRecipients(item: AccountMailItem): string {
+  if (!shouldShowRecipientBadge(item)) {
+    return props.account || '-';
+  }
+  return formatRecipients(item.toRecipients);
+}
+
+function shouldShowRecipientBadge(item: AccountMailItem): boolean {
+  return typeof item.recipientMatchKind === 'string';
+}
+
+function recipientBadgeLabel(item: AccountMailItem): string {
+  if (item.recipientMatchKind === 'unknown') {
+    return '收件人未知';
+  }
+  if (item.recipientMatchKind === 'requested') {
+    return props.matchedAlias ? '发给当前别名' : '发给主邮箱';
+  }
+  if (item.recipientMatchKind === 'other') {
+    return '发给其他别名';
+  }
+  return item.toRecipients?.length ? '收件人已识别' : '收件人未知';
+}
+
+function recipientBadgeClass(item: AccountMailItem): string {
+  if (item.recipientMatchKind === 'requested') {
+    return 'mail-recipient-badge-requested';
+  }
+  if (item.recipientMatchKind === 'other') {
+    return 'mail-recipient-badge-other';
+  }
+  return 'mail-recipient-badge-unknown';
+}
+
 const displayedMail = computed<AccountMailItem | null>(() => {
   if (!selectedMail.value || !translatedEntry.value || !translationVisible.value) {
     return selectedMail.value;
@@ -742,7 +794,8 @@ onBeforeUnmount(() => {
 }
 
 .mail-folder-badge,
-.mail-state-badge {
+.mail-state-badge,
+.mail-recipient-badge {
   display: inline-flex;
   align-items: center;
   min-height: 22px;
@@ -750,7 +803,8 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.01em;
+  letter-spacing: 0;
+  white-space: nowrap;
 }
 
 .mail-folder-badge-inbox {
@@ -770,6 +824,21 @@ onBeforeUnmount(() => {
 
 .mail-state-badge-read {
   background: #f1f5f9;
+  color: #64748b;
+}
+
+.mail-recipient-badge-requested {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.mail-recipient-badge-other {
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+
+.mail-recipient-badge-unknown {
+  background: #f8fafc;
   color: #64748b;
 }
 

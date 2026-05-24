@@ -162,6 +162,10 @@
             <tr><td><code>id</code></td><td>string</td><td>邮件 ID。</td></tr>
             <tr><td><code>subject</code></td><td>string</td><td>邮件主题。</td></tr>
             <tr><td><code>from</code></td><td>string</td><td>发件人。</td></tr>
+            <tr><td><code>toRecipients</code></td><td>array</td><td>微软接口返回的真实收件人列表。</td></tr>
+            <tr><td><code>ccRecipients</code></td><td>array</td><td>微软接口返回的真实抄送列表。</td></tr>
+            <tr><td><code>matchedRecipients</code></td><td>array</td><td>命中的主邮箱或别名地址。</td></tr>
+            <tr><td><code>recipientMatchKind</code></td><td>string</td><td><code>requested</code>、<code>other</code>、<code>unknown</code>。</td></tr>
             <tr><td><code>receivedAt</code></td><td>string</td><td>收件时间。</td></tr>
             <tr><td><code>preview</code></td><td>string</td><td>邮件预览。</td></tr>
             <tr><td><code>contentType</code></td><td>string</td><td>正文类型，常见为 html 或 text。</td></tr>
@@ -406,6 +410,16 @@ const messagesResponseExample = JSON.stringify(
         id: 'message-id',
         subject: 'Your verification code',
         from: 'OpenAI <noreply@example.com>',
+        toRecipients: [
+          {
+            name: 'example@hotmail.com',
+            address: 'example@hotmail.com',
+            display: 'example@hotmail.com'
+          }
+        ],
+        ccRecipients: [],
+        matchedRecipients: ['example@hotmail.com'],
+        recipientMatchKind: 'requested',
         receivedAt: '2026-05-20T02:30:00Z',
         preview: 'Your verification code is...',
         contentType: 'html',

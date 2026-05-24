@@ -319,8 +319,11 @@ export const api = {
     });
   },
 
-  getAccountMessages(id: number, mode: MailFetchMode): Promise<AccountMessagesResponse> {
+  getAccountMessages(id: number, mode: MailFetchMode, email?: string): Promise<AccountMessagesResponse> {
     const params = new URLSearchParams({ mode });
+    if (email?.trim()) {
+      params.set('email', email.trim());
+    }
     return request<AccountMessagesResponse>(`/api/accounts/${id}/messages?${params.toString()}`);
   },
 

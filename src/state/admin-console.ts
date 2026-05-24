@@ -135,6 +135,7 @@ const aliasDeletingIds = ref<number[]>([]);
 
 const mailAccountId = ref<number | null>(null);
 const mailAccount = ref('');
+const mailMatchedAlias = ref<string | null>(null);
 const mailItems = ref<AccountMailItem[]>([]);
 const selectedMailId = ref('');
 
@@ -362,6 +363,7 @@ function clearSessionState(): void {
   mailLoading.value = false;
   mailAccountId.value = null;
   mailAccount.value = '';
+  mailMatchedAlias.value = null;
   mailItems.value = [];
   selectedMailId.value = '';
   gptValidityLoadingEmails.value = [];
@@ -1084,9 +1086,10 @@ async function loadMailMessages(id: number, accountLabel: string, openModal = tr
   selectedMailId.value = '';
 
   try {
-    const response = await api.getAccountMessages(id, ADMIN_MAIL_FETCH_MODE);
+    const response = await api.getAccountMessages(id, ADMIN_MAIL_FETCH_MODE, accountLabel);
     mailAccountId.value = response.accountId;
     mailAccount.value = accountLabel || response.account;
+    mailMatchedAlias.value = response.matchedAlias ?? null;
     mailItems.value = response.messages;
     selectedMailId.value = response.messages[0]?.id ?? '';
     await loadAccounts();
@@ -1479,6 +1482,7 @@ export function useAdminConsole() {
     aliasDeletingIds,
     mailAccountId,
     mailAccount,
+    mailMatchedAlias,
     mailItems,
     selectedMailId,
     selectedMail,
