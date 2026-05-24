@@ -22,6 +22,8 @@ import type {
   Sub2ApiConfig,
   Sub2ApiDeleteAccountsResponse,
   Sub2ApiGptValidityResponse,
+  Sub2ApiReauthConfig,
+  Sub2ApiReauthStartPayload,
   SystemBackupJobResponse,
   TranslationConfig,
   TranslationProvider,
@@ -356,6 +358,17 @@ export const api = {
     });
   },
 
+  getSub2ApiReauthConfig(): Promise<{ item: Sub2ApiReauthConfig }> {
+    return request<{ item: Sub2ApiReauthConfig }>('/api/sub2api/reauth/config');
+  },
+
+  updateSub2ApiReauthConfig(payload: Sub2ApiReauthConfig): Promise<{ item: Sub2ApiReauthConfig }> {
+    return request<{ item: Sub2ApiReauthConfig }>('/api/sub2api/reauth/config', {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
   listSub2ApiModels(): Promise<OpenAiModelsResponse> {
     return request<OpenAiModelsResponse>('/api/sub2api/models');
   },
@@ -427,6 +440,14 @@ export const api = {
 
   startSub2ApiCheck(payload: { modelId: string }, signal?: AbortSignal): Promise<Response> {
     return requestStream('/api/sub2api/check', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      signal
+    });
+  },
+
+  startSub2ApiReauth(payload: Sub2ApiReauthStartPayload, signal?: AbortSignal): Promise<Response> {
+    return requestStream('/api/sub2api/reauth/start', {
       method: 'POST',
       body: JSON.stringify(payload),
       signal

@@ -127,6 +127,51 @@ export interface Sub2ApiConfig {
   adminApiKey: string;
 }
 
+export interface Sub2ApiReauthConfig {
+  authMode: 'admin-api-key' | 'password';
+  adminEmail: string;
+  adminPassword: string;
+  groupNames: string[];
+  defaultProxyName: string;
+  accountPriority: number;
+  updateExisting: boolean;
+  autoPauseOnExpired: boolean;
+  verifyAfterImport: boolean;
+  strictEmailMatch: boolean;
+  allowAccessTokenOnly: boolean;
+}
+
+export interface Sub2ApiReauthTarget {
+  accountId?: number;
+  accountEmail: string;
+  accountName?: string | null;
+  reason?: string;
+}
+
+export interface Sub2ApiReauthStartPayload {
+  targets: Sub2ApiReauthTarget[];
+  credentialMode: 'browser-login' | 'session-json' | 'access-token';
+  sessionPayload?: unknown;
+  sessionPayloads?: Record<string, unknown>;
+  dryRun?: boolean;
+  verifyAfterImport?: boolean;
+  allowAccessTokenOnly?: boolean;
+  strictEmailMatch?: boolean;
+  modelId?: string;
+}
+
+export interface Sub2ApiReauthSummary {
+  totalAccounts: number;
+  processedAccounts: number;
+  succeededAccounts: number;
+  failedAccounts: number;
+  skippedAccounts: number;
+  createdAccounts: number;
+  updatedAccounts: number;
+  importFailedAccounts: number;
+  dryRun: boolean;
+}
+
 export interface Sub2ApiGptValidityResponse {
   email: string;
   valid: boolean;
@@ -218,6 +263,7 @@ export interface Sub2ApiDetectionLogItem {
   message: string;
   accountId?: number | null;
   accountName?: string | null;
+  accountEmail?: string | null;
 }
 
 export interface Sub2ApiDetectionProgress {
@@ -231,6 +277,7 @@ export interface Sub2ApiDetectionProgress {
 export interface Sub2ApiDetectedIssueItem {
   accountId: number;
   accountName: string | null;
+  accountEmail: string | null;
   reason: string;
 }
 

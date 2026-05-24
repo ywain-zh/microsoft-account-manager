@@ -157,11 +157,9 @@
           </n-gi>
           <n-gi :span="24" :md="6">
             <n-form-item label="密码">
-              <n-input
+              <SecretInput
                 v-model:value="createForm.password"
-                type="text"
                 placeholder="请输入密码"
-                class="microsoft-secret-input"
                 :input-props="accountPasswordInputProps"
               />
             </n-form-item>
@@ -173,18 +171,20 @@
           </n-gi>
           <n-gi :span="24" :md="6">
             <n-form-item label="Client Secret（可选）">
-              <n-input
+              <SecretInput
                 v-model:value="createForm.clientSecret"
                 placeholder="client_secret"
-                type="text"
-                class="microsoft-secret-input"
                 :input-props="clientSecretInputProps"
               />
             </n-form-item>
           </n-gi>
           <n-gi :span="24" :md="6">
             <n-form-item label="Refresh Token（可选）">
-              <n-input v-model:value="createForm.refreshToken" placeholder="refresh_token" :input-props="refreshTokenInputProps" />
+              <SecretInput
+                v-model:value="createForm.refreshToken"
+                placeholder="refresh_token"
+                :input-props="refreshTokenInputProps"
+              />
             </n-form-item>
           </n-gi>
         </n-grid>
@@ -254,10 +254,8 @@
           </n-gi>
           <n-gi :span="24" :md="6">
             <n-form-item label="密码">
-              <n-input
+              <SecretInput
                 v-model:value="editForm.password"
-                type="text"
-                class="microsoft-secret-input"
                 :input-props="accountPasswordInputProps"
               />
             </n-form-item>
@@ -269,17 +267,15 @@
           </n-gi>
           <n-gi :span="24" :md="6">
             <n-form-item label="Client Secret（可选）">
-              <n-input
+              <SecretInput
                 v-model:value="editForm.clientSecret"
-                type="text"
-                class="microsoft-secret-input"
                 :input-props="clientSecretInputProps"
               />
             </n-form-item>
           </n-gi>
           <n-gi :span="24" :md="6">
             <n-form-item label="Refresh Token（可选）">
-              <n-input v-model:value="editForm.refreshToken" :input-props="refreshTokenInputProps" />
+              <SecretInput v-model:value="editForm.refreshToken" :input-props="refreshTokenInputProps" />
             </n-form-item>
           </n-gi>
         </n-grid>
@@ -429,6 +425,7 @@ import {
   type DataTableColumns
 } from 'naive-ui';
 import MailInboxViewer from '../components/MailInboxViewer.vue';
+import SecretInput from '../components/SecretInput.vue';
 import { useAdminConsole } from '../state/admin-console';
 import type { AccountItem } from '../types';
 
@@ -488,55 +485,6 @@ const RefreshGlyph = () =>
         d: 'M16 5.5v3.5h-3.5',
         stroke: 'currentColor',
         'stroke-width': '2',
-        'stroke-linecap': 'round',
-        'stroke-linejoin': 'round'
-      })
-    ]
-  );
-
-const EyeGlyph = () =>
-  h(
-    'svg',
-    { viewBox: '0 0 20 20', fill: 'none', 'aria-hidden': 'true' },
-    [
-      h('path', {
-        d: 'M2.2 10c1.85-3.03 4.58-4.55 7.8-4.55S15.95 6.97 17.8 10c-1.85 3.03-4.58 4.55-7.8 4.55S4.05 13.03 2.2 10Z',
-        stroke: 'currentColor',
-        'stroke-width': '1.5',
-        'stroke-linejoin': 'round'
-      }),
-      h('circle', {
-        cx: '10',
-        cy: '10',
-        r: '2.2',
-        stroke: 'currentColor',
-        'stroke-width': '1.5'
-      })
-    ]
-  );
-
-const EyeOffGlyph = () =>
-  h(
-    'svg',
-    { viewBox: '0 0 20 20', fill: 'none', 'aria-hidden': 'true' },
-    [
-      h('path', {
-        d: 'M3 3.5 17 16.5',
-        stroke: 'currentColor',
-        'stroke-width': '1.5',
-        'stroke-linecap': 'round'
-      }),
-      h('path', {
-        d: 'M6.12 6.4A8.8 8.8 0 0 1 10 5.45c3.22 0 5.95 1.52 7.8 4.55a13.22 13.22 0 0 1-2.5 2.89',
-        stroke: 'currentColor',
-        'stroke-width': '1.5',
-        'stroke-linecap': 'round',
-        'stroke-linejoin': 'round'
-      }),
-      h('path', {
-        d: 'M13.15 13.01A5.2 5.2 0 0 1 10 14.55c-3.22 0-5.95-1.52-7.8-4.55a13.1 13.1 0 0 1 2.79-3.11',
-        stroke: 'currentColor',
-        'stroke-width': '1.5',
         'stroke-linecap': 'round',
         'stroke-linejoin': 'round'
       })
@@ -660,7 +608,6 @@ const tablePage = ref(1);
 const passwordDrafts = reactive<Record<number, string>>({});
 const passwordSavingIds = ref<number[]>([]);
 const passwordPendingValues = reactive<Record<number, string>>({});
-const passwordVisibleIds = ref<number[]>([]);
 const SEARCH_DEBOUNCE_MS = 300;
 let searchDebounceTimer: number | null = null;
 
@@ -880,18 +827,6 @@ function isPasswordSaving(id: number): boolean {
   return passwordSavingIds.value.includes(id);
 }
 
-function isPasswordVisible(id: number): boolean {
-  return passwordVisibleIds.value.includes(id);
-}
-
-function togglePasswordVisible(id: number): void {
-  if (isPasswordVisible(id)) {
-    passwordVisibleIds.value = passwordVisibleIds.value.filter((item) => item !== id);
-    return;
-  }
-  passwordVisibleIds.value = [...passwordVisibleIds.value, id];
-}
-
 function getPasswordCellInputProps(row: AccountItem): Record<string, string> {
   return {
     ...accountPasswordInputProps,
@@ -931,14 +866,12 @@ function renderPasswordCell(row: AccountItem): ReturnType<typeof h> {
   }
 
   const draftValue = getPasswordDraft(row);
-  const visible = isPasswordVisible(row.id);
   return h('div', { class: 'microsoft-password-cell' }, [
-    h(NInput, {
+    h(SecretInput, {
       value: draftValue,
       size: 'small',
-      type: 'text',
       placeholder: '输入密码',
-      class: ['microsoft-password-input', !visible && 'microsoft-secret-input'],
+      class: 'microsoft-password-input',
       inputProps: getPasswordCellInputProps(row),
       loading: isPasswordSaving(row.id),
       disabled: isPasswordSaving(row.id),
@@ -958,20 +891,6 @@ function renderPasswordCell(row: AccountItem): ReturnType<typeof h> {
         }
       }
     }),
-    h(
-      'button',
-      {
-        type: 'button',
-        class: 'table-icon-button microsoft-password-visibility-button',
-        title: visible ? '隐藏密码' : '显示密码',
-        'aria-label': `${visible ? '隐藏' : '显示'} ${row.account} 的密码`,
-        onClick: (event: MouseEvent) => {
-          event.stopPropagation();
-          togglePasswordVisible(row.id);
-        }
-      },
-      [h(visible ? EyeOffGlyph : EyeGlyph)]
-    ),
     h(
       'button',
       {
@@ -1565,7 +1484,7 @@ onUnmounted(() => {
 
 :deep(.microsoft-account-table .microsoft-password-cell) {
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) 28px 28px;
+  grid-template-columns: minmax(150px, 1fr) 28px;
   max-width: 100%;
   align-items: center;
   gap: 8px;
@@ -1581,17 +1500,7 @@ onUnmounted(() => {
   letter-spacing: 0;
 }
 
-:deep(.microsoft-secret-input .n-input__input-el) {
-  -webkit-text-security: disc;
-}
-
 :deep(.microsoft-account-table .microsoft-password-copy-button) {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-}
-
-:deep(.microsoft-account-table .microsoft-password-visibility-button) {
   width: 28px;
   height: 28px;
   border-radius: 8px;

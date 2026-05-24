@@ -27,5 +27,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    mem_limit: 512m
+    shm_size: "512mb"
+    mem_limit: 1g
     cpus: 1

@@ -48,10 +48,8 @@
               />
             </n-form-item>
             <n-form-item label="API Key">
-              <n-input
+              <SecretInput
                 v-model:value="form.openaiApiKey"
-                type="password"
-                show-password-on="click"
                 placeholder="sk-..."
                 :input-props="openAiKeyInputProps"
               />
@@ -88,10 +86,8 @@
               />
             </n-form-item>
             <n-form-item label="API Key">
-              <n-input
+              <SecretInput
                 v-model:value="form.deeplxApiKey"
-                type="password"
-                show-password-on="click"
                 placeholder="可留空；填写后会附加 Bearer 鉴权"
                 :input-props="deeplxKeyInputProps"
               />
@@ -183,10 +179,8 @@
         <div class="external-api-panel">
           <n-form label-placement="top" autocomplete="off">
             <n-form-item label="鉴权 Key">
-              <n-input
+              <SecretInput
                 v-model:value="externalApiForm.mailApiToken"
-                type="password"
-                show-password-on="click"
                 placeholder="请输入至少 24 位的开放接口鉴权 Key"
                 :input-props="externalApiKeyInputProps"
               />
@@ -225,6 +219,7 @@ import {
   createDiscreteApi
 } from 'naive-ui';
 import { api } from '../api';
+import SecretInput from '../components/SecretInput.vue';
 import { copyToClipboard } from '../utils/clipboard';
 import { downloadBlob } from '../utils/download';
 import type { ExternalApiConfig, SystemBackupJob, TranslationConfig, TranslationProvider, TranslationTestResult } from '../types';

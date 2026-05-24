@@ -8,7 +8,10 @@ import type {
   Sub2ApiDetectionProgress,
   Sub2ApiDetectionSummary,
   Sub2ApiDetectedIssueItem,
-  Sub2ApiLogLevel
+  Sub2ApiLogLevel,
+  Sub2ApiReauthConfig,
+  Sub2ApiReauthStartPayload,
+  Sub2ApiReauthTarget
 } from '../types';
 
 const { message } = createDiscreteApi(['message']);
@@ -21,6 +24,34 @@ function createDefaultConfig(): Sub2ApiConfig {
   return {
     baseUrl: '',
     adminApiKey: ''
+  };
+}
+
+function createDefaultReauthConfig(): Sub2ApiReauthConfig {
+  return {
+    authMode: 'admin-api-key',
+    adminEmail: '',
+    adminPassword: '',
+    groupNames: ['openai-plus'],
+    defaultProxyName: '',
+    accountPriority: 1,
+    updateExisting: true,
+    autoPauseOnExpired: true,
+    verifyAfterImport: true,
+    strictEmailMatch: true,
+    allowAccessTokenOnly: false
+  };
+}
+
+function createDefaultReauthForm() {
+  return {
+    targetEmail: '',
+    credentialMode: 'browser-login' as 'browser-login' | 'session-json' | 'access-token',
+    sessionPayloadText: '',
+    dryRun: true,
+    verifyAfterImport: true,
+    allowAccessTokenOnly: false,
+    strictEmailMatch: true
   };
 }
 
@@ -50,9 +81,12 @@ function createDefaultProgress(): Sub2ApiDetectionProgress {
 const initialDataLoaded = ref(false);
 const configLoaded = ref(false);
 const configSaving = ref(false);
+const reauthConfigSaving = ref(false);
 const runLoading = ref(false);
+const reauthLoading = ref(false);
 const deleteLoading = ref(false);
 const modelLoading = ref(false);
+const showReauthModal = ref(false);
 const showUnauthorizedAccountsModal = ref(false);
 const showAbnormalAccountsModal = ref(false);
 const unauthorizedAccountsPage = ref(1);
@@ -63,6 +97,9 @@ const modelItems = ref<string[]>([]);
 
 const storedConfig = reactive<Sub2ApiConfig>(createDefaultConfig());
 const configForm = reactive<Sub2ApiConfig>(createDefaultConfig());
+const reauthConfig = reactive<Sub2ApiReauthConfig>(createDefaultReauthConfig());
+const reauthConfigForm = reactive<Sub2ApiReauthConfig>(createDefaultReauthConfig());
+const reauthForm = reactive(createDefaultReauthForm());
 const summary = reactive<Sub2ApiDetectionSummary>(createDefaultSummary());
 const progress = reactive<Sub2ApiDetectionProgress>(createDefaultProgress());
 const logs = ref<Sub2ApiDetectionLogItem[]>([]);
@@ -181,6 +218,20 @@ function assignConfig(target: Sub2ApiConfig, source: Sub2ApiConfig): void {
   target.adminApiKey = source.adminApiKey;
 }
 
+function assignReauthConfig(target: Sub2ApiReauthConfig, source: Sub2ApiReauthConfig): void {
+  target.authMode = source.authMode;
+  target.adminEmail = source.adminEmail;
+  target.adminPassword = source.adminPassword;
+  target.groupNames = [...source.groupNames];
+  target.defaultProxyName = source.defaultProxyName;
+  target.accountPriority = source.accountPriority;
+  target.updateExisting = source.updateExisting;
+  target.autoPauseOnExpired = source.autoPauseOnExpired;
+  target.verifyAfterImport = source.verifyAfterImport;
+  target.strictEmailMatch = source.strictEmailMatch;
+  target.allowAccessTokenOnly = source.allowAccessTokenOnly;
+}
+
 function assignSummary(target: Sub2ApiDetectionSummary, source: Partial<Sub2ApiDetectionSummary>): void {
   target.totalAccounts = Number(source.totalAccounts ?? target.totalAccounts);
   target.processedAccounts = Number(source.processedAccounts ?? target.processedAccounts);
@@ -213,6 +264,34 @@ function clearLogs(): void {
   logs.value = [];
 }
 
+function exportUnauthorizedAccounts(): void {
+  if (unauthorizedCandidates.value.length === 0) {
+    message.warning('当前没有可导出的 401 账号');
+    return;
+  }
+
+  const exportedAt = new Date().toISOString();
+  const payload = {
+    exportedAt,
+    total: unauthorizedCandidates.value.length,
+    items: unauthorizedCandidates.value.map((item) => ({
+      accountId: item.accountId,
+      accountEmail: item.accountEmail,
+      accountName: item.accountName,
+      reason: item.reason
+    }))
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const safeTime = exportedAt.replace(/[:.]/g, '-');
+  link.href = url;
+  link.download = `sub2api-401-accounts-${safeTime}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+  message.success(`已导出 ${payload.total} 个 401 账号`);
+}
+
 function resetDetectedIssues(): void {
   unauthorizedCandidates.value = [];
   abnormalCandidates.value = [];
@@ -228,7 +307,8 @@ function appendLog(payload: Partial<Sub2ApiDetectionLogItem>): void {
     level: normalizeLogLevel(payload.level),
     message: typeof payload.message === 'string' && payload.message.trim() ? payload.message.trim() : '收到一条日志',
     accountId: typeof payload.accountId === 'number' ? payload.accountId : null,
-    accountName: typeof payload.accountName === 'string' ? payload.accountName : null
+    accountName: typeof payload.accountName === 'string' ? payload.accountName : null,
+    accountEmail: typeof payload.accountEmail === 'string' ? payload.accountEmail : null
   };
 
   captureDetectionIssue(item);
@@ -259,6 +339,7 @@ function captureDetectionIssue(item: Sub2ApiDetectionLogItem): void {
     upsertDetectedIssue(unauthorizedCandidates, {
       accountId: item.accountId,
       accountName: item.accountName ?? null,
+      accountEmail: item.accountEmail ?? null,
       reason: trimIssueReason(messageText, '检测命中 401：')
     });
     return;
@@ -268,6 +349,7 @@ function captureDetectionIssue(item: Sub2ApiDetectionLogItem): void {
     upsertDetectedIssue(abnormalCandidates, {
       accountId: item.accountId,
       accountName: item.accountName ?? null,
+      accountEmail: item.accountEmail ?? null,
       reason: trimIssueReason(messageText, '检测超时：')
     });
     return;
@@ -277,6 +359,7 @@ function captureDetectionIssue(item: Sub2ApiDetectionLogItem): void {
     upsertDetectedIssue(abnormalCandidates, {
       accountId: item.accountId,
       accountName: item.accountName ?? null,
+      accountEmail: item.accountEmail ?? null,
       reason: trimIssueReason(messageText, '检测异常：')
     });
   }
@@ -302,8 +385,8 @@ function trimIssueReason(messageText: string, prefix: string): string {
   return messageText.startsWith(prefix) ? messageText.slice(prefix.length).trim() : messageText.trim();
 }
 
-function resolveIssueLabel(item: Pick<Sub2ApiDetectedIssueItem, 'accountId' | 'accountName'>): string {
-  return item.accountName?.trim() || `账号 ID ${item.accountId}`;
+function resolveIssueLabel(item: Pick<Sub2ApiDetectedIssueItem, 'accountId' | 'accountName' | 'accountEmail'>): string {
+  return item.accountEmail?.trim() || item.accountName?.trim() || `账号 ID ${item.accountId}`;
 }
 
 function openUnauthorizedAccountsModal(): void {
@@ -413,7 +496,8 @@ async function deleteDetectedAccountsByIds(
     const candidate = candidateMap.get(detail.accountId);
     const label = resolveIssueLabel({
       accountId: detail.accountId,
-      accountName: candidate?.accountName ?? null
+      accountName: candidate?.accountName ?? null,
+      accountEmail: candidate?.accountEmail ?? null
     });
 
     appendLog({
@@ -422,7 +506,8 @@ async function deleteDetectedAccountsByIds(
         ? `[${label}] 删除完成：${detail.message}`
         : `[${label}] 删除失败：${detail.message}`,
       accountId: detail.accountId,
-      accountName: candidate?.accountName ?? null
+      accountName: candidate?.accountName ?? null,
+      accountEmail: candidate?.accountEmail ?? null
     });
 
     if (detail.ok) {
@@ -458,9 +543,15 @@ async function deleteDetectedAccountsByIds(
 
 async function loadConfig(): Promise<void> {
   try {
-    const response = await api.getSub2ApiConfig();
-    assignConfig(storedConfig, response.item);
-    assignConfig(configForm, response.item);
+    const [configResponse, reauthConfigResponse] = await Promise.all([
+      api.getSub2ApiConfig(),
+      api.getSub2ApiReauthConfig()
+    ]);
+    assignConfig(storedConfig, configResponse.item);
+    assignConfig(configForm, configResponse.item);
+    assignReauthConfig(reauthConfig, reauthConfigResponse.item);
+    assignReauthConfig(reauthConfigForm, reauthConfigResponse.item);
+    syncReauthFormDefaults();
     configLoaded.value = true;
   } catch (error) {
     handleApiError(error);
@@ -506,6 +597,36 @@ async function refreshModels(): Promise<void> {
   }
 }
 
+function syncReauthFormDefaults(): void {
+  reauthForm.verifyAfterImport = reauthConfig.verifyAfterImport;
+  reauthForm.allowAccessTokenOnly = reauthConfig.allowAccessTokenOnly;
+  reauthForm.strictEmailMatch = reauthConfig.strictEmailMatch;
+}
+
+async function saveReauthConfig(): Promise<void> {
+  const payload: Sub2ApiReauthConfig = {
+    ...reauthConfigForm,
+    adminEmail: reauthConfigForm.adminEmail.trim(),
+    adminPassword: reauthConfigForm.adminPassword.trim(),
+    groupNames: reauthConfigForm.groupNames.map((item) => item.trim()).filter(Boolean),
+    defaultProxyName: reauthConfigForm.defaultProxyName.trim(),
+    accountPriority: Number(reauthConfigForm.accountPriority) || 1
+  };
+
+  reauthConfigSaving.value = true;
+  try {
+    const response = await api.updateSub2ApiReauthConfig(payload);
+    assignReauthConfig(reauthConfig, response.item);
+    assignReauthConfig(reauthConfigForm, response.item);
+    syncReauthFormDefaults();
+    message.success('401 重新授权配置已保存');
+  } catch (error) {
+    handleApiError(error);
+  } finally {
+    reauthConfigSaving.value = false;
+  }
+}
+
 async function saveConfig(): Promise<void> {
   const payload: Sub2ApiConfig = {
     baseUrl: configForm.baseUrl.trim(),
@@ -534,6 +655,121 @@ function stopDetection(): void {
   currentAbortController?.abort();
   currentAbortController = null;
   runLoading.value = false;
+  reauthLoading.value = false;
+}
+
+function openReauthModal(item?: Sub2ApiDetectedIssueItem): void {
+  const target = item ?? unauthorizedCandidates.value[0];
+  reauthForm.targetEmail = target?.accountEmail?.trim() || '';
+  syncReauthFormDefaults();
+  showReauthModal.value = true;
+}
+
+function closeReauthModal(): void {
+  if (reauthLoading.value) {
+    return;
+  }
+  showReauthModal.value = false;
+}
+
+function buildReauthTargets(): Sub2ApiReauthTarget[] {
+  const email = reauthForm.targetEmail.trim().toLowerCase();
+  if (email) {
+    const matched = unauthorizedCandidates.value.find((item) => item.accountEmail?.toLowerCase() === email);
+    return [{
+      accountId: matched?.accountId,
+      accountEmail: email,
+      accountName: matched?.accountName ?? null,
+      reason: matched?.reason
+    }];
+  }
+
+  return unauthorizedCandidates.value
+    .filter((item) => item.accountEmail?.trim())
+    .map((item) => ({
+      accountId: item.accountId,
+      accountEmail: item.accountEmail ?? '',
+      accountName: item.accountName,
+      reason: item.reason
+    }));
+}
+
+function parseReauthSessionPayload(): unknown {
+  if (reauthForm.credentialMode === 'browser-login') {
+    return null;
+  }
+
+  const text = reauthForm.sessionPayloadText.trim();
+  if (!text) {
+    throw new Error(reauthForm.credentialMode === 'access-token' ? '请粘贴 accessToken' : '请粘贴 ChatGPT session JSON');
+  }
+
+  if (reauthForm.credentialMode === 'access-token') {
+    return text;
+  }
+
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new Error('ChatGPT session JSON 格式不合法');
+  }
+}
+
+async function startReauth(): Promise<void> {
+  if (!hasConfiguredSub2Api.value) {
+    message.warning('请先保存有效的 Sub2API 配置');
+    return;
+  }
+  if (runLoading.value || reauthLoading.value) {
+    return;
+  }
+
+  const targets = buildReauthTargets();
+  if (targets.length === 0) {
+    message.warning('请先填写目标邮箱，或先运行检测获取 401 账号');
+    return;
+  }
+
+  let sessionPayload: unknown;
+  try {
+    sessionPayload = parseReauthSessionPayload();
+  } catch (error) {
+    message.warning(getErrorMessage(error));
+    return;
+  }
+
+  clearLogs();
+  resetProgress();
+  progress.totalAccounts = targets.length;
+  reauthLoading.value = true;
+  const abortController = new AbortController();
+  currentAbortController = abortController;
+
+  const payload: Sub2ApiReauthStartPayload = {
+    targets,
+    credentialMode: reauthForm.credentialMode,
+    sessionPayload,
+    dryRun: reauthForm.dryRun,
+    verifyAfterImport: reauthForm.verifyAfterImport,
+    allowAccessTokenOnly: reauthForm.allowAccessTokenOnly,
+    strictEmailMatch: reauthForm.strictEmailMatch,
+    modelId: modelId.value
+  };
+
+  try {
+    const response = await api.startSub2ApiReauth(payload, abortController.signal);
+    await consumeEventStream(response);
+    message.success('401 重新授权任务完成');
+  } catch (error) {
+    if (!isAbortError(error)) {
+      handleApiError(error);
+    }
+  } finally {
+    if (currentAbortController === abortController) {
+      currentAbortController = null;
+    }
+    reauthLoading.value = false;
+  }
 }
 
 async function startDetection(): Promise<void> {
@@ -779,9 +1015,12 @@ export function useSub2ApiConsole() {
     initialDataLoaded,
     configLoaded,
     configSaving,
+    reauthConfigSaving,
     runLoading,
+    reauthLoading,
     deleteLoading,
     modelLoading,
+    showReauthModal,
     showUnauthorizedAccountsModal,
     showAbnormalAccountsModal,
     unauthorizedAccountsPage,
@@ -789,6 +1028,9 @@ export function useSub2ApiConsole() {
     abnormalAccountsPageSize: ABNORMAL_ACCOUNTS_PAGE_SIZE,
     storedConfig,
     configForm,
+    reauthConfig,
+    reauthConfigForm,
+    reauthForm,
     summary,
     progress,
     logs,
@@ -809,7 +1051,12 @@ export function useSub2ApiConsole() {
     loadInitialData,
     refreshModels,
     saveConfig,
+    saveReauthConfig,
     clearLogs,
+    exportUnauthorizedAccounts,
+    openReauthModal,
+    closeReauthModal,
+    startReauth,
     openUnauthorizedAccountsModal,
     closeUnauthorizedAccountsModal,
     setUnauthorizedAccountsPage,

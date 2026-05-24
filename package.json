@@ -23,6 +23,7 @@
     "dompurify": "^3.4.0",
     "hono": "^4.8.2",
     "naive-ui": "^2.40.3",
+    "playwright": "^1.60.0",
     "vue": "^3.5.13",
     "vue-router": "^4.6.4"
   },

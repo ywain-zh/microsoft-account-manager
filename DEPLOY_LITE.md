@@ -134,6 +134,14 @@ docker manifest inspect ghcr.io/ywain-zh/microsoft-account-manager:2026.04.16-1
 - 一旦镜像可用，必须立即继续执行服务器侧标准部署命令：检查部署目录、备份 `.env`、更新 `APP_IMAGE`、执行 `docker compose pull`、`docker compose up -d`、状态检查、日志检查、资源检查与健康检查。
 - 只有在以下情况之一出现时，才允许结束本次部署流程：部署成功；出现明确失败且需要用户做额外决策；用户主动取消本次部署。
 
+## Playwright / Chromium 运行约束
+- ChatGPT 四步重新授权使用 Playwright headless Chromium，不需要服务器图形界面，也不会弹出可见浏览器窗口。
+- Chromium 和系统依赖必须在镜像构建阶段安装，服务器仍然只允许 `docker compose pull` 和 `docker compose up -d`，不允许在服务器执行 `npx playwright install`、`npm install` 或任何构建安装动作。
+- 镜像只安装 Chromium，不安装 Firefox/WebKit，降低镜像体积和运行资源占用。
+- `docker-compose.yml` 必须保留 `shm_size`，避免 Chromium 因 `/dev/shm` 太小崩溃。
+- 线上小机器同一时间只允许一个浏览器登录重新授权任务运行；如果已有任务在跑，新请求应等待当前任务结束后再执行。
+- 如果 2C2G 服务器资源紧张，优先暂停其他高负载任务，再执行浏览器登录；不要把构建、安装、批量浏览器并发放到服务器上。
+
 ## 环境变量准备步骤
 1. 在服务器部署目录中复制 `.env.example` 为 `.env`。
 2. 修改 `APP_IMAGE` 为已审核通过的固定 tag。
