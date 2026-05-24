@@ -172,6 +172,23 @@ export interface Sub2ApiReauthSummary {
   dryRun: boolean;
 }
 
+export type Sub2ApiReauthTaskStatus = 'running' | 'success' | 'error' | 'cancelled';
+
+export interface Sub2ApiReauthTaskStartResponse {
+  taskId: string;
+}
+
+export interface Sub2ApiReauthTaskResponse {
+  taskId: string;
+  status: Sub2ApiReauthTaskStatus;
+  createdAt: string;
+  updatedAt: string;
+  logs: Sub2ApiDetectionLogItem[];
+  progress: Sub2ApiDetectionProgress;
+  summary: Sub2ApiReauthSummary | null;
+  error: string | null;
+}
+
 export interface Sub2ApiGptValidityResponse {
   email: string;
   valid: boolean;

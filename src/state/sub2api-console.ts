@@ -11,7 +11,8 @@ import type {
   Sub2ApiLogLevel,
   Sub2ApiReauthConfig,
   Sub2ApiReauthStartPayload,
-  Sub2ApiReauthTarget
+  Sub2ApiReauthTarget,
+  Sub2ApiReauthTaskResponse
 } from '../types';
 
 const { message } = createDiscreteApi(['message']);
@@ -19,6 +20,7 @@ const DEFAULT_SUB2API_MODEL_ID = 'gpt-5.4';
 const SUB2API_MODEL_STORAGE_KEY = 'sub2api-checker-model-id';
 const MAX_LOG_ITEMS = 1200;
 const ABNORMAL_ACCOUNTS_PAGE_SIZE = 10;
+const REAUTH_TASK_POLL_INTERVAL_MS = 2000;
 
 function createDefaultConfig(): Sub2ApiConfig {
   return {
@@ -163,6 +165,7 @@ const modelOptions = computed(() => {
 
 let initialLoadPromise: Promise<void> | null = null;
 let currentAbortController: AbortController | null = null;
+let reauthPollTimer: number | null = null;
 
 watch(selectedModelId, (value) => {
   persistModelId(value);
@@ -250,6 +253,13 @@ function assignProgress(target: Sub2ApiDetectionProgress, source: Partial<Sub2Ap
   target.currentAccountId = source.currentAccountId ?? target.currentAccountId ?? null;
   target.currentAccountName = source.currentAccountName ?? target.currentAccountName ?? null;
   target.outcome = source.outcome ?? target.outcome;
+}
+
+function assignSummaryFromReauth(target: Sub2ApiDetectionSummary, source: { totalAccounts: number; processedAccounts: number; succeededAccounts: number; failedAccounts: number }): void {
+  target.totalAccounts = source.totalAccounts;
+  target.processedAccounts = source.processedAccounts;
+  target.availableAccounts = source.succeededAccounts;
+  target.unauthorizedAccounts = source.failedAccounts;
 }
 
 function resetSummary(): void {
@@ -654,6 +664,7 @@ async function saveConfig(): Promise<void> {
 function stopDetection(): void {
   currentAbortController?.abort();
   currentAbortController = null;
+  stopReauthPolling();
   runLoading.value = false;
   reauthLoading.value = false;
 }
@@ -758,17 +769,77 @@ async function startReauth(): Promise<void> {
 
   try {
     const response = await api.startSub2ApiReauth(payload, abortController.signal);
-    await consumeEventStream(response);
+    appendLog({
+      level: 'info',
+      message: `重新授权后台任务已创建：${response.taskId}`
+    });
+    showReauthModal.value = false;
+    await pollReauthTask(response.taskId, abortController);
     message.success('401 重新授权任务完成');
   } catch (error) {
     if (!isAbortError(error)) {
       handleApiError(error);
     }
   } finally {
+    stopReauthPolling();
     if (currentAbortController === abortController) {
       currentAbortController = null;
     }
     reauthLoading.value = false;
+  }
+}
+
+async function pollReauthTask(taskId: string, abortController: AbortController): Promise<void> {
+  let lastLogId = '';
+
+  while (!abortController.signal.aborted) {
+    const item = await api.getSub2ApiReauthTask(taskId, abortController.signal);
+    applyReauthTaskSnapshot(item, lastLogId);
+    lastLogId = item.logs.at(-1)?.id ?? lastLogId;
+
+    if (item.status === 'success') {
+      return;
+    }
+    if (item.status === 'error') {
+      throw new Error(item.error || '401 重新授权任务失败');
+    }
+    if (item.status === 'cancelled') {
+      throw new Error('401 重新授权任务已取消');
+    }
+
+    await waitForReauthPoll(abortController.signal);
+  }
+}
+
+function applyReauthTaskSnapshot(item: Sub2ApiReauthTaskResponse, lastLogId: string): void {
+  const startIndex = lastLogId ? item.logs.findIndex((log) => log.id === lastLogId) + 1 : 0;
+  for (const log of item.logs.slice(Math.max(startIndex, 0))) {
+    appendLog(log);
+  }
+  assignProgress(progress, item.progress);
+  if (item.summary) {
+    assignSummaryFromReauth(summary, item.summary);
+  }
+}
+
+function waitForReauthPoll(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    reauthPollTimer = window.setTimeout(() => {
+      reauthPollTimer = null;
+      resolve();
+    }, REAUTH_TASK_POLL_INTERVAL_MS);
+
+    signal.addEventListener('abort', () => {
+      stopReauthPolling();
+      reject(new DOMException('Aborted', 'AbortError'));
+    }, { once: true });
+  });
+}
+
+function stopReauthPolling(): void {
+  if (reauthPollTimer !== null) {
+    window.clearTimeout(reauthPollTimer);
+    reauthPollTimer = null;
   }
 }
 

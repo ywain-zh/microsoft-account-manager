@@ -24,6 +24,8 @@ import type {
   Sub2ApiGptValidityResponse,
   Sub2ApiReauthConfig,
   Sub2ApiReauthStartPayload,
+  Sub2ApiReauthTaskResponse,
+  Sub2ApiReauthTaskStartResponse,
   SystemBackupJobResponse,
   TranslationConfig,
   TranslationProvider,
@@ -446,10 +448,16 @@ export const api = {
     });
   },
 
-  startSub2ApiReauth(payload: Sub2ApiReauthStartPayload, signal?: AbortSignal): Promise<Response> {
-    return requestStream('/api/sub2api/reauth/start', {
+  startSub2ApiReauth(payload: Sub2ApiReauthStartPayload, signal?: AbortSignal): Promise<Sub2ApiReauthTaskStartResponse> {
+    return request<Sub2ApiReauthTaskStartResponse>('/api/sub2api/reauth/start', {
       method: 'POST',
       body: JSON.stringify(payload),
+      signal
+    });
+  },
+
+  getSub2ApiReauthTask(taskId: string, signal?: AbortSignal): Promise<Sub2ApiReauthTaskResponse> {
+    return request<Sub2ApiReauthTaskResponse>(`/api/sub2api/reauth/tasks/${encodeURIComponent(taskId)}`, {
       signal
     });
   },

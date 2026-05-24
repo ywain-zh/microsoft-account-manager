@@ -356,6 +356,17 @@ interface ChatGptVerificationCodeResult {
   message: string;
 }
 
+interface Sub2ApiReauthTaskResponse {
+  taskId: string;
+  status: 'running' | 'success' | 'error' | 'cancelled';
+  createdAt: string;
+  updatedAt: string;
+  logs: Sub2ApiDetectionLogItem[];
+  progress: Sub2ApiReauthProgress;
+  summary: Sub2ApiReauthSummary | null;
+  error: string | null;
+}
+
 interface Sub2ApiGptExportItem {
   id_token: string;
   access_token: string;
@@ -614,6 +625,23 @@ const ACCOUNT_SELECT_SQL = `
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+const SUB2API_REAUTH_TASK_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+const SUB2API_REAUTH_TASK_MAX_LOGS = 500;
+
+interface Sub2ApiReauthBackgroundTask {
+  id: string;
+  status: 'running' | 'success' | 'error' | 'cancelled';
+  createdAt: string;
+  updatedAt: string;
+  logs: Sub2ApiDetectionLogItem[];
+  progress: Sub2ApiReauthProgress;
+  summary: Sub2ApiReauthSummary | null;
+  error: string | null;
+  isBrowserLogin: boolean;
+  aborted: boolean;
+}
+
+const sub2ApiReauthTasks = new Map<string, Sub2ApiReauthBackgroundTask>();
 let sub2ApiBrowserReauthRunning = false;
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -1885,99 +1913,32 @@ app.post('/api/sub2api/reauth/start', async (c) => {
   const body = await readJson<Sub2ApiReauthStartPayload>(c);
   const usesBrowserLogin = body.credentialMode === 'browser-login';
 
+  cleanupSub2ApiReauthTasks();
+
   if (usesBrowserLogin && sub2ApiBrowserReauthRunning) {
     throw new HTTPException(409, { message: '已有浏览器重新授权任务正在运行，请等待当前任务结束后再试' });
   }
+
+  const task = createSub2ApiReauthBackgroundTask(usesBrowserLogin, body.targets?.length ?? 0);
+  sub2ApiReauthTasks.set(task.id, task);
 
   if (usesBrowserLogin) {
     sub2ApiBrowserReauthRunning = true;
   }
 
-  let logCounter = 0;
-  let aborted = false;
+  void runSub2ApiReauthBackgroundTask(c.env, task, config, reauthConfig, body);
 
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const emit = (eventName: 'log' | 'progress' | 'summary' | 'done' | 'error', payload: unknown): void => {
-        if (aborted) {
-          return;
-        }
-        controller.enqueue(textEncoder.encode(`event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`));
-      };
+  return c.json({ taskId: task.id });
+});
 
-      const emitLog = (
-        level: Sub2ApiReauthLogLevel,
-        message: string,
-        target?: Sub2ApiReauthTarget
-      ): void => {
-        logCounter += 1;
-        emit('log', {
-          id: `${Date.now()}-${logCounter}`,
-          timestamp: new Date().toISOString(),
-          level,
-          message,
-          accountId: target?.accountId ?? null,
-          accountName: target?.accountName ?? null,
-          accountEmail: target?.accountEmail ?? null
-        } satisfies Sub2ApiDetectionLogItem);
-      };
+app.get('/api/sub2api/reauth/tasks/:taskId', (c) => {
+  cleanupSub2ApiReauthTasks();
+  const task = sub2ApiReauthTasks.get(c.req.param('taskId'));
+  if (!task) {
+    throw new HTTPException(404, { message: '重新授权任务不存在或已过期' });
+  }
 
-      const closeStream = (): void => {
-        if (aborted) {
-          return;
-        }
-        aborted = true;
-        controller.close();
-      };
-
-      const run = async (): Promise<void> => {
-        try {
-          const taskPayload = await resolveSub2ApiReauthPayload(c.env, reauthConfig, body, emitLog, () => aborted);
-          const summary = await runSub2ApiReauthTask({
-            sub2apiConfig: config,
-            reauthConfig,
-            payload: taskPayload,
-            onLog: emitLog,
-            onProgress: (progress: Sub2ApiReauthProgress) => emit('progress', progress),
-            isAborted: () => aborted,
-            verifyTarget: async (target, email, modelId) => {
-              const result = await checkSub2ApiGptValidity(config, email, modelId);
-              await syncSub2ApiGptValidityToMatchedMailAccounts(c.env.DB, result);
-              return {
-                valid: result.valid,
-                message: result.message || (result.valid ? '账号可用' : '账号不可用')
-              };
-            }
-          });
-          emit('summary', summary);
-          emit('done', { summary });
-          closeStream();
-        } catch (error) {
-          const message = getErrorMessage(error);
-          emitLog('error', message);
-          emit('error', { message });
-          closeStream();
-        } finally {
-          if (usesBrowserLogin) {
-            sub2ApiBrowserReauthRunning = false;
-          }
-        }
-      };
-
-      void run();
-    },
-    cancel() {
-      aborted = true;
-    }
-  });
-
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream; charset=utf-8',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive'
-    }
-  });
+  return c.json(createSub2ApiReauthTaskResponse(task));
 });
 
 app.post('/api/sub2api/accounts/batch-delete', async (c) => {
@@ -3945,6 +3906,127 @@ async function collectSub2ApiGptExportItems(email: string, rawAccounts: unknown[
   }
 
   return items;
+}
+
+function createSub2ApiReauthBackgroundTask(isBrowserLogin: boolean, totalAccounts: number): Sub2ApiReauthBackgroundTask {
+  const now = new Date().toISOString();
+  return {
+    id: createShortId('reauth'),
+    status: 'running',
+    createdAt: now,
+    updatedAt: now,
+    logs: [],
+    progress: { totalAccounts: Math.max(totalAccounts, 0), processedAccounts: 0 },
+    summary: null,
+    error: null,
+    isBrowserLogin,
+    aborted: false
+  };
+}
+
+async function runSub2ApiReauthBackgroundTask(
+  env: Bindings,
+  task: Sub2ApiReauthBackgroundTask,
+  config: Sub2ApiConfig,
+  reauthConfig: Sub2ApiReauthConfig,
+  body: Sub2ApiReauthStartPayload
+): Promise<void> {
+  let logCounter = 0;
+  const emitLog = (
+    level: Sub2ApiReauthLogLevel,
+    message: string,
+    target?: Sub2ApiReauthTarget
+  ): void => {
+    logCounter += 1;
+    pushSub2ApiReauthTaskLog(task, {
+      id: `${Date.now()}-${logCounter}`,
+      timestamp: new Date().toISOString(),
+      level,
+      message,
+      accountId: target?.accountId ?? null,
+      accountName: target?.accountName ?? null,
+      accountEmail: target?.accountEmail ?? null
+    });
+  };
+
+  try {
+    emitLog('info', '重新授权后台任务已启动');
+    const taskPayload = await resolveSub2ApiReauthPayload(env, reauthConfig, body, emitLog, () => task.aborted);
+    const summary = await runSub2ApiReauthTask({
+      sub2apiConfig: config,
+      reauthConfig,
+      payload: taskPayload,
+      onLog: emitLog,
+      onProgress: (progress: Sub2ApiReauthProgress) => updateSub2ApiReauthTaskProgress(task, progress),
+      isAborted: () => task.aborted,
+      verifyTarget: async (target, email, modelId) => {
+        const result = await checkSub2ApiGptValidity(config, email, modelId);
+        await syncSub2ApiGptValidityToMatchedMailAccounts(env.DB, result);
+        return {
+          valid: result.valid,
+          message: result.message || (result.valid ? '账号可用' : '账号不可用')
+        };
+      }
+    });
+    task.summary = summary;
+    task.status = task.aborted ? 'cancelled' : 'success';
+    task.updatedAt = new Date().toISOString();
+    emitLog(task.status === 'success' ? 'success' : 'warning', task.status === 'success' ? '重新授权后台任务完成' : '重新授权后台任务已取消');
+  } catch (error) {
+    const message = getErrorMessage(error);
+    task.status = task.aborted ? 'cancelled' : 'error';
+    task.error = message;
+    task.updatedAt = new Date().toISOString();
+    emitLog('error', message);
+  } finally {
+    if (task.isBrowserLogin) {
+      sub2ApiBrowserReauthRunning = false;
+    }
+  }
+}
+
+function pushSub2ApiReauthTaskLog(task: Sub2ApiReauthBackgroundTask, item: Sub2ApiDetectionLogItem): void {
+  task.logs.push(item);
+  if (task.logs.length > SUB2API_REAUTH_TASK_MAX_LOGS) {
+    task.logs.splice(0, task.logs.length - SUB2API_REAUTH_TASK_MAX_LOGS);
+  }
+  task.updatedAt = item.timestamp;
+}
+
+function updateSub2ApiReauthTaskProgress(task: Sub2ApiReauthBackgroundTask, progress: Sub2ApiReauthProgress): void {
+  task.progress = progress;
+  task.updatedAt = new Date().toISOString();
+}
+
+function createSub2ApiReauthTaskResponse(task: Sub2ApiReauthBackgroundTask): Sub2ApiReauthTaskResponse {
+  return {
+    taskId: task.id,
+    status: task.status,
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+    logs: task.logs,
+    progress: task.progress,
+    summary: task.summary,
+    error: task.error
+  };
+}
+
+function cleanupSub2ApiReauthTasks(): void {
+  const now = Date.now();
+  for (const [id, task] of sub2ApiReauthTasks) {
+    if (task.status === 'running') {
+      continue;
+    }
+    if (now - Date.parse(task.updatedAt) > SUB2API_REAUTH_TASK_MAX_AGE_MS) {
+      sub2ApiReauthTasks.delete(id);
+    }
+  }
+}
+
+function createShortId(prefix: string): string {
+  const bytes = new Uint8Array(9);
+  crypto.getRandomValues(bytes);
+  return `${prefix}_${encodeBase64UrlBytes(bytes)}`;
 }
 
 async function resolveSub2ApiReauthPayload(
