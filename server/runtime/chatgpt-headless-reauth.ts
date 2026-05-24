@@ -106,6 +106,7 @@ interface PlaywrightLike {
 
 const CHATGPT_URL = 'https://chatgpt.com/';
 const DEFAULT_TIMEOUT_MS = 180000;
+const VERIFICATION_CODE_POLL_INTERVAL_MS = 2000;
 const DEFAULT_PROFILE_BASE_DIR = 'data/browser-profiles/chatgpt';
 const DEFAULT_DEBUG_BASE_DIR = 'data/reauth-debug';
 
@@ -521,7 +522,7 @@ async function waitForVerificationCode(
       options.onLog('success', `步骤 3：第 ${attempts} 次检查已获取验证码`, options.target);
       return code;
     }
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+    await new Promise((resolve) => setTimeout(resolve, VERIFICATION_CODE_POLL_INTERVAL_MS));
   }
   return null;
 }

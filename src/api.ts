@@ -22,6 +22,7 @@ import type {
   Sub2ApiConfig,
   Sub2ApiDeleteAccountsResponse,
   Sub2ApiGptValidityResponse,
+  Sub2ApiGroupsResponse,
   Sub2ApiReauthConfig,
   Sub2ApiReauthStartPayload,
   Sub2ApiReauthTaskResponse,
@@ -373,6 +374,10 @@ export const api = {
 
   listSub2ApiModels(): Promise<OpenAiModelsResponse> {
     return request<OpenAiModelsResponse>('/api/sub2api/models');
+  },
+
+  listSub2ApiGroups(): Promise<Sub2ApiGroupsResponse> {
+    return request<Sub2ApiGroupsResponse>('/api/sub2api/groups');
   },
 
   getTranslationConfig(): Promise<{ item: TranslationConfig }> {

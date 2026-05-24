@@ -141,6 +141,16 @@ export interface Sub2ApiReauthConfig {
   allowAccessTokenOnly: boolean;
 }
 
+export interface Sub2ApiGroupItem {
+  id: number | null;
+  name: string;
+}
+
+export interface Sub2ApiGroupsResponse {
+  items: Sub2ApiGroupItem[];
+  syncedAt: string;
+}
+
 export interface Sub2ApiReauthTarget {
   accountId?: number;
   accountEmail: string;

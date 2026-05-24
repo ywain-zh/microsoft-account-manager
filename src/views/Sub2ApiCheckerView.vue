@@ -28,7 +28,7 @@
             获取模型
           </n-button>
         </div>
-        <button class="btn btn-default" type="button" @click="showConfigModal = true">
+        <button class="btn btn-default" type="button" @click="openConfigModal">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="3"></circle>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
@@ -137,8 +137,10 @@
       </div>
     </n-card>
 
-    <n-modal v-model:show="showConfigModal" preset="card" title="连接配置" style="width: 600px; border-radius: 12px;">
-      <p class="config-modal-desc">所有检测请求都由本项目后端发起，页面不会直接暴露 Sub2API 管理员 Key。</p>
+    <n-modal v-model:show="showConfigModal" preset="card" title="连接配置" style="width: min(520px, 94vw); border-radius: 10px;">
+      <div class="config-modal-desc">
+        所有检测请求都由本项目后端发起，页面不会直接暴露 Sub2API 管理员 Key。
+      </div>
       <n-form label-placement="top" autocomplete="off" class="config-modal-form">
         <div class="form-autofill-guard" aria-hidden="true">
           <input type="text" tabindex="-1" autocomplete="off" />
@@ -162,37 +164,41 @@
           />
         </n-form-item>
 
-        <div class="config-divider">401 重新授权</div>
-
-        <n-form-item label="鉴权模式">
-          <n-select
-            v-model:value="reauthConfigForm.authMode"
-            :options="reauthAuthModeOptions"
-          />
-        </n-form-item>
-
-        <template v-if="reauthConfigForm.authMode === 'password'">
-          <n-form-item label="Sub2API 管理员邮箱">
-            <n-input v-model:value="reauthConfigForm.adminEmail" placeholder="管理员邮箱" />
+        <div class="config-grid">
+          <n-form-item label="目标分组" class="config-grid-main">
+            <div class="group-sync-field">
+              <n-select
+                v-model:value="selectedReauthGroupName"
+                :options="groupOptions"
+                :loading="groupLoading"
+                filterable
+                clearable
+                placeholder="选择 Sub2API 分组"
+              />
+              <n-button
+                :loading="groupLoading"
+                :disabled="configSaving || !hasConfiguredSub2Api"
+                @click="syncSub2ApiGroups()"
+              >
+                同步
+              </n-button>
+            </div>
+            <div class="group-sync-status" :class="{ 'is-error': groupSyncError }">
+              {{ groupSyncStatusText }}
+            </div>
           </n-form-item>
-          <n-form-item label="Sub2API 管理员密码">
-            <SecretInput v-model:value="reauthConfigForm.adminPassword" placeholder="管理员密码" />
-          </n-form-item>
-        </template>
 
-        <n-form-item label="目标分组">
-          <n-dynamic-tags v-model:value="reauthConfigForm.groupNames" />
-        </n-form-item>
+          <n-form-item label="账号优先级" class="config-grid-side">
+            <n-input-number v-model:value="reauthConfigForm.accountPriority" :min="1" :max="10000" />
+          </n-form-item>
+        </div>
 
         <n-form-item label="默认代理名称或 ID">
           <n-input v-model:value="reauthConfigForm.defaultProxyName" placeholder="留空则不使用代理" />
         </n-form-item>
 
-        <n-form-item label="账号优先级">
-          <n-input-number v-model:value="reauthConfigForm.accountPriority" :min="1" :max="10000" />
-        </n-form-item>
-
-        <n-space vertical size="small">
+        <div class="config-divider">授权规则</div>
+        <n-space vertical size="small" class="reauth-rule-list">
           <n-checkbox v-model:checked="reauthConfigForm.updateExisting">更新已有账号</n-checkbox>
           <n-checkbox v-model:checked="reauthConfigForm.autoPauseOnExpired">过期后自动暂停</n-checkbox>
           <n-checkbox v-model:checked="reauthConfigForm.verifyAfterImport">导入后复测</n-checkbox>
@@ -203,8 +209,7 @@
       <template #footer>
         <div class="config-modal-footer">
           <n-button @click="showConfigModal = false">取消</n-button>
-          <n-button :loading="reauthConfigSaving" @click="handleSaveReauthConfig">保存重新授权配置</n-button>
-          <n-button type="primary" :loading="configSaving" @click="handleSaveConfig">保存连接配置</n-button>
+          <n-button type="primary" :loading="configSaving || reauthConfigSaving" @click="handleSaveAllConfig">保存配置</n-button>
         </div>
       </template>
     </n-modal>
@@ -368,7 +373,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { NAlert, NButton, NCard, NCheckbox, NDynamicTags, NForm, NFormItem, NInput, NInputNumber, NModal, NPagination, NSelect, NSpace } from 'naive-ui';
+import { NAlert, NButton, NCard, NCheckbox, NForm, NFormItem, NInput, NInputNumber, NModal, NPagination, NSelect, NSpace } from 'naive-ui';
 import SecretInput from '../components/SecretInput.vue';
 import { useSub2ApiConsole } from '../state/sub2api-console';
 import type { Sub2ApiDetectedIssueItem, Sub2ApiLogLevel } from '../types';
@@ -383,6 +388,7 @@ const {
   reauthLoading,
   deleteLoading,
   modelLoading,
+  groupLoading,
   configForm,
   reauthConfigForm,
   reauthForm,
@@ -401,6 +407,10 @@ const {
   abnormalAccountsPageSize,
   modelId,
   modelOptions,
+  selectedReauthGroupName,
+  groupOptions,
+  groupSyncStatusText,
+  groupSyncError,
   hasConfiguredSub2Api,
   hasUnauthorizedCandidates,
   hasAbnormalCandidates,
@@ -409,6 +419,7 @@ const {
   showAbnormalAccountsModal,
   loadInitialData,
   refreshModels,
+  syncSub2ApiGroups,
   saveConfig,
   saveReauthConfig,
   clearLogs,
@@ -431,11 +442,6 @@ const {
 
 const showConfigModal = ref(false);
 const logTerminalRef = ref<HTMLElement | null>(null);
-
-const reauthAuthModeOptions = [
-  { label: '管理员 API Key', value: 'admin-api-key' },
-  { label: '管理员邮箱密码', value: 'password' }
-];
 
 const reauthCredentialModeOptions = [
   { label: '自动登录四步流', value: 'browser-login' },
@@ -562,6 +568,23 @@ async function handleSaveConfig(): Promise<void> {
 
 async function handleSaveReauthConfig(): Promise<void> {
   await saveReauthConfig();
+}
+
+async function handleSaveAllConfig(): Promise<void> {
+  const configSaved = await saveConfig();
+  if (!configSaved) {
+    return;
+  }
+
+  const reauthSaved = await saveReauthConfig();
+  if (reauthSaved) {
+    showConfigModal.value = false;
+  }
+}
+
+function openConfigModal(): void {
+  showConfigModal.value = true;
+  void syncSub2ApiGroups({ silent: true });
 }
 
 async function scrollTerminalToBottom(): Promise<void> {
@@ -941,14 +964,18 @@ onBeforeUnmount(() => {
 
 .config-modal-desc {
   font-size: 13px;
-  color: #94a3b8;
-  margin: 0 0 24px;
+  color: #2563eb;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 4px;
+  margin: 0 0 14px;
+  padding: 8px 12px;
 }
 
 .config-modal-form {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .config-modal-footer {
@@ -958,13 +985,64 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
 }
 
+.group-sync-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  width: 100%;
+  align-items: center;
+}
+
+.group-sync-status {
+  margin-top: 5px;
+  min-height: 18px;
+  font-size: 12px;
+  line-height: 18px;
+  color: #64748b;
+}
+
+.group-sync-status.is-error {
+  color: #dc2626;
+}
+
+@media (max-width: 520px) {
+  .group-sync-field {
+    grid-template-columns: 1fr;
+  }
+
+  .config-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.config-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 152px;
+  gap: 12px;
+  align-items: start;
+}
+
+.config-grid-main,
+.config-grid-side {
+  min-width: 0;
+}
+
+.config-grid-side :deep(.n-input-number) {
+  width: 100%;
+}
+
 .config-divider {
-  margin: 8px 0 4px;
-  padding-top: 12px;
-  border-top: 1px solid #e2e8f0;
+  margin: 2px 0 -2px;
   color: #334155;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.reauth-rule-list {
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  padding: 8px 10px;
+  background: #fff;
 }
 
 .reauth-modal-body {

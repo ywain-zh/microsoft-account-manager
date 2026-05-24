@@ -297,6 +297,11 @@ interface Sub2ApiAccountItem {
   planType: Sub2ApiPlanType;
 }
 
+interface Sub2ApiGroupItem {
+  id: number | null;
+  name: string;
+}
+
 interface Sub2ApiDetectionSummary {
   totalAccounts: number;
   processedAccounts: number;
@@ -1633,6 +1638,13 @@ app.get('/api/sub2api/models', async (c) => {
   ensureSub2ApiConfigured(config);
   const items = await listSub2ApiModels(config);
   return c.json({ items });
+});
+
+app.get('/api/sub2api/groups', async (c) => {
+  const config = await getSub2ApiConfig(c.env.DB);
+  ensureSub2ApiConfigured(config);
+  const items = await listSub2ApiGroups(config);
+  return c.json({ items, syncedAt: new Date().toISOString() });
 });
 
 app.get('/api/sub2api/accounts/gpt-json-export', async (c) => {
@@ -3788,6 +3800,53 @@ async function listSub2ApiModelsFromAccounts(config: Sub2ApiConfig): Promise<str
   return Array.from(ids);
 }
 
+async function listSub2ApiGroups(config: Sub2ApiConfig): Promise<Sub2ApiGroupItem[]> {
+  const payload = await requestSub2Api<unknown>(config, '/api/v1/admin/groups/all', { method: 'GET' });
+  const rawItems = extractSub2ApiItems(payload);
+  const items: Sub2ApiGroupItem[] = [];
+  const seenNames = new Set<string>();
+
+  for (const rawItem of rawItems) {
+    const item = normalizeSub2ApiGroup(rawItem);
+    if (!item) {
+      continue;
+    }
+
+    const key = item.name.toLowerCase();
+    if (seenNames.has(key)) {
+      continue;
+    }
+
+    seenNames.add(key);
+    items.push(item);
+  }
+
+  return items.sort((left, right) => left.name.localeCompare(right.name, 'zh-Hans-CN'));
+}
+
+function normalizeSub2ApiGroup(value: unknown): Sub2ApiGroupItem | null {
+  const record = toRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const platform = asText(record.platform).trim().toLowerCase();
+  if (platform && platform !== 'openai') {
+    return null;
+  }
+
+  const name = asText(record.name ?? record.groupName ?? record.title).trim();
+  if (!name || name.length > 120) {
+    return null;
+  }
+
+  const id = Number.parseInt(asText(record.id).trim(), 10);
+  return {
+    id: Number.isSafeInteger(id) && id > 0 ? id : null,
+    name
+  };
+}
+
 function extractSub2ApiModelIds(payload: unknown): string[] {
   const ids = new Set<string>();
   collectSub2ApiModelIds(payload, ids, 0);
@@ -4546,7 +4605,7 @@ function extractSub2ApiItems(payload: unknown): unknown[] {
     return [];
   }
 
-  const candidates = [record.items, record.list, record.accounts, record.rows, record.results];
+  const candidates = [record.items, record.list, record.accounts, record.groups, record.rows, record.results];
   for (const candidate of candidates) {
     if (Array.isArray(candidate)) {
       return candidate;
@@ -4562,7 +4621,7 @@ function extractSub2ApiItems(payload: unknown): unknown[] {
     return [];
   }
 
-  const nestedCandidates = [nested.items, nested.list, nested.accounts, nested.rows, nested.results];
+  const nestedCandidates = [nested.items, nested.list, nested.accounts, nested.groups, nested.rows, nested.results];
   for (const candidate of nestedCandidates) {
     if (Array.isArray(candidate)) {
       return candidate;

@@ -8,6 +8,7 @@ import type {
   Sub2ApiDetectionProgress,
   Sub2ApiDetectionSummary,
   Sub2ApiDetectedIssueItem,
+  Sub2ApiGroupItem,
   Sub2ApiLogLevel,
   Sub2ApiReauthConfig,
   Sub2ApiReauthStartPayload,
@@ -88,6 +89,7 @@ const runLoading = ref(false);
 const reauthLoading = ref(false);
 const deleteLoading = ref(false);
 const modelLoading = ref(false);
+const groupLoading = ref(false);
 const showReauthModal = ref(false);
 const showUnauthorizedAccountsModal = ref(false);
 const showAbnormalAccountsModal = ref(false);
@@ -96,6 +98,10 @@ const abnormalAccountsPage = ref(1);
 const abnormalDeletingAccountIds = ref<number[]>([]);
 const selectedModelId = ref(readStoredModelId());
 const modelItems = ref<string[]>([]);
+const groupItems = ref<Sub2ApiGroupItem[]>([]);
+const groupSyncMessage = ref('尚未同步分组');
+const groupSyncedAt = ref<string | null>(null);
+const groupSyncError = ref(false);
 
 const storedConfig = reactive<Sub2ApiConfig>(createDefaultConfig());
 const configForm = reactive<Sub2ApiConfig>(createDefaultConfig());
@@ -163,6 +169,40 @@ const modelOptions = computed(() => {
   }));
 });
 
+const selectedReauthGroupName = computed<string | null>({
+  get() {
+    return reauthConfigForm.groupNames[0]?.trim() || null;
+  },
+  set(value) {
+    const groupName = value?.trim();
+    reauthConfigForm.groupNames = groupName ? [groupName] : [];
+  }
+});
+
+const groupOptions = computed(() => {
+  const values = [
+    ...groupItems.value.map((item) => item.name),
+    ...reauthConfigForm.groupNames
+  ]
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return Array.from(new Set(values.map((item) => item.toLowerCase())))
+    .map((key) => values.find((item) => item.toLowerCase() === key) ?? key)
+    .map((value) => ({
+      label: value,
+      value
+    }));
+});
+
+const groupSyncStatusText = computed(() => {
+  if (groupLoading.value) {
+    return '正在同步 Sub2API 分组...';
+  }
+
+  return groupSyncMessage.value;
+});
+
 let initialLoadPromise: Promise<void> | null = null;
 let currentAbortController: AbortController | null = null;
 let reauthPollTimer: number | null = null;
@@ -216,15 +256,29 @@ function persistModelId(value: string): void {
   window.localStorage.setItem(SUB2API_MODEL_STORAGE_KEY, normalizeModelId(value));
 }
 
+function formatStatusTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+}
+
 function assignConfig(target: Sub2ApiConfig, source: Sub2ApiConfig): void {
   target.baseUrl = source.baseUrl;
   target.adminApiKey = source.adminApiKey;
 }
 
 function assignReauthConfig(target: Sub2ApiReauthConfig, source: Sub2ApiReauthConfig): void {
-  target.authMode = source.authMode;
-  target.adminEmail = source.adminEmail;
-  target.adminPassword = source.adminPassword;
+  target.authMode = 'admin-api-key';
+  target.adminEmail = '';
+  target.adminPassword = '';
   target.groupNames = [...source.groupNames];
   target.defaultProxyName = source.defaultProxyName;
   target.accountPriority = source.accountPriority;
@@ -607,17 +661,56 @@ async function refreshModels(): Promise<void> {
   }
 }
 
+async function syncSub2ApiGroups(options: { silent?: boolean } = {}): Promise<void> {
+  if (!hasConfiguredSub2Api.value) {
+    groupSyncError.value = true;
+    groupSyncMessage.value = '请先保存有效的 Sub2API 配置';
+    if (!options.silent) {
+      message.warning(groupSyncMessage.value);
+    }
+    return;
+  }
+
+  groupLoading.value = true;
+  try {
+    const { items, syncedAt } = await api.listSub2ApiGroups();
+    groupItems.value = items;
+    groupSyncedAt.value = syncedAt;
+    groupSyncError.value = false;
+    groupSyncMessage.value = items.length > 0
+      ? `已同步 ${items.length} 个分组 · ${formatStatusTime(syncedAt)}`
+      : `同步完成，未读取到分组 · ${formatStatusTime(syncedAt)}`;
+
+    if (!selectedReauthGroupName.value && items.length > 0) {
+      selectedReauthGroupName.value = items[0].name;
+    }
+
+    if (!options.silent) {
+      message.success(items.length > 0 ? `已同步 ${items.length} 个分组` : '同步完成，未读取到分组');
+    }
+  } catch (error) {
+    groupSyncError.value = true;
+    groupSyncMessage.value = `同步失败：${getErrorMessage(error)}`;
+    if (!options.silent) {
+      handleApiError(error);
+    }
+  } finally {
+    groupLoading.value = false;
+  }
+}
+
 function syncReauthFormDefaults(): void {
   reauthForm.verifyAfterImport = reauthConfig.verifyAfterImport;
   reauthForm.allowAccessTokenOnly = reauthConfig.allowAccessTokenOnly;
   reauthForm.strictEmailMatch = reauthConfig.strictEmailMatch;
 }
 
-async function saveReauthConfig(): Promise<void> {
+async function saveReauthConfig(): Promise<boolean> {
   const payload: Sub2ApiReauthConfig = {
     ...reauthConfigForm,
-    adminEmail: reauthConfigForm.adminEmail.trim(),
-    adminPassword: reauthConfigForm.adminPassword.trim(),
+    authMode: 'admin-api-key',
+    adminEmail: '',
+    adminPassword: '',
     groupNames: reauthConfigForm.groupNames.map((item) => item.trim()).filter(Boolean),
     defaultProxyName: reauthConfigForm.defaultProxyName.trim(),
     accountPriority: Number(reauthConfigForm.accountPriority) || 1
@@ -630,14 +723,16 @@ async function saveReauthConfig(): Promise<void> {
     assignReauthConfig(reauthConfigForm, response.item);
     syncReauthFormDefaults();
     message.success('401 重新授权配置已保存');
+    return true;
   } catch (error) {
     handleApiError(error);
+    return false;
   } finally {
     reauthConfigSaving.value = false;
   }
 }
 
-async function saveConfig(): Promise<void> {
+async function saveConfig(): Promise<boolean> {
   const payload: Sub2ApiConfig = {
     baseUrl: configForm.baseUrl.trim(),
     adminApiKey: configForm.adminApiKey.trim()
@@ -645,7 +740,7 @@ async function saveConfig(): Promise<void> {
 
   if (!payload.baseUrl || !payload.adminApiKey) {
     message.warning('请完整填写 Sub2API 地址和管理员 API Key');
-    return;
+    return false;
   }
 
   configSaving.value = true;
@@ -654,8 +749,10 @@ async function saveConfig(): Promise<void> {
     assignConfig(storedConfig, response.item);
     assignConfig(configForm, response.item);
     message.success('Sub2API 配置已保存');
+    return true;
   } catch (error) {
     handleApiError(error);
+    return false;
   } finally {
     configSaving.value = false;
   }
@@ -1091,6 +1188,7 @@ export function useSub2ApiConsole() {
     reauthLoading,
     deleteLoading,
     modelLoading,
+    groupLoading,
     showReauthModal,
     showUnauthorizedAccountsModal,
     showAbnormalAccountsModal,
@@ -1115,12 +1213,19 @@ export function useSub2ApiConsole() {
     abnormalAccountsTotalPages,
     modelId,
     modelOptions,
+    selectedReauthGroupName,
+    groupItems,
+    groupOptions,
+    groupSyncStatusText,
+    groupSyncError,
+    groupSyncedAt,
     hasConfiguredSub2Api,
     hasUnauthorizedCandidates,
     hasAbnormalCandidates,
     loadConfig,
     loadInitialData,
     refreshModels,
+    syncSub2ApiGroups,
     saveConfig,
     saveReauthConfig,
     clearLogs,
