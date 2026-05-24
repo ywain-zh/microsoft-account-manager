@@ -165,7 +165,7 @@
             <tr><td><code>toRecipients</code></td><td>array</td><td>微软接口返回的真实收件人列表。</td></tr>
             <tr><td><code>ccRecipients</code></td><td>array</td><td>微软接口返回的真实抄送列表。</td></tr>
             <tr><td><code>matchedRecipients</code></td><td>array</td><td>命中的主邮箱或别名地址。</td></tr>
-            <tr><td><code>recipientMatchKind</code></td><td>string</td><td><code>requested</code>、<code>other</code>、<code>unknown</code>。</td></tr>
+            <tr><td><code>recipientMatchKind</code></td><td>string</td><td><code>requested</code> 表示命中请求邮箱，<code>other</code> 表示 To/Cc 有其他收件人，<code>unknown</code> 表示微软未返回可判断收件人。</td></tr>
             <tr><td><code>receivedAt</code></td><td>string</td><td>收件时间。</td></tr>
             <tr><td><code>preview</code></td><td>string</td><td>邮件预览。</td></tr>
             <tr><td><code>contentType</code></td><td>string</td><td>正文类型，常见为 html 或 text。</td></tr>

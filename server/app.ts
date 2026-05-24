@@ -5810,11 +5810,9 @@ function annotateMailRecipientMatch(
     )
   );
 
-  let recipientMatchKind: RecipientMatchKind = 'unknown';
-  if (matchedRecipients.includes(context.requestedEmail)) {
+  let recipientMatchKind: RecipientMatchKind = knownRecipients.length === 0 ? 'unknown' : 'other';
+  if (knownRecipients.includes(context.requestedEmail)) {
     recipientMatchKind = 'requested';
-  } else if (matchedRecipients.length > 0) {
-    recipientMatchKind = 'other';
   }
 
   return {

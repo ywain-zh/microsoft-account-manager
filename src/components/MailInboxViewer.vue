@@ -314,7 +314,7 @@ function recipientBadgeLabel(item: AccountMailItem): string {
     return props.matchedAlias ? '发给当前别名' : '发给主邮箱';
   }
   if (item.recipientMatchKind === 'other') {
-    return '发给其他别名';
+    return '发给其他收件人';
   }
   return item.toRecipients?.length ? '收件人已识别' : '收件人未知';
 }
