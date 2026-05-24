@@ -6,9 +6,14 @@
           <h2>接口文档</h2>
           <p>给外部系统调用微软邮箱列表、读取邮件和上传账号使用。</p>
         </div>
-        <div class="api-doc-base">
-          <span>Base URL</span>
-          <code>{{ apiBaseUrl }}</code>
+        <div class="api-doc-header-side">
+          <div class="api-doc-base">
+            <span>Base URL</span>
+            <code>{{ apiBaseUrl }}</code>
+          </div>
+          <n-button secondary class="api-doc-download-button" @click="downloadCurrentHtml">
+            下载 HTML
+          </n-button>
         </div>
       </div>
 
@@ -45,7 +50,7 @@
 
       <section class="api-doc-section">
         <h3>查询微软邮箱列表</h3>
-        <p>接口说明：查询全部微软邮箱账号列表，不返回密码、client_id、client_secret、refresh_token。需要筛选时可传 email 关键词。</p>
+        <p>接口说明：查询全部微软邮箱账号列表，返回主邮箱行和别名邮箱行，不返回密码、client_id、client_secret、refresh_token。需要筛选时可传 email 关键词，主邮箱和别名邮箱都会参与匹配。</p>
 
         <div class="endpoint-line">
           <span>接口地址</span>
@@ -69,7 +74,7 @@
               <td>string</td>
               <td>否</td>
               <td>-</td>
-              <td>邮箱关键词。不传返回全部，传入后按邮箱模糊搜索，例如 <code>hotmail</code>、<code>example@outlook.com</code>。</td>
+              <td>邮箱关键词。不传返回全部，传入后按主邮箱或别名邮箱模糊搜索，例如 <code>hotmail</code>、<code>example@outlook.com</code>、<code>example+ava@hotmail.com</code>。</td>
             </tr>
           </tbody>
         </n-table>
@@ -87,6 +92,14 @@
             <tr><td><code>items</code></td><td>array</td><td>邮箱账号数组。</td></tr>
             <tr><td><code>id</code></td><td>number</td><td>本系统账号 ID。</td></tr>
             <tr><td><code>account</code></td><td>string</td><td>微软邮箱地址。</td></tr>
+            <tr><td><code>rowType</code></td><td>string</td><td><code>primary</code> 表示主邮箱行，<code>alias</code> 表示别名邮箱行。</td></tr>
+            <tr><td><code>rowId</code></td><td>string</td><td>列表行唯一 ID，区分主邮箱和别名邮箱。</td></tr>
+            <tr><td><code>primaryAccountId</code></td><td>number</td><td>主邮箱账号 ID；别名行也返回所属主邮箱 ID。</td></tr>
+            <tr><td><code>primaryAccount</code></td><td>string</td><td>所属主邮箱地址。</td></tr>
+            <tr><td><code>aliasId</code></td><td>number | null</td><td>别名 ID；主邮箱行返回 null。</td></tr>
+            <tr><td><code>aliases</code></td><td>array</td><td>主邮箱已创建的本地别名邮箱列表。</td></tr>
+            <tr><td><code>aliasCount</code></td><td>number</td><td>主邮箱当前别名数量。</td></tr>
+            <tr><td><code>matchedAlias</code></td><td>string | null</td><td>别名行返回当前别名邮箱；主邮箱行返回 null。</td></tr>
             <tr><td><code>remark</code></td><td>string</td><td>账号备注。</td></tr>
             <tr><td><code>authType</code></td><td>string</td><td>账号来源或授权类型。</td></tr>
             <tr><td><code>syncStatus</code></td><td>string</td><td>最近一次取件状态。</td></tr>
@@ -109,7 +122,7 @@
 
       <section class="api-doc-section">
         <h3>查询微软邮箱邮件</h3>
-        <p>接口说明：输入完整邮箱地址读取该邮箱邮件，默认自动选择最兼容的取件方式，并返回邮件正文。</p>
+        <p>接口说明：输入完整邮箱地址读取收件箱，支持传主邮箱或系统内别名邮箱。主邮箱返回该账号所有可读取邮件；别名邮箱会解析到主邮箱取信，并只返回 To/Cc 命中当前别名的邮件，以及微软未返回可判断收件人的邮件。</p>
 
         <div class="endpoint-line">
           <span>接口地址</span>
@@ -133,7 +146,7 @@
               <td>string</td>
               <td>是</td>
               <td>-</td>
-              <td>完整邮箱地址，必须精确匹配一个账号。</td>
+              <td>完整邮箱地址，必须精确匹配一个主邮箱或系统内别名邮箱。</td>
             </tr>
             <tr>
               <td><code>mode</code></td>
@@ -155,7 +168,10 @@
             </tr>
           </thead>
           <tbody>
-            <tr><td><code>account</code></td><td>string</td><td>本次查询的邮箱。</td></tr>
+            <tr><td><code>account</code></td><td>string</td><td>兼容旧调用的主邮箱字段，当前返回实际取信的主邮箱地址。</td></tr>
+            <tr><td><code>requestedEmail</code></td><td>string</td><td>调用方传入的邮箱地址，可能是主邮箱或别名邮箱。</td></tr>
+            <tr><td><code>resolvedAccount</code></td><td>string</td><td>实际用于取信的主邮箱地址。</td></tr>
+            <tr><td><code>matchedAlias</code></td><td>string | null</td><td>当请求邮箱是别名时返回该别名；主邮箱请求返回 null。</td></tr>
             <tr><td><code>resolvedMode</code></td><td>string</td><td>最终使用的取件方式。</td></tr>
             <tr><td><code>fetchedCount</code></td><td>number</td><td>返回邮件数量。</td></tr>
             <tr><td><code>messages</code></td><td>array</td><td>邮件数组。</td></tr>
@@ -178,6 +194,7 @@
 
         <h4>请求示例</h4>
         <api-code-block :code="externalMicrosoftMessagesCurl" language="bash" />
+        <api-code-block :code="externalMicrosoftAliasMessagesCurl" language="bash" />
 
         <h4>返回示例</h4>
         <api-code-block :code="messagesResponseExample" language="json" />
@@ -329,6 +346,7 @@ import { computed, onMounted } from 'vue';
 import { NAlert, NButton, NCard, NForm, NFormItem, NGi, NGrid, NInput, NTable } from 'naive-ui';
 import ApiCodeBlock from '../components/ApiCodeBlock.vue';
 import { useAdminConsole } from '../state/admin-console';
+import { downloadBlob } from '../utils/download';
 
 const admin = useAdminConsole();
 const {
@@ -377,12 +395,73 @@ const externalMicrosoftMessagesCurl = computed(() => {
   -H "${mailApiTokenHeader.value}: <MAIL_API_TOKEN>"`;
 });
 
+const externalMicrosoftAliasMessagesCurl = computed(() => {
+  return `curl "${apiBaseUrl.value}/api/external/microsoft/messages?email=example+ava@hotmail.com&mode=auto" \\
+  -H "${mailApiTokenHeader.value}: <MAIL_API_TOKEN>"`;
+});
+
+function downloadCurrentHtml(): void {
+  const card = document.querySelector('.api-doc-card') as HTMLElement | null;
+  if (!card) {
+    return;
+  }
+  const contentRoot = (card.querySelector('.n-card__content') as HTMLElement | null) ?? card;
+  const clone = contentRoot.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll('button').forEach((button) => button.remove());
+  const html = buildStandaloneHtml(`<main class="api-doc-card">${clone.innerHTML}</main>`);
+  downloadBlob(new Blob([html], { type: 'text/html;charset=utf-8' }), 'microsoft-mail-api-doc.html');
+}
+
+function buildStandaloneHtml(content: string): string {
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>望月工具箱接口文档</title>
+  <style>
+    body { margin: 0; padding: 32px; background: #f3f4f6; color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .api-doc-card { max-width: 1180px; margin: 0 auto; padding: 28px 32px; border-radius: 10px; background: #fff; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08); }
+    h2 { margin: 0; font-size: 26px; }
+    h3 { margin: 0; font-size: 20px; }
+    h4 { margin: 10px 0 0; font-size: 15px; }
+    p { margin: 0; color: #475569; line-height: 1.7; }
+    code, pre { color: #1d4ed8; font-family: "Cascadia Mono", Consolas, monospace; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 9px 8px; border-bottom: 1px solid #e5e7eb; text-align: left; vertical-align: top; }
+    th { color: #334155; background: #f8fafc; }
+    .api-doc-header { display: flex; justify-content: space-between; gap: 20px; padding-bottom: 18px; border-bottom: 1px solid #e5e7eb; }
+    .api-doc-header-side { display: grid; gap: 10px; flex: none; }
+    .api-doc-base { display: grid; gap: 6px; min-width: 260px; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; }
+    .api-doc-base span { color: #64748b; font-size: 12px; font-weight: 700; }
+    .api-doc-tip, .n-alert { margin-top: 18px; padding: 14px; border-radius: 8px; background: #eff6ff; }
+    .api-doc-section { display: grid; gap: 12px; padding: 26px 0; border-bottom: 1px solid #e5e7eb; }
+    .endpoint-line { display: flex; gap: 12px; padding: 10px 12px; border: 1px solid #dbeafe; border-radius: 8px; background: #eff6ff; }
+    .endpoint-line span { color: #1e40af; font-size: 13px; font-weight: 700; }
+    .api-code-block { overflow: hidden; border: 1px solid #e5e7eb; border-radius: 8px; background: #f8fafc; }
+    .api-code-head { min-height: 40px; padding: 0 12px; display: flex; align-items: center; border-bottom: 1px solid #e5e7eb; color: #64748b; font-size: 12px; font-weight: 700; }
+    pre { overflow: auto; margin: 0; padding: 18px 22px; border-radius: 0; background: #f8fafc; color: #0f172a; white-space: pre-wrap; word-break: break-word; line-height: 1.75; }
+    @media (max-width: 760px) { body { padding: 12px; } .api-doc-card { padding: 20px 16px; } .api-doc-header, .endpoint-line { flex-direction: column; } .api-doc-header-side, .api-doc-base { min-width: 0; } }
+  </style>
+</head>
+<body>${content}</body>
+</html>`;
+}
+
 const accountsResponseExample = JSON.stringify(
   {
     items: [
       {
         id: 90,
         account: 'example@hotmail.com',
+        rowType: 'primary',
+        rowId: 'account-90',
+        primaryAccountId: 90,
+        primaryAccount: 'example@hotmail.com',
+        aliasId: null,
+        aliases: ['example+ava@hotmail.com'],
+        aliasCount: 1,
+        matchedAlias: null,
         remark: '',
         authType: 'manual',
         syncStatus: 'fetch_success',
@@ -392,9 +471,30 @@ const accountsResponseExample = JSON.stringify(
         mailFetchProvider: 'graph',
         mailFetchScope: 'graph-default',
         createdAt: '2026-05-16 11:33:00'
+      },
+      {
+        id: 90,
+        account: 'example+ava@hotmail.com',
+        rowType: 'alias',
+        rowId: 'alias-12',
+        primaryAccountId: 90,
+        primaryAccount: 'example@hotmail.com',
+        aliasId: 12,
+        aliases: ['example+ava@hotmail.com'],
+        aliasCount: 1,
+        matchedAlias: 'example+ava@hotmail.com',
+        remark: '',
+        authType: 'manual',
+        syncStatus: 'fetch_success',
+        syncMessage: '取件成功(GRAPH)，共 1 封',
+        fetchedAt: '2026-05-20 10:42:47',
+        fetchedCount: 1,
+        mailFetchProvider: 'graph',
+        mailFetchScope: 'graph-default',
+        createdAt: '2026-05-20 10:50:00'
       }
     ],
-    total: 1
+    total: 2
   },
   null,
   2
@@ -403,6 +503,9 @@ const accountsResponseExample = JSON.stringify(
 const messagesResponseExample = JSON.stringify(
   {
     account: 'example@hotmail.com',
+    requestedEmail: 'example+ava@hotmail.com',
+    resolvedAccount: 'example@hotmail.com',
+    matchedAlias: 'example+ava@hotmail.com',
     resolvedMode: 'graph',
     fetchedCount: 1,
     messages: [
@@ -412,13 +515,13 @@ const messagesResponseExample = JSON.stringify(
         from: 'OpenAI <noreply@example.com>',
         toRecipients: [
           {
-            name: 'example@hotmail.com',
-            address: 'example@hotmail.com',
-            display: 'example@hotmail.com'
+            name: 'example+ava@hotmail.com',
+            address: 'example+ava@hotmail.com',
+            display: 'example+ava@hotmail.com'
           }
         ],
         ccRecipients: [],
-        matchedRecipients: ['example@hotmail.com'],
+        matchedRecipients: ['example+ava@hotmail.com'],
         recipientMatchKind: 'requested',
         receivedAt: '2026-05-20T02:30:00Z',
         preview: 'Your verification code is...',
@@ -477,6 +580,13 @@ onMounted(async () => {
   font-size: 14px;
 }
 
+.api-doc-header-side {
+  display: grid;
+  gap: 10px;
+  justify-items: stretch;
+  flex: none;
+}
+
 .api-doc-base {
   display: grid;
   gap: 6px;
@@ -491,6 +601,10 @@ onMounted(async () => {
   color: #64748b;
   font-size: 12px;
   font-weight: 700;
+}
+
+.api-doc-download-button {
+  min-height: 36px;
 }
 
 .api-doc-base code,
@@ -586,6 +700,7 @@ onMounted(async () => {
     flex-direction: column;
   }
 
+  .api-doc-header-side,
   .api-doc-base {
     min-width: 0;
   }
