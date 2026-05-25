@@ -127,6 +127,47 @@ export interface Sub2ApiConfig {
   adminApiKey: string;
 }
 
+export interface Sub2ApiLongLinkConfig {
+  proxyPool: string;
+}
+
+export interface Sub2ApiLongLinkProxyCheckResponse {
+  ok: true;
+  ip: string;
+  country: string;
+  countryCode: string;
+  region: string;
+  city: string;
+  timezone: string;
+  isp: string;
+  loc: string;
+  proxyUsed: string;
+  direct: boolean;
+}
+
+export interface Sub2ApiLongLinkCheckoutPayload {
+  token: string;
+  plan: 'plus' | 'team';
+  country: string;
+  currency: string;
+  locale: string;
+  usePromo: boolean;
+  promoCode?: string;
+  workspaceName?: string;
+  seatQuantity?: number;
+  proxyPool?: string;
+}
+
+export interface Sub2ApiLongLinkCheckoutResponse {
+  ok: true;
+  url: string;
+  chatgptCheckoutUrl: string;
+  openaiPayUrl: string;
+  proxyUsed: string;
+  direct: boolean;
+  raw: unknown;
+}
+
 export interface Sub2ApiReauthConfig {
   authMode: 'admin-api-key' | 'password';
   adminEmail: string;

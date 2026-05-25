@@ -23,6 +23,11 @@ export const consoleNavigation: ConsoleNavItem[] = [
     path: '/services/sub2api/checker'
   },
   {
+    key: 'sub2api-long-link',
+    label: '长链生成器',
+    path: '/services/sub2api/long-link-generator'
+  },
+  {
     key: 'sub2api-interfaces',
     label: '接口文档',
     path: '/services/sub2api/interfaces'

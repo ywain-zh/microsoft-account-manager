@@ -23,6 +23,10 @@ import type {
   Sub2ApiDeleteAccountsResponse,
   Sub2ApiGptValidityResponse,
   Sub2ApiGroupsResponse,
+  Sub2ApiLongLinkCheckoutPayload,
+  Sub2ApiLongLinkCheckoutResponse,
+  Sub2ApiLongLinkConfig,
+  Sub2ApiLongLinkProxyCheckResponse,
   Sub2ApiReauthConfig,
   Sub2ApiReauthStartPayload,
   Sub2ApiReauthTaskResponse,
@@ -368,6 +372,31 @@ export const api = {
   updateSub2ApiReauthConfig(payload: Sub2ApiReauthConfig): Promise<{ item: Sub2ApiReauthConfig }> {
     return request<{ item: Sub2ApiReauthConfig }>('/api/sub2api/reauth/config', {
       method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  getSub2ApiLongLinkConfig(): Promise<{ item: Sub2ApiLongLinkConfig }> {
+    return request<{ item: Sub2ApiLongLinkConfig }>('/api/sub2api/long-link/config');
+  },
+
+  updateSub2ApiLongLinkConfig(payload: Sub2ApiLongLinkConfig): Promise<{ item: Sub2ApiLongLinkConfig }> {
+    return request<{ item: Sub2ApiLongLinkConfig }>('/api/sub2api/long-link/config', {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  checkSub2ApiLongLinkProxy(payload: { proxyPool?: string }): Promise<Sub2ApiLongLinkProxyCheckResponse> {
+    return request<Sub2ApiLongLinkProxyCheckResponse>('/api/sub2api/long-link/proxy-check', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  createSub2ApiLongLinkCheckout(payload: Sub2ApiLongLinkCheckoutPayload): Promise<Sub2ApiLongLinkCheckoutResponse> {
+    return request<Sub2ApiLongLinkCheckoutResponse>('/api/sub2api/long-link/checkout', {
+      method: 'POST',
       body: JSON.stringify(payload)
     });
   },

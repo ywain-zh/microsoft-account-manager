@@ -24,6 +24,16 @@ import {
   type Sub2ApiReauthSummary,
   type Sub2ApiReauthTarget
 } from './runtime/sub2api-reauth.js';
+import {
+  DEFAULT_SUB2API_LONG_LINK_CONFIG,
+  checkSub2ApiLongLinkProxy,
+  createSub2ApiLongLinkCheckout,
+  extractChatGptAccessToken,
+  normalizeProxyPoolText,
+  normalizeSub2ApiLongLinkConfig,
+  type Sub2ApiLongLinkCheckoutPayload,
+  type Sub2ApiLongLinkConfig
+} from './runtime/sub2api-long-link.js';
 
 type Bindings = {
   DB: D1Database;
@@ -246,6 +256,19 @@ interface CloudMailRemoteEnvelope<T> {
 interface Sub2ApiConfig {
   baseUrl: string;
   adminApiKey: string;
+}
+
+interface Sub2ApiLongLinkCheckoutRequest {
+  token: string;
+  plan: 'plus' | 'team';
+  country: string;
+  currency: string;
+  locale: string;
+  usePromo: boolean;
+  promoCode?: string;
+  workspaceName?: string;
+  seatQuantity?: number;
+  proxyPool?: string;
 }
 
 type TranslationProvider = 'openai' | 'deeplx';
@@ -547,6 +570,7 @@ const DEFAULT_CLOUD_MAIL_CONFIG: CloudMailConfig = {
 
 const SUB2API_CONFIG_KEY = 'sub2api_config';
 const SUB2API_REAUTH_CONFIG_KEY = 'sub2api_reauth_config';
+const SUB2API_LONG_LINK_CONFIG_KEY = 'sub2api_long_link_config';
 const DEFAULT_SUB2API_TEST_MODEL = 'gpt-5.4';
 const SUB2API_PAGE_SIZE = 100;
 
@@ -1633,6 +1657,36 @@ app.put('/api/sub2api/reauth/config', async (c) => {
   return c.json({ item });
 });
 
+app.get('/api/sub2api/long-link/config', async (c) => {
+  const item = await getSub2ApiLongLinkConfig(c.env.DB);
+  return c.json({ item });
+});
+
+app.put('/api/sub2api/long-link/config', async (c) => {
+  const body = await readJson<Partial<Sub2ApiLongLinkConfig>>(c);
+  const item = normalizeSub2ApiLongLinkConfig(body);
+  validateSub2ApiLongLinkConfig(item);
+  await setAppSetting(c.env.DB, SUB2API_LONG_LINK_CONFIG_KEY, JSON.stringify(item));
+  return c.json({ item });
+});
+
+app.post('/api/sub2api/long-link/proxy-check', async (c) => {
+  const body = await readJson<{ proxyPool?: string }>(c);
+  const saved = await getSub2ApiLongLinkConfig(c.env.DB);
+  const proxyPool = body.proxyPool === undefined ? saved.proxyPool : normalizeProxyPoolText(body.proxyPool);
+  const result = await checkSub2ApiLongLinkProxy(proxyPool);
+  return c.json(result);
+});
+
+app.post('/api/sub2api/long-link/checkout', async (c) => {
+  const body = await readJson<Partial<Sub2ApiLongLinkCheckoutRequest>>(c);
+  const saved = await getSub2ApiLongLinkConfig(c.env.DB);
+  const payload = normalizeSub2ApiLongLinkCheckoutPayload(body);
+  const proxyPool = body.proxyPool === undefined ? saved.proxyPool : normalizeProxyPoolText(body.proxyPool);
+  const result = await createSub2ApiLongLinkCheckout(payload, proxyPool);
+  return c.json(result);
+});
+
 app.get('/api/sub2api/models', async (c) => {
   const config = await getSub2ApiConfig(c.env.DB);
   ensureSub2ApiConfigured(config);
@@ -2582,6 +2636,21 @@ async function getSub2ApiReauthConfig(db: D1Database): Promise<Sub2ApiReauthConf
   }
 }
 
+async function getSub2ApiLongLinkConfig(db: D1Database): Promise<Sub2ApiLongLinkConfig> {
+  const value = await getAppSetting(db, SUB2API_LONG_LINK_CONFIG_KEY);
+
+  if (!value) {
+    return DEFAULT_SUB2API_LONG_LINK_CONFIG;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as Partial<Sub2ApiLongLinkConfig>;
+    return normalizeSub2ApiLongLinkConfig(parsed);
+  } catch {
+    return DEFAULT_SUB2API_LONG_LINK_CONFIG;
+  }
+}
+
 async function getTranslationConfig(db: D1Database): Promise<TranslationConfig> {
   const value = await getAppSetting(db, TRANSLATION_CONFIG_KEY);
 
@@ -2726,6 +2795,30 @@ function normalizeSub2ApiReauthConfig(input: Partial<Sub2ApiReauthConfig>): Sub2
   };
 }
 
+function normalizeSub2ApiLongLinkCheckoutPayload(
+  input: Partial<Sub2ApiLongLinkCheckoutRequest>
+): Sub2ApiLongLinkCheckoutPayload {
+  const token = extractChatGptAccessToken(input.token);
+  const plan = input.plan === 'team' ? 'team' : 'plus';
+  const country = asText(input.country).trim().toUpperCase() || 'US';
+  const currency = asText(input.currency).trim().toUpperCase() || 'USD';
+  const locale = asText(input.locale).trim() || 'en-US';
+  const payload: Sub2ApiLongLinkCheckoutPayload = {
+    token,
+    plan,
+    country,
+    currency,
+    locale,
+    usePromo: input.usePromo !== false,
+    promoCode: asText(input.promoCode).trim(),
+    workspaceName: asText(input.workspaceName).trim(),
+    seatQuantity: normalizeInteger(input.seatQuantity, 2, 2, 1000)
+  };
+
+  validateSub2ApiLongLinkCheckoutPayload(payload);
+  return payload;
+}
+
 function normalizeTranslationConfig(input: Partial<TranslationConfig>): TranslationConfig {
   return {
     enabled: input.enabled !== false,
@@ -2851,6 +2944,36 @@ function validateSub2ApiReauthConfig(config: Sub2ApiReauthConfig): void {
   }
   if (config.adminPassword.length > 255) {
     throw new HTTPException(400, { message: 'Sub2API 管理员密码长度不能超过 255 个字符' });
+  }
+}
+
+function validateSub2ApiLongLinkConfig(config: Sub2ApiLongLinkConfig): void {
+  if (config.proxyPool.length > 20000) {
+    throw new HTTPException(400, { message: '代理池内容不能超过 20000 个字符' });
+  }
+}
+
+function validateSub2ApiLongLinkCheckoutPayload(payload: Sub2ApiLongLinkCheckoutPayload): void {
+  if (!payload.token) {
+    throw new HTTPException(400, { message: '没有识别到 accessToken' });
+  }
+  if (payload.token.length > 20000) {
+    throw new HTTPException(400, { message: 'accessToken 长度异常' });
+  }
+  if (!/^[A-Z]{2}$/.test(payload.country)) {
+    throw new HTTPException(400, { message: '地区必须是两位国家/地区代码' });
+  }
+  if (!/^[A-Z]{3}$/.test(payload.currency)) {
+    throw new HTTPException(400, { message: '币种必须是三位代码' });
+  }
+  if (payload.locale.length > 32) {
+    throw new HTTPException(400, { message: '支付页语言长度异常' });
+  }
+  if ((payload.promoCode ?? '').length > 255) {
+    throw new HTTPException(400, { message: '优惠码长度不能超过 255 个字符' });
+  }
+  if ((payload.workspaceName ?? '').length > 120) {
+    throw new HTTPException(400, { message: 'Team 工作区名称不能超过 120 个字符' });
   }
 }
 
