@@ -62,7 +62,7 @@ const router = createRouter({
           meta: {
             requiresAuth: true,
             title: '长链生成器',
-            description: '使用 ChatGPT accessToken 生成 pay.openai.com 支付长链，并支持专用代理池。'
+            description: ''
           }
         },
         {
