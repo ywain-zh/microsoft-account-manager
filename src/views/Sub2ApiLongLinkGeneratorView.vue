@@ -700,24 +700,44 @@ function extractToken(text: string): string {
     return value;
   }
   try {
-    const parsed = JSON.parse(value) as Record<string, unknown>;
-    for (const key of ['accessToken', 'access_token', 'token']) {
-      const candidate = parsed[key];
-      if (typeof candidate === 'string' && candidate.trim()) {
-        return candidate.trim();
-      }
-    }
-    const data = parsed.data;
-    if (data && typeof data === 'object') {
-      const candidate = (data as Record<string, unknown>).accessToken;
-      if (typeof candidate === 'string' && candidate.trim()) {
-        return candidate.trim();
-      }
+    const candidate = extractTokenFromJsonValue(JSON.parse(value) as unknown);
+    if (candidate) {
+      return candidate;
     }
   } catch {
     // Fall through to regex extraction.
   }
   return value.match(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/)?.[0] ?? '';
+}
+
+function extractTokenFromJsonValue(value: unknown): string {
+  if (typeof value === 'string') {
+    return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value.trim()) ? value.trim() : '';
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const candidate = extractTokenFromJsonValue(item);
+      if (candidate) {
+        return candidate;
+      }
+    }
+    return '';
+  }
+
+  if (!value || typeof value !== 'object') {
+    return '';
+  }
+
+  const record = value as Record<string, unknown>;
+  for (const key of ['accessToken', 'access_token', 'token']) {
+    const candidate = record[key];
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return extractTokenFromJsonValue(record.data);
 }
 
 function decodeJwtPayload(token: string): Record<string, unknown> {

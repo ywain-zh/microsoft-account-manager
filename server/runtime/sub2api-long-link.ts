@@ -118,25 +118,46 @@ export function extractChatGptAccessToken(value: unknown): string {
   }
 
   try {
-    const parsed = JSON.parse(text) as Record<string, unknown>;
-    for (const key of ['accessToken', 'access_token', 'token']) {
-      const candidate = parsed[key];
-      if (typeof candidate === 'string' && candidate.trim()) {
-        return candidate.trim();
-      }
-    }
-    const data = parsed.data;
-    if (data && typeof data === 'object') {
-      const candidate = (data as Record<string, unknown>).accessToken;
-      if (typeof candidate === 'string' && candidate.trim()) {
-        return candidate.trim();
-      }
+    const candidate = extractAccessTokenFromJsonValue(JSON.parse(text) as unknown);
+    if (candidate) {
+      return candidate;
     }
   } catch {
     // Fall through to regex extraction.
   }
 
   return text.match(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/)?.[0] ?? '';
+}
+
+function extractAccessTokenFromJsonValue(value: unknown): string {
+  if (typeof value === 'string') {
+    const token = value.trim();
+    return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token) ? token : '';
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const candidate = extractAccessTokenFromJsonValue(item);
+      if (candidate) {
+        return candidate;
+      }
+    }
+    return '';
+  }
+
+  if (!value || typeof value !== 'object') {
+    return '';
+  }
+
+  const record = value as Record<string, unknown>;
+  for (const key of ['accessToken', 'access_token', 'token']) {
+    const candidate = record[key];
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return extractAccessTokenFromJsonValue(record.data);
 }
 
 export function normalizeLongLinkProxyCandidates(poolText: string): ProxyCandidate[] {
@@ -514,11 +535,46 @@ function parseJson(text: string): unknown {
 }
 
 function extractRemoteError(data: unknown): string {
-  if (!data || typeof data !== 'object') {
+  return extractErrorText(data);
+}
+
+function extractErrorText(value: unknown): string {
+  if (typeof value === 'string') {
+    return normalizeText(value);
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+
+  if (!value || typeof value !== 'object') {
     return '';
   }
-  const record = data as Record<string, unknown>;
-  return normalizeText(record.error) || normalizeText(record.message) || normalizeText(record.detail);
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const text = extractErrorText(item);
+      if (text) {
+        return text;
+      }
+    }
+    return '';
+  }
+
+  const record = value as Record<string, unknown>;
+  for (const key of ['message', 'error_description', 'detail', 'reason', 'error', 'code', 'type']) {
+    const text = extractErrorText(record[key]);
+    if (text && text !== '[object Object]') {
+      return text;
+    }
+  }
+
+  try {
+    const text = JSON.stringify(record);
+    return text === '{}' ? '' : text.slice(0, 500);
+  } catch {
+    return '';
+  }
 }
 
 function looksLikeCloudflareChallenge(text: string): boolean {
@@ -577,7 +633,7 @@ function isSupportedProxyProtocol(value: string): value is SupportedProxyProtoco
 }
 
 function getErrorMessage(error: unknown, secrets: string[] = []): string {
-  const raw = error instanceof Error ? error.message : '发生未知错误';
+  const raw = error instanceof Error ? error.message : extractErrorText(error) || '发生未知错误';
   let message = raw.replace(/Authorization:\s*Bearer\s+[A-Za-z0-9._-]+/gi, 'Authorization: Bearer ***');
   for (const secret of secrets) {
     if (secret) {

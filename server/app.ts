@@ -1688,8 +1688,12 @@ app.post('/api/sub2api/long-link/checkout', async (c) => {
   const saved = await getSub2ApiLongLinkConfig(c.env.DB);
   const payload = normalizeSub2ApiLongLinkCheckoutPayload(body);
   const proxyPool = body.proxyPool === undefined ? saved.proxyPool : normalizeProxyPoolText(body.proxyPool);
-  const result = await createSub2ApiLongLinkCheckout(payload, proxyPool);
-  return c.json(result);
+  try {
+    const result = await createSub2ApiLongLinkCheckout(payload, proxyPool);
+    return c.json(result);
+  } catch (error) {
+    throw new HTTPException(400, { message: getErrorMessage(error) });
+  }
 });
 
 app.get('/api/sub2api/models', async (c) => {
