@@ -129,19 +129,6 @@ export interface Sub2ApiConfig {
 
 export interface Sub2ApiLongLinkConfig {
   proxyPool: string;
-  proxyMode: Sub2ApiLongLinkProxyMode;
-  localProxyRegion: Sub2ApiLongLinkLocalProxyRegion;
-  localProxy: Record<Sub2ApiLongLinkLocalProxyRegion, Sub2ApiLongLinkLocalProxySettings>;
-}
-
-export type Sub2ApiLongLinkProxyMode = 'network' | 'local';
-export type Sub2ApiLongLinkLocalProxyRegion = 'JP' | 'US';
-export type Sub2ApiLongLinkLocalProxyProtocol = 'http' | 'https' | 'socks5' | 'socks5h';
-
-export interface Sub2ApiLongLinkLocalProxySettings {
-  host: string;
-  port: string;
-  protocol: Sub2ApiLongLinkLocalProxyProtocol;
 }
 
 export interface Sub2ApiLongLinkProxyCheckResponse {
@@ -169,9 +156,6 @@ export interface Sub2ApiLongLinkCheckoutPayload {
   workspaceName?: string;
   seatQuantity?: number;
   proxyPool?: string;
-  proxyMode?: Sub2ApiLongLinkProxyMode;
-  localProxyRegion?: Sub2ApiLongLinkLocalProxyRegion;
-  localProxy?: Record<Sub2ApiLongLinkLocalProxyRegion, Sub2ApiLongLinkLocalProxySettings>;
 }
 
 export interface Sub2ApiLongLinkCheckoutResponse {

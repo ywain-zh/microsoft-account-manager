@@ -26,9 +26,6 @@ import type {
   Sub2ApiLongLinkCheckoutPayload,
   Sub2ApiLongLinkCheckoutResponse,
   Sub2ApiLongLinkConfig,
-  Sub2ApiLongLinkLocalProxyRegion,
-  Sub2ApiLongLinkLocalProxySettings,
-  Sub2ApiLongLinkProxyMode,
   Sub2ApiLongLinkProxyCheckResponse,
   Sub2ApiReauthConfig,
   Sub2ApiReauthStartPayload,
@@ -390,14 +387,7 @@ export const api = {
     });
   },
 
-  checkSub2ApiLongLinkProxy(payload: {
-    proxyPool?: string;
-    proxyMode?: Sub2ApiLongLinkProxyMode;
-    localProxyRegion?: Sub2ApiLongLinkLocalProxyRegion;
-    localProxy?: Sub2ApiLongLinkConfig['localProxy'];
-    localProxySettings?: Partial<Sub2ApiLongLinkLocalProxySettings>;
-    region?: Sub2ApiLongLinkLocalProxyRegion;
-  }): Promise<Sub2ApiLongLinkProxyCheckResponse> {
+  checkSub2ApiLongLinkProxy(payload: { proxyPool?: string }): Promise<Sub2ApiLongLinkProxyCheckResponse> {
     return request<Sub2ApiLongLinkProxyCheckResponse>('/api/sub2api/long-link/proxy-check', {
       method: 'POST',
       body: JSON.stringify(payload)

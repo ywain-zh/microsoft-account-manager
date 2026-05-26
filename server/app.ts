@@ -26,16 +26,13 @@ import {
 } from './runtime/sub2api-reauth.js';
 import {
   DEFAULT_SUB2API_LONG_LINK_CONFIG,
-  buildLocalProxyPoolText,
   checkSub2ApiLongLinkProxy,
   createSub2ApiLongLinkCheckout,
   extractChatGptAccessToken,
   normalizeProxyPoolText,
   normalizeSub2ApiLongLinkConfig,
-  resolveSub2ApiLongLinkProxyPoolText,
   type Sub2ApiLongLinkCheckoutPayload,
-  type Sub2ApiLongLinkConfig,
-  type Sub2ApiLongLinkLocalProxySettings
+  type Sub2ApiLongLinkConfig
 } from './runtime/sub2api-long-link.js';
 
 type Bindings = {
@@ -272,18 +269,10 @@ interface Sub2ApiLongLinkCheckoutRequest {
   workspaceName?: string;
   seatQuantity?: number;
   proxyPool?: string;
-  proxyMode?: Sub2ApiLongLinkConfig['proxyMode'];
-  localProxyRegion?: Sub2ApiLongLinkConfig['localProxyRegion'];
-  localProxy?: Sub2ApiLongLinkConfig['localProxy'];
 }
 
 interface Sub2ApiLongLinkProxyCheckRequest {
   proxyPool?: string;
-  proxyMode?: Sub2ApiLongLinkConfig['proxyMode'];
-  localProxyRegion?: Sub2ApiLongLinkConfig['localProxyRegion'];
-  localProxy?: Sub2ApiLongLinkConfig['localProxy'];
-  localProxySettings?: Partial<Sub2ApiLongLinkLocalProxySettings>;
-  region?: Sub2ApiLongLinkConfig['localProxyRegion'];
 }
 
 type TranslationProvider = 'openai' | 'deeplx';
@@ -1688,7 +1677,7 @@ app.put('/api/sub2api/long-link/config', async (c) => {
 app.post('/api/sub2api/long-link/proxy-check', async (c) => {
   const body = await readJson<Sub2ApiLongLinkProxyCheckRequest>(c);
   const saved = await getSub2ApiLongLinkConfig(c.env.DB);
-  const proxyPool = resolveSub2ApiLongLinkProxyCheckPoolText(saved, body);
+  const proxyPool = body.proxyPool === undefined ? saved.proxyPool : normalizeProxyPoolText(body.proxyPool);
   const result = await checkSub2ApiLongLinkProxy(proxyPool);
   return c.json(result);
 });
@@ -1697,7 +1686,7 @@ app.post('/api/sub2api/long-link/checkout', async (c) => {
   const body = await readJson<Partial<Sub2ApiLongLinkCheckoutRequest>>(c);
   const saved = await getSub2ApiLongLinkConfig(c.env.DB);
   const payload = normalizeSub2ApiLongLinkCheckoutPayload(body);
-  const proxyPool = resolveSub2ApiLongLinkCheckoutPoolText(saved, body);
+  const proxyPool = body.proxyPool === undefined ? saved.proxyPool : normalizeProxyPoolText(body.proxyPool);
   const result = await createSub2ApiLongLinkCheckout(payload, proxyPool);
   return c.json(result);
 });
@@ -2834,32 +2823,6 @@ function normalizeSub2ApiLongLinkCheckoutPayload(
   return payload;
 }
 
-function resolveSub2ApiLongLinkProxyCheckPoolText(
-  saved: Sub2ApiLongLinkConfig,
-  input: Sub2ApiLongLinkProxyCheckRequest
-): string {
-  if (input.localProxySettings) {
-    return buildLocalProxyPoolText(input.localProxySettings, input.region === 'US' ? 'US' : 'JP');
-  }
-  if (input.proxyPool !== undefined && input.proxyMode === undefined) {
-    return normalizeProxyPoolText(input.proxyPool);
-  }
-  if (input.proxyMode !== undefined || input.localProxyRegion !== undefined || input.localProxy !== undefined || input.proxyPool !== undefined) {
-    return resolveSub2ApiLongLinkProxyPoolText({ ...saved, ...input });
-  }
-  return resolveSub2ApiLongLinkProxyPoolText(saved);
-}
-
-function resolveSub2ApiLongLinkCheckoutPoolText(
-  saved: Sub2ApiLongLinkConfig,
-  input: Partial<Sub2ApiLongLinkCheckoutRequest>
-): string {
-  if (input.proxyMode !== undefined || input.localProxyRegion !== undefined || input.localProxy !== undefined || input.proxyPool !== undefined) {
-    return resolveSub2ApiLongLinkProxyPoolText({ ...saved, ...input });
-  }
-  return resolveSub2ApiLongLinkProxyPoolText(saved);
-}
-
 function normalizeTranslationConfig(input: Partial<TranslationConfig>): TranslationConfig {
   return {
     enabled: input.enabled !== false,
@@ -2991,14 +2954,6 @@ function validateSub2ApiReauthConfig(config: Sub2ApiReauthConfig): void {
 function validateSub2ApiLongLinkConfig(config: Sub2ApiLongLinkConfig): void {
   if (config.proxyPool.length > 20000) {
     throw new HTTPException(400, { message: '代理池内容不能超过 20000 个字符' });
-  }
-  for (const [region, settings] of Object.entries(config.localProxy)) {
-    if (settings.host.length > 255) {
-      throw new HTTPException(400, { message: `${region} 本地代理 host 不能超过 255 个字符` });
-    }
-    if (settings.port && !/^\d{1,5}$/.test(settings.port)) {
-      throw new HTTPException(400, { message: `${region} 本地代理端口不合法` });
-    }
   }
 }
 
