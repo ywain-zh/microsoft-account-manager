@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import http from 'node:http';
 import { createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
 import { Hono } from 'hono';
@@ -3804,6 +3805,9 @@ function resolveSub2ApiErrorMessage(status: number, rawText: string): string {
   }
 
   if (status >= 500) {
+    if (looksLikeHtmlErrorPage(rawText)) {
+      return 'Sub2API 上游返回 5xx HTML 错误页，服务暂时不可用，请稍后重试';
+    }
     return remoteMessage || 'Sub2API 服务暂时不可用，请稍后重试';
   }
 
@@ -3817,6 +3821,10 @@ function resolveSub2ApiErrorMessage(status: number, rawText: string): string {
   }
 
   return `Sub2API 请求失败 (${status})`;
+}
+
+function looksLikeHtmlErrorPage(value: string): boolean {
+  return /^\s*</.test(value) && /<(?:!doctype|html|head|body|title)\b/i.test(value);
 }
 
 function extractSub2ApiMessage(value: unknown): string {
@@ -4412,7 +4420,7 @@ async function getSub2ApiGptExportItemFromPostgres(accountId: number, email: str
       AND deleted_at IS NULL
     LIMIT 1;
   `;
-  const rawText = await runDockerCommand(
+  const rawText = await runDockerExecViaSocket(
     'sub2api-postgres',
     'psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" -At',
     sql
@@ -4720,6 +4728,192 @@ function runDockerCommand(containerName: string, command: string, stdin = ''): P
     });
     child.stdin.end(stdin);
   });
+}
+
+async function runDockerExecViaSocket(containerName: string, command: string, stdin = ''): Promise<string> {
+  const effectiveCommand = stdin ? buildShellCommandWithStdin(command, stdin) : command;
+  const createPayload = JSON.stringify({
+    AttachStdout: true,
+    AttachStderr: true,
+    AttachStdin: false,
+    Tty: false,
+    Cmd: ['sh', '-lc', effectiveCommand]
+  });
+  const createResponse = await requestDockerSocketJson<{ Id?: string }>(
+    'POST',
+    `/containers/${encodeURIComponent(containerName)}/exec`,
+    createPayload,
+    '无法创建 Sub2API 数据库读取任务'
+  );
+  const execId = asText(createResponse.Id).trim();
+  if (!execId) {
+    throw new HTTPException(502, { message: 'Sub2API 数据库读取任务创建失败' });
+  }
+
+  const startPayload = JSON.stringify({
+    Detach: false,
+    Tty: false
+  });
+  const rawOutput = await requestDockerSocketRaw(
+    'POST',
+    `/exec/${encodeURIComponent(execId)}/start`,
+    startPayload,
+    'Sub2API 数据库读取失败'
+  );
+  const output = decodeDockerMultiplexedOutput(rawOutput);
+  const inspectResponse = await requestDockerSocketJson<{ ExitCode?: number }>(
+    'GET',
+    `/exec/${encodeURIComponent(execId)}/json`,
+    '',
+    '无法确认 Sub2API 数据库读取结果'
+  );
+  const exitCode = Number(inspectResponse.ExitCode ?? 0);
+  if (exitCode !== 0) {
+    throw new HTTPException(502, { message: truncate(output.stderr.trim() || 'Sub2API 数据库查询失败', 240) });
+  }
+
+  return output.stdout;
+}
+
+function buildShellCommandWithStdin(command: string, stdin: string): string {
+  let delimiter = 'MAM_DOCKER_STDIN';
+  while (stdin.includes(delimiter)) {
+    delimiter += '_X';
+  }
+
+  return `cat <<'${delimiter}' | ${command}\n${stdin}\n${delimiter}`;
+}
+
+function requestDockerSocketJson<T>(
+  method: 'GET' | 'POST',
+  path: string,
+  body: string,
+  failureMessage: string
+): Promise<T> {
+  return requestDockerSocket(method, path, body).then(({ statusCode, responseBody }) => {
+    if (statusCode < 200 || statusCode >= 300) {
+      throw new HTTPException(502, { message: resolveDockerSocketErrorMessage(responseBody, failureMessage) });
+    }
+
+    try {
+      return JSON.parse(responseBody.toString('utf8')) as T;
+    } catch {
+      throw new HTTPException(502, { message: 'Docker 返回的数据格式不正确' });
+    }
+  });
+}
+
+function requestDockerSocketRaw(
+  method: 'GET' | 'POST',
+  path: string,
+  body: string,
+  failureMessage: string
+): Promise<Buffer> {
+  return requestDockerSocket(method, path, body).then(({ statusCode, responseBody }) => {
+    if (statusCode < 200 || statusCode >= 300) {
+      throw new HTTPException(502, { message: resolveDockerSocketErrorMessage(responseBody, failureMessage) });
+    }
+
+    return responseBody;
+  });
+}
+
+function requestDockerSocket(
+  method: 'GET' | 'POST',
+  path: string,
+  body = '',
+  stdin = ''
+): Promise<{ statusCode: number; responseBody: Buffer }> {
+  return new Promise((resolve, reject) => {
+    const request = http.request(
+      {
+        socketPath: '/var/run/docker.sock',
+        method,
+        path,
+        headers: body
+          ? {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(body)
+            }
+          : undefined
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer) => {
+          chunks.push(chunk);
+        });
+        response.on('end', () => {
+          resolve({
+            statusCode: response.statusCode ?? 500,
+            responseBody: Buffer.concat(chunks)
+          });
+        });
+      }
+    );
+
+    request.on('error', () => {
+      reject(new HTTPException(502, { message: '无法通过 Docker socket 读取 Sub2API 数据库' }));
+    });
+    if (body) {
+      request.write(body);
+    }
+    if (stdin) {
+      request.write(stdin);
+    }
+    request.end();
+  });
+}
+
+function resolveDockerSocketErrorMessage(responseBody: Buffer, fallback: string): string {
+  const text = responseBody.toString('utf8').trim();
+  if (!text) {
+    return fallback;
+  }
+
+  try {
+    const parsed = toRecord(JSON.parse(text));
+    const message = asText(parsed?.message ?? parsed?.error).trim();
+    if (message) {
+      return truncate(message, 240);
+    }
+  } catch {
+    // Use text fallback below.
+  }
+
+  return truncate(text, 240);
+}
+
+function decodeDockerMultiplexedOutput(buffer: Buffer): { stdout: string; stderr: string } {
+  let offset = 0;
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+
+  while (offset + 8 <= buffer.length) {
+    const streamType = buffer[offset];
+    const size = buffer.readUInt32BE(offset + 4);
+    const start = offset + 8;
+    const end = start + size;
+    if (end > buffer.length) {
+      break;
+    }
+
+    const chunk = buffer.subarray(start, end);
+    if (streamType === 1) {
+      stdout.push(chunk);
+    } else if (streamType === 2) {
+      stderr.push(chunk);
+    }
+    offset = end;
+  }
+
+  if (offset === 0) {
+    return { stdout: buffer.toString('utf8'), stderr: '' };
+  }
+
+  return {
+    stdout: Buffer.concat(stdout).toString('utf8'),
+    stderr: Buffer.concat(stderr).toString('utf8')
+  };
 }
 
 function extractSub2ApiItems(payload: unknown): unknown[] {

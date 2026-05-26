@@ -123,7 +123,7 @@ async function requestBlob(path: string, init: RequestInit = {}): Promise<Downlo
       message = payload.message ?? message;
     } else {
       const text = await response.text().catch(() => '');
-      message = text.trim() || message;
+      message = normalizeBlobErrorMessage(text, message);
     }
 
     if (response.status === 401) {
@@ -136,6 +136,23 @@ async function requestBlob(path: string, init: RequestInit = {}): Promise<Downlo
     blob: await response.blob(),
     filename: parseDownloadFilename(response.headers.get('Content-Disposition')) ?? 'sub2api_gpt.json'
   };
+}
+
+function normalizeBlobErrorMessage(text: string, fallback: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return fallback;
+  }
+
+  if (/^\s*</.test(trimmed)) {
+    const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(trimmed)?.[1]
+      ?.replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return title ? `${fallback}：${title}` : `${fallback}：服务器返回了 HTML 错误页`;
+  }
+
+  return trimmed.length > 240 ? `${trimmed.slice(0, 240)}...` : trimmed;
 }
 
 function parseDownloadFilename(contentDisposition: string | null): string | null {
