@@ -107,6 +107,51 @@
       :mask-closable="false"
     >
       <div class="proxy-config-body">
+        <section class="proxy-config-section">
+          <div class="proxy-section-title">
+            <div>
+              <h3>总配置</h3>
+              <p>长链生成和默认检测只使用当前选中的代理来源。</p>
+            </div>
+            <n-radio-group v-model:value="proxyMode" name="long-link-proxy-mode" class="proxy-mode-group">
+              <n-radio-button value="network">网络代理</n-radio-button>
+              <n-radio-button value="local">本地代理</n-radio-button>
+            </n-radio-group>
+          </div>
+        </section>
+
+        <section class="proxy-config-section local-proxy-section" :class="{ 'is-active': proxyMode === 'local' }">
+          <div class="proxy-section-title">
+            <div>
+              <h3>本地代理</h3>
+              <p>{{ proxyMode === 'local' ? `当前长链生成使用 ${localProxyRegion} 本地代理。` : '切换到本地代理后，只使用选中地区的本地出口。' }}</p>
+            </div>
+            <n-select v-model:value="localProxyRegion" class="local-region-select" :options="localRegionOptions" />
+          </div>
+
+          <div class="local-proxy-list">
+            <div v-for="region in localProxyRegions" :key="region" class="local-proxy-row" :class="{ 'is-selected': localProxyRegion === region }">
+              <div class="local-proxy-region">
+                <strong>{{ region }}</strong>
+                <span>{{ localProxyRegion === region ? '当前使用' : '备用配置' }}</span>
+              </div>
+              <n-input v-model:value="localProxy[region].host" placeholder="127.0.0.1" />
+              <n-input v-model:value="localProxy[region].port" :placeholder="region === 'JP' ? '7892' : '7893'" />
+              <n-select v-model:value="localProxy[region].protocol" :options="proxyProtocolOptions" />
+              <n-button attr-type="button" :loading="localProxyStatus[region].testing" @click.stop.prevent="testLocalProxy(region)">测试</n-button>
+              <span class="local-proxy-result" :class="resolveLocalProxyTone(region)">{{ localProxyStatus[region].statusText }}</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="proxy-config-section network-proxy-section" :class="{ 'is-active': proxyMode === 'network' }">
+          <div class="proxy-section-title">
+            <div>
+              <h3>网络代理池</h3>
+              <p>{{ proxyMode === 'network' ? '当前长链生成使用网络代理池；为空时走服务器本机出口。' : '切换到网络代理后，才会使用下面保存的代理池。' }}</p>
+            </div>
+          </div>
+
         <n-form label-placement="top">
           <n-form-item label="代理池节点">
             <n-input
@@ -125,6 +170,7 @@
           <n-button attr-type="button" :disabled="proxyItems.length === 0" @click.stop.prevent="removeAllProxyItems">全部删除</n-button>
           <n-button attr-type="button" type="primary" :loading="configSaving" @click.stop.prevent="saveProxyConfig">保存代理池</n-button>
         </div>
+        </section>
 
         <div class="proxy-item-list">
           <div v-if="proxyItems.length === 0" class="proxy-empty">未配置代理，长链生成时将使用服务器本机出口。</div>
@@ -164,11 +210,21 @@ import {
   NInput,
   NInputNumber,
   NModal,
+  NRadioButton,
+  NRadioGroup,
   NSelect,
   createDiscreteApi
 } from 'naive-ui';
 import { api } from '../api';
-import type { Sub2ApiLongLinkCheckoutResponse, Sub2ApiLongLinkProxyCheckResponse } from '../types';
+import type {
+  Sub2ApiLongLinkCheckoutResponse,
+  Sub2ApiLongLinkConfig,
+  Sub2ApiLongLinkLocalProxyProtocol,
+  Sub2ApiLongLinkLocalProxyRegion,
+  Sub2ApiLongLinkLocalProxySettings,
+  Sub2ApiLongLinkProxyCheckResponse,
+  Sub2ApiLongLinkProxyMode
+} from '../types';
 
 interface CountryOption {
   label: string;
@@ -183,6 +239,12 @@ interface ProxyListItem {
   region: string;
   protocol: string;
   identity: string;
+  testing: boolean;
+  ok: boolean | null;
+  statusText: string;
+}
+
+interface LocalProxyStatusItem {
   testing: boolean;
   ok: boolean | null;
   statusText: string;
@@ -230,6 +292,23 @@ const localeOptions = [
   { label: '日文', value: 'ja-JP' }
 ];
 
+const localProxyRegions: Sub2ApiLongLinkLocalProxyRegion[] = ['JP', 'US'];
+const localRegionOptions = [
+  { label: 'JP 本地代理', value: 'JP' },
+  { label: 'US 本地代理', value: 'US' }
+];
+const proxyProtocolOptions = [
+  { label: 'HTTP', value: 'http' },
+  { label: 'HTTPS', value: 'https' },
+  { label: 'SOCKS5', value: 'socks5' },
+  { label: 'SOCKS5H', value: 'socks5h' }
+] satisfies Array<{ label: string; value: Sub2ApiLongLinkLocalProxyProtocol }>;
+
+const DEFAULT_LOCAL_PROXY: Record<Sub2ApiLongLinkLocalProxyRegion, Sub2ApiLongLinkLocalProxySettings> = {
+  JP: { host: '127.0.0.1', port: '7892', protocol: 'http' },
+  US: { host: '127.0.0.1', port: '7893', protocol: 'http' }
+};
+
 const countryOptions = COUNTRY_OPTIONS.map(({ label, value }) => ({ label, value }));
 const currencyByCountry = new Map(COUNTRY_OPTIONS.map((item) => [item.value, item.currency]));
 
@@ -246,6 +325,16 @@ const form = reactive({
 });
 
 const proxyPool = ref('');
+const proxyMode = ref<Sub2ApiLongLinkProxyMode>('network');
+const localProxyRegion = ref<Sub2ApiLongLinkLocalProxyRegion>('JP');
+const localProxy = reactive<Record<Sub2ApiLongLinkLocalProxyRegion, Sub2ApiLongLinkLocalProxySettings>>({
+  JP: { ...DEFAULT_LOCAL_PROXY.JP },
+  US: { ...DEFAULT_LOCAL_PROXY.US }
+});
+const localProxyStatus = reactive<Record<Sub2ApiLongLinkLocalProxyRegion, LocalProxyStatusItem>>({
+  JP: { testing: false, ok: null, statusText: '未测试' },
+  US: { testing: false, ok: null, statusText: '未测试' }
+});
 const proxyDraft = ref('');
 const proxyItems = ref<ProxyListItem[]>([]);
 const showProxyModal = ref(false);
@@ -269,9 +358,8 @@ async function loadConfig(): Promise<void> {
   configLoading.value = true;
   try {
     const response = await api.getSub2ApiLongLinkConfig();
-    proxyPool.value = response.item.proxyPool;
-    proxyDraft.value = proxyPool.value;
-    proxyItems.value = parseProxyItems(proxyPool.value);
+    applyProxyConfig(response.item);
+    proxyDraft.value = '';
     setProxyStatusFromPool();
   } catch (error) {
     message.error(getErrorMessage(error));
@@ -283,13 +371,13 @@ async function loadConfig(): Promise<void> {
 async function saveProxyConfig(): Promise<void> {
   configSaving.value = true;
   try {
+    mergeProxyDraftIntoItems();
     syncProxyPoolFromItems();
-    const response = await api.updateSub2ApiLongLinkConfig({ proxyPool: proxyPool.value });
-    proxyPool.value = response.item.proxyPool;
+    const response = await api.updateSub2ApiLongLinkConfig(buildProxyConfigPayload());
+    applyProxyConfig(response.item);
     proxyDraft.value = '';
-    proxyItems.value = parseProxyItems(proxyPool.value);
     setProxyStatusFromPool('saved');
-    message.success('代理池已保存');
+    message.success(proxyMode.value === 'local' ? '代理配置已保存' : '代理池已保存');
   } catch (error) {
     message.error(getErrorMessage(error));
   } finally {
@@ -300,17 +388,23 @@ async function saveProxyConfig(): Promise<void> {
 async function checkProxy(pool = proxyPool.value): Promise<Sub2ApiLongLinkProxyCheckResponse | null> {
   proxyChecking.value = true;
   proxyStatusTone.value = 'default';
-  proxyStatus.value = pool.trim() ? '正在检查代理池是否生效...' : '正在检查服务器本机出口...';
+  proxyStatus.value = proxyMode.value === 'local'
+    ? `正在检查 ${localProxyRegion.value} 本地代理出口...`
+    : pool.trim()
+      ? '正在检查代理池是否生效...'
+      : '正在检查服务器本机出口...';
   try {
-    const data = await api.checkSub2ApiLongLinkProxy({ proxyPool: pool });
+    const data = await api.checkSub2ApiLongLinkProxy(
+      pool === proxyPool.value ? buildProxyCheckPayload() : { proxyPool: pool }
+    );
     const location = [data.countryCode, data.country, data.region, data.city].filter(Boolean).join(' / ');
     const isp = data.isp ? `，ISP：${data.isp}` : '';
-    const outlet = data.direct ? '未启用代理池，当前使用服务器本机出口' : `代理池已生效，当前出口 ${maskProxyForDisplay(data.proxyUsed)}`;
+    const outlet = formatActiveOutlet(data);
     proxyStatus.value = `${outlet}，IP：${data.ip || '未知'}${location ? '，位置：' + location : ''}${isp}`;
     proxyStatusTone.value = 'success';
     return data;
   } catch (error) {
-    proxyStatus.value = `代理池未生效：${getErrorMessage(error)}`;
+    proxyStatus.value = `${proxyMode.value === 'local' ? '本地代理未生效' : '代理池未生效'}：${getErrorMessage(error)}`;
     proxyStatusTone.value = 'error';
     message.error(getErrorMessage(error));
     return null;
@@ -339,7 +433,7 @@ async function generateLongLink(): Promise<void> {
       promoCode: form.promoCode,
       workspaceName: form.workspaceName,
       seatQuantity: form.seatQuantity,
-      proxyPool: proxyPool.value
+      ...buildProxyConfigPayload()
     });
     message.success('支付长链已生成');
   } catch (error) {
@@ -382,13 +476,15 @@ function openResultUrl(): void {
 }
 
 function openProxyModal(): void {
-  proxyDraft.value = proxyPool.value;
+  proxyDraft.value = '';
   proxyItems.value = parseProxyItems(proxyPool.value);
   showProxyModal.value = true;
 }
 
 function loadConfigIntoDraft(): void {
-  void loadConfig();
+  void loadConfig().then(() => {
+    proxyDraft.value = '';
+  });
 }
 
 function importProxyDraft(): void {
@@ -403,17 +499,54 @@ function importProxyDraft(): void {
     return true;
   });
   syncProxyDraftFromItems();
+  syncProxyPoolFromItems();
   message.success(`已导入 ${proxyItems.value.length} 条代理`);
 }
 
 function removeProxyItem(index: number): void {
   proxyItems.value.splice(index, 1);
   syncProxyDraftFromItems();
+  syncProxyPoolFromItems();
 }
 
 function removeAllProxyItems(): void {
   proxyItems.value = [];
   proxyDraft.value = '';
+  proxyPool.value = '';
+}
+
+async function testLocalProxy(region: Sub2ApiLongLinkLocalProxyRegion): Promise<void> {
+  const settings = localProxy[region];
+  if (!settings.host.trim() || !settings.port.trim()) {
+    localProxyStatus[region].ok = false;
+    localProxyStatus[region].statusText = '请补全 host 和 port';
+    return;
+  }
+
+  localProxyStatus[region].testing = true;
+  localProxyStatus[region].statusText = '测试中...';
+  try {
+    const data = await api.checkSub2ApiLongLinkProxy({
+      localProxySettings: { ...settings },
+      region
+    });
+    const location = formatProxyLocation(data);
+    localProxyStatus[region].ok = true;
+    localProxyStatus[region].statusText = `${data.ip || '未知 IP'}${location ? ' · ' + location : ''}`;
+    if (proxyMode.value === 'local' && localProxyRegion.value === region) {
+      proxyStatus.value = `本地代理 ${region} 已生效，IP：${data.ip || '未知'}${location ? '，位置：' + location : ''}`;
+      proxyStatusTone.value = 'success';
+    }
+  } catch (error) {
+    localProxyStatus[region].ok = false;
+    localProxyStatus[region].statusText = getErrorMessage(error);
+    if (proxyMode.value === 'local' && localProxyRegion.value === region) {
+      proxyStatus.value = `本地代理 ${region} 未生效：${getErrorMessage(error)}`;
+      proxyStatusTone.value = 'error';
+    }
+  } finally {
+    localProxyStatus[region].testing = false;
+  }
 }
 
 async function testProxyItem(index: number): Promise<void> {
@@ -440,7 +573,7 @@ async function testAllProxyItems(): Promise<void> {
   mergeProxyDraftIntoItems();
   if (proxyItems.value.length === 0) {
     syncProxyPoolFromItems();
-    await checkProxy(proxyPool.value);
+    await checkNetworkProxyPool(proxyPool.value);
     return;
   }
 
@@ -483,6 +616,26 @@ async function testAllProxyItems(): Promise<void> {
   }
 }
 
+async function checkNetworkProxyPool(pool: string): Promise<void> {
+  proxyChecking.value = true;
+  proxyStatusTone.value = 'default';
+  proxyStatus.value = pool.trim() ? '正在检查网络代理池是否生效...' : '正在检查服务器本机出口...';
+  try {
+    const data = await api.checkSub2ApiLongLinkProxy({ proxyMode: 'network', proxyPool: pool });
+    const location = formatProxyLocation(data);
+    const isp = data.isp ? `，ISP：${data.isp}` : '';
+    const outlet = data.direct ? '网络代理池为空，当前使用服务器本机出口' : `网络代理池已生效，当前出口 ${maskProxyForDisplay(data.proxyUsed)}`;
+    proxyStatus.value = `${outlet}，IP：${data.ip || '未知'}${location ? '，位置：' + location : ''}${isp}`;
+    proxyStatusTone.value = 'success';
+  } catch (error) {
+    proxyStatus.value = `网络代理池未生效：${getErrorMessage(error)}`;
+    proxyStatusTone.value = 'error';
+    message.error(getErrorMessage(error));
+  } finally {
+    proxyChecking.value = false;
+  }
+}
+
 function formatProxyLocation(data: Sub2ApiLongLinkProxyCheckResponse): string {
   return [data.countryCode, data.country, data.region, data.city].filter(Boolean).join(' / ');
 }
@@ -506,6 +659,7 @@ function mergeProxyDraftIntoItems(): void {
   if (additions.length > 0) {
     proxyItems.value = [...proxyItems.value, ...additions];
     syncProxyDraftFromItems();
+    syncProxyPoolFromItems();
   }
 }
 
@@ -528,7 +682,7 @@ function parseProxyItems(text: string): ProxyListItem[] {
 }
 
 function syncProxyDraftFromItems(): void {
-  proxyDraft.value = proxyItems.value.map((item) => item.raw).join('\n');
+  proxyDraft.value = '';
 }
 
 function syncProxyPoolFromItems(): void {
@@ -537,6 +691,13 @@ function syncProxyPoolFromItems(): void {
 }
 
 function setProxyStatusFromPool(mode: 'loaded' | 'saved' = 'loaded'): void {
+  if (proxyMode.value === 'local') {
+    const settings = localProxy[localProxyRegion.value];
+    proxyStatusTone.value = 'default';
+    proxyStatus.value = `${mode === 'saved' ? '代理配置已保存' : '代理配置已载入'}，当前使用本地代理 ${localProxyRegion.value}：${settings.protocol}://${settings.host || '未填写'}:${settings.port || '未填写'}；点击测试确认是否生效。`;
+    return;
+  }
+
   const count = proxyItems.value.length;
   proxyStatusTone.value = 'default';
   if (count === 0) {
@@ -546,11 +707,59 @@ function setProxyStatusFromPool(mode: 'loaded' | 'saved' = 'loaded'): void {
   proxyStatus.value = `${mode === 'saved' ? '代理池已保存' : '代理池已载入'}，共 ${count} 条；点击“测试全部”确认代理池是否生效。`;
 }
 
+function applyProxyConfig(config: Sub2ApiLongLinkConfig): void {
+  proxyPool.value = config.proxyPool;
+  proxyMode.value = config.proxyMode;
+  localProxyRegion.value = config.localProxyRegion;
+  for (const region of localProxyRegions) {
+    localProxy[region] = { ...config.localProxy[region] };
+  }
+  proxyItems.value = parseProxyItems(proxyPool.value);
+}
+
+function buildProxyConfigPayload(): Sub2ApiLongLinkConfig {
+  return {
+    proxyPool: proxyPool.value,
+    proxyMode: proxyMode.value,
+    localProxyRegion: localProxyRegion.value,
+    localProxy: {
+      JP: { ...localProxy.JP },
+      US: { ...localProxy.US }
+    }
+  };
+}
+
+function buildProxyCheckPayload(): {
+  proxyPool?: string;
+  proxyMode: Sub2ApiLongLinkProxyMode;
+  localProxyRegion: Sub2ApiLongLinkLocalProxyRegion;
+  localProxy: Sub2ApiLongLinkConfig['localProxy'];
+} {
+  return buildProxyConfigPayload();
+}
+
+function formatActiveOutlet(data: Sub2ApiLongLinkProxyCheckResponse): string {
+  if (proxyMode.value === 'local') {
+    return `本地代理 ${localProxyRegion.value} 已生效，当前出口 ${maskProxyForDisplay(data.proxyUsed)}`;
+  }
+  return data.direct ? '未启用代理池，当前使用服务器本机出口' : `代理池已生效，当前出口 ${maskProxyForDisplay(data.proxyUsed)}`;
+}
+
 function resolveProxyItemTone(item: ProxyListItem): string {
   if (item.ok === true) {
     return 'is-success';
   }
   if (item.ok === false) {
+    return 'is-error';
+  }
+  return '';
+}
+
+function resolveLocalProxyTone(region: Sub2ApiLongLinkLocalProxyRegion): string {
+  if (localProxyStatus[region].ok === true) {
+    return 'is-success';
+  }
+  if (localProxyStatus[region].ok === false) {
     return 'is-error';
   }
   return '';
@@ -867,6 +1076,104 @@ pre {
   gap: 24px;
 }
 
+.proxy-config-section {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid rgba(226, 232, 240, 0.96);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.proxy-config-section.is-active {
+  border-color: rgba(16, 185, 129, 0.48);
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.08);
+}
+
+.proxy-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.proxy-section-title h3 {
+  margin: 0;
+  color: var(--title);
+  font-size: 0.96rem;
+  font-weight: 700;
+}
+
+.proxy-section-title p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.proxy-mode-group,
+.local-region-select {
+  flex: 0 0 auto;
+}
+
+.local-region-select {
+  width: 150px;
+}
+
+.network-proxy-section :deep(.n-form-item) {
+  margin-bottom: 0;
+}
+
+.local-proxy-list {
+  display: grid;
+  gap: 10px;
+}
+
+.local-proxy-row {
+  display: grid;
+  grid-template-columns: 92px minmax(120px, 1fr) 96px 120px auto minmax(130px, 1.1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid rgba(226, 232, 240, 0.96);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.local-proxy-row.is-selected {
+  border-color: rgba(16, 185, 129, 0.42);
+  background: #f0fdf4;
+}
+
+.local-proxy-region {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.local-proxy-region strong {
+  color: var(--title);
+  font-size: 0.92rem;
+}
+
+.local-proxy-region span,
+.local-proxy-result {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.local-proxy-result {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.local-proxy-result.is-success {
+  color: #15803d;
+}
+
+.local-proxy-result.is-error {
+  color: #b91c1c;
+}
+
 .proxy-config-actions,
 .proxy-item-actions {
   display: flex;
@@ -989,13 +1296,15 @@ pre {
   .long-link-grid,
   .result-link-row,
   .proxy-status-panel,
-  .proxy-item {
+  .proxy-item,
+  .local-proxy-row {
     grid-template-columns: 1fr;
   }
 
   .proxy-status-panel,
   .long-link-section-head,
-  .long-link-submit-section {
+  .long-link-submit-section,
+  .proxy-section-title {
     align-items: stretch;
     flex-direction: column;
   }

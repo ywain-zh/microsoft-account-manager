@@ -1,7 +1,19 @@
 export type Sub2ApiLongLinkPlan = 'plus' | 'team';
+export type Sub2ApiLongLinkProxyMode = 'network' | 'local';
+export type Sub2ApiLongLinkLocalProxyRegion = 'JP' | 'US';
+export type Sub2ApiLongLinkLocalProxyProtocol = 'http' | 'https' | 'socks5' | 'socks5h';
+
+export interface Sub2ApiLongLinkLocalProxySettings {
+  host: string;
+  port: string;
+  protocol: Sub2ApiLongLinkLocalProxyProtocol;
+}
 
 export interface Sub2ApiLongLinkConfig {
   proxyPool: string;
+  proxyMode: Sub2ApiLongLinkProxyMode;
+  localProxyRegion: Sub2ApiLongLinkLocalProxyRegion;
+  localProxy: Record<Sub2ApiLongLinkLocalProxyRegion, Sub2ApiLongLinkLocalProxySettings>;
 }
 
 export interface Sub2ApiLongLinkCheckoutPayload {
@@ -90,16 +102,56 @@ const IP_CHECK_URLS = [
 const DEFAULT_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
 
-const SUPPORTED_PROXY_PROTOCOLS = ['http', 'https', 'socks5h', 'socks5'];
+const SUPPORTED_PROXY_PROTOCOLS = ['http', 'https', 'socks5h', 'socks5'] as const;
+const DEFAULT_LOCAL_PROXY: Record<Sub2ApiLongLinkLocalProxyRegion, Sub2ApiLongLinkLocalProxySettings> = {
+  JP: { host: '127.0.0.1', port: '7892', protocol: 'http' },
+  US: { host: '127.0.0.1', port: '7893', protocol: 'http' }
+};
 
 export const DEFAULT_SUB2API_LONG_LINK_CONFIG: Sub2ApiLongLinkConfig = {
-  proxyPool: ''
+  proxyPool: '',
+  proxyMode: 'network',
+  localProxyRegion: 'JP',
+  localProxy: {
+    JP: { ...DEFAULT_LOCAL_PROXY.JP },
+    US: { ...DEFAULT_LOCAL_PROXY.US }
+  }
 };
 
 export function normalizeSub2ApiLongLinkConfig(input: Partial<Sub2ApiLongLinkConfig>): Sub2ApiLongLinkConfig {
   return {
-    proxyPool: normalizeProxyPoolText(input.proxyPool)
+    proxyPool: normalizeProxyPoolText(input.proxyPool),
+    proxyMode: input.proxyMode === 'local' ? 'local' : 'network',
+    localProxyRegion: input.localProxyRegion === 'US' ? 'US' : 'JP',
+    localProxy: normalizeLocalProxyConfig(input.localProxy)
   };
+}
+
+export function resolveSub2ApiLongLinkProxyPoolText(input: Partial<Sub2ApiLongLinkConfig>): string {
+  const config = normalizeSub2ApiLongLinkConfig(input);
+  if (config.proxyMode === 'network') {
+    return config.proxyPool;
+  }
+
+  return buildLocalProxyPoolText(config.localProxy[config.localProxyRegion], config.localProxyRegion);
+}
+
+export function buildLocalProxyPoolText(
+  settings: Partial<Sub2ApiLongLinkLocalProxySettings> | undefined,
+  region: Sub2ApiLongLinkLocalProxyRegion = 'JP'
+): string {
+  const host = normalizeText(settings?.host);
+  const port = normalizeText(settings?.port);
+  const protocol = normalizeLocalProxyProtocol(settings?.protocol) ?? 'http';
+
+  if (!host || !port) {
+    throw new Error(`请先补全本地代理 ${region} 的 host 和 port`);
+  }
+  if (!isPort(port)) {
+    throw new Error(`本地代理 ${region} 的端口不合法`);
+  }
+
+  return `${protocol}://${host}:${port}`;
 }
 
 export function normalizeProxyPoolText(value: unknown): string {
@@ -108,6 +160,35 @@ export function normalizeProxyPoolText(value: unknown): string {
     .map((line) => line.trim())
     .filter(Boolean)
     .join('\n');
+}
+
+function normalizeLocalProxyConfig(
+  value: Partial<Record<Sub2ApiLongLinkLocalProxyRegion, Partial<Sub2ApiLongLinkLocalProxySettings>>> | undefined
+): Record<Sub2ApiLongLinkLocalProxyRegion, Sub2ApiLongLinkLocalProxySettings> {
+  return {
+    JP: normalizeLocalProxySettings(value?.JP, DEFAULT_LOCAL_PROXY.JP),
+    US: normalizeLocalProxySettings(value?.US, DEFAULT_LOCAL_PROXY.US)
+  };
+}
+
+function normalizeLocalProxySettings(
+  value: Partial<Sub2ApiLongLinkLocalProxySettings> | undefined,
+  fallback: Sub2ApiLongLinkLocalProxySettings
+): Sub2ApiLongLinkLocalProxySettings {
+  if (!value || typeof value !== 'object') {
+    return { ...fallback };
+  }
+
+  return {
+    host: normalizeText(value.host),
+    port: normalizeText(value.port),
+    protocol: normalizeLocalProxyProtocol(value.protocol) ?? fallback.protocol
+  };
+}
+
+function normalizeLocalProxyProtocol(value: unknown): Sub2ApiLongLinkLocalProxyProtocol | null {
+  const protocol = normalizeText(value).toLowerCase();
+  return isSupportedProxyProtocol(protocol) ? protocol : null;
 }
 
 export function extractChatGptAccessToken(value: unknown): string {
@@ -432,7 +513,7 @@ function parseExplicitProxy(value: string): ProxyEndpoint | null {
   }
 
   const protocol = match[1].toLowerCase();
-  if (!SUPPORTED_PROXY_PROTOCOLS.includes(protocol)) {
+  if (!isSupportedProxyProtocol(protocol)) {
     throw new Error(`代理协议不支持: ${protocol}`);
   }
 
@@ -569,6 +650,10 @@ function normalizeText(value: unknown): string {
 function isPort(value: string): boolean {
   const port = Number(value);
   return Number.isInteger(port) && port > 0 && port <= 65535;
+}
+
+function isSupportedProxyProtocol(value: string): value is Sub2ApiLongLinkLocalProxyProtocol {
+  return (SUPPORTED_PROXY_PROTOCOLS as readonly string[]).includes(value);
 }
 
 function getErrorMessage(error: unknown, secrets: string[] = []): string {
