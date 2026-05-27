@@ -695,6 +695,11 @@ const tokenRefreshProgressPercentage = computed(() => {
   return Math.min(100, Math.round((tokenRefreshProgressCurrent.value / tokenRefreshProgressTotal.value) * 100));
 });
 
+function formatAliasCountMark(count: number): string {
+  const marks = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳'];
+  return marks[count - 1] ?? `${count}`;
+}
+
 watch(searchKeyword, () => {
   tablePage.value = 1;
   scheduleSearch();
@@ -763,16 +768,13 @@ function renderEmailCell(row: AccountItem): ReturnType<typeof h> {
           void openMailModal(row);
         }
       },
-      row.account
+      [
+        row.account,
+        !isAlias && row.aliasCount > 0
+          ? h('span', { class: 'account-alias-count-mark', title: row.aliases.join('\n') }, formatAliasCountMark(row.aliasCount))
+          : null
+      ]
     ),
-    isAlias
-      ? h('span', { class: 'account-alias-source', title: `来源主邮箱：${row.primaryAccount}` }, [
-          '来源 ',
-          h('strong', row.primaryAccount)
-        ])
-      : row.aliasCount > 0
-        ? h('span', { class: 'account-alias-count', title: row.aliases.join('\n') }, `别名 ${row.aliasCount}`)
-        : null,
     h(
       'button',
       {
@@ -804,7 +806,10 @@ function renderRemarkCell(row: AccountItem): ReturnType<typeof h> {
   const remark = row.remark?.trim() || '-';
   if (row.rowType === 'alias') {
     return h('div', { class: 'microsoft-remark-cell' }, [
-      h('div', { class: 'microsoft-remark-text', title: remark }, remark)
+      h('div', { class: 'microsoft-remark-text account-alias-source', title: `来源主邮箱：${row.primaryAccount}` }, [
+        '来源 ',
+        h('strong', row.primaryAccount)
+      ])
     ]);
   }
 
@@ -929,10 +934,6 @@ function renderPasswordCell(row: AccountItem): ReturnType<typeof h> {
 }
 
 function renderGptValidityCell(row: AccountItem): ReturnType<typeof h> {
-  if (row.rowType === 'alias') {
-    return h('span', { class: 'alias-inherited-text', title: '别名邮箱不单独检测 GPT 状态' }, '-');
-  }
-
   const checking = isCheckingGptValidity(row.account);
   const result = getGptValidityResult(row.account) ?? row.gptValidity;
   const isValid = result?.valid === true;
@@ -1465,9 +1466,24 @@ onUnmounted(() => {
   color: #7c3aed;
 }
 
-:deep(.microsoft-account-table .account-alias-source),
-:deep(.microsoft-account-table .account-alias-count) {
-  grid-column: 1 / -1;
+:deep(.microsoft-account-table .account-alias-count-mark) {
+  display: inline-grid;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 4px;
+  padding: 0 4px;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  place-items: center;
+  vertical-align: middle;
+}
+
+:deep(.microsoft-account-table .account-alias-source) {
   min-width: 0;
   overflow: hidden;
   color: #64748b;
@@ -1480,15 +1496,6 @@ onUnmounted(() => {
 :deep(.microsoft-account-table .account-alias-source strong) {
   color: #475569;
   font-weight: 500;
-}
-
-:deep(.microsoft-account-table .account-alias-count) {
-  width: fit-content;
-  padding: 1px 6px;
-  border: 1px solid #bfdbfe;
-  border-radius: 999px;
-  background: #eff6ff;
-  color: #2563eb;
 }
 
 :deep(.microsoft-account-table .status-pill-info) {

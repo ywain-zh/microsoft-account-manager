@@ -322,9 +322,6 @@ function getGptValidityKey(email: string): string {
 function mergeGptValidityResults(items: AccountItem[]): void {
   const nextResults = { ...gptValidityResults.value };
   for (const item of items) {
-    if (item.rowType === 'alias') {
-      continue;
-    }
     if (item.gptValidity) {
       nextResults[getGptValidityKey(item.account)] = item.gptValidity;
     }

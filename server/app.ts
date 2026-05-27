@@ -6987,9 +6987,13 @@ async function queryAccountListItems(db: D1Database, keyword: string, gptPlan: G
     tokenCountdownDays: number | null;
   }>
 > {
-  const accounts = await queryAccounts(db, keyword, gptPlan);
+  const accounts = await queryAccounts(db, keyword, '');
   const accountIds = accounts.map((item) => item.id);
   const aliasesByAccount = await queryAccountAliasMap(db, accountIds);
+  const aliasValidityByEmail = await queryMicrosoftGptValidity(
+    db,
+    Array.from(aliasesByAccount.values()).flat().map((alias) => alias.aliasAccount)
+  );
   const normalizedKeyword = normalizeEmailAddress(keyword);
   const rows: Array<
     AccountListItem & {
@@ -7027,7 +7031,7 @@ async function queryAccountListItems(db: D1Database, keyword: string, gptPlan: G
         primaryAccount: account.account,
         aliasId: alias.id,
         matchedAlias: alias.aliasAccount,
-        gptValidity: buildGptValidityResponseFromRow(alias.aliasAccount, account)
+        gptValidity: aliasValidityByEmail.get(normalizeGptValidityEmail(alias.aliasAccount)) ?? null
       };
       if (matchesGptPlanFilter(aliasRow.gptValidity, gptPlan)) {
         rows.push(aliasRow);
@@ -7082,6 +7086,21 @@ async function queryCloudMailGptValidity(
   db: D1Database,
   emails: string[]
 ): Promise<Map<string, Sub2ApiGptValidityResponse | null>> {
+  return queryMailGptValidity(db, 'cloud-mail', emails);
+}
+
+async function queryMicrosoftGptValidity(
+  db: D1Database,
+  emails: string[]
+): Promise<Map<string, Sub2ApiGptValidityResponse | null>> {
+  return queryMailGptValidity(db, 'microsoft', emails);
+}
+
+async function queryMailGptValidity(
+  db: D1Database,
+  service: MailGptValidityService,
+  emails: string[]
+): Promise<Map<string, Sub2ApiGptValidityResponse | null>> {
   const normalizedEmails = Array.from(new Set(emails.map(normalizeGptValidityEmail).filter(Boolean)));
   if (normalizedEmails.length === 0) {
     return new Map();
@@ -7099,10 +7118,10 @@ async function queryCloudMailGptValidity(
          plan_type AS gptValidityPlanType,
          checked_at AS gptValidityCheckedAt
        FROM mail_gpt_validity_status
-       WHERE service = 'cloud-mail'
+       WHERE service = ?
          AND normalized_email IN (${placeholders})`
     )
-    .bind(...normalizedEmails)
+    .bind(service, ...normalizedEmails)
     .all<{
       normalizedEmail: string;
       gptValidityStatus: MailGptValidityStatus | null;
