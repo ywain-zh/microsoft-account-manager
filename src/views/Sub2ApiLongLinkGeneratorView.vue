@@ -26,14 +26,30 @@
         <section class="long-link-token-section">
           <div class="long-link-section-head">
             <h2>Access Token 或 Session JSON</h2>
-            <n-button attr-type="button" class="session-copy-button" @click="copySessionUrl">复制 Session 地址</n-button>
+          </div>
+          <div class="long-link-token-fetch">
+            <n-input
+              v-model:value="tokenEmail"
+              class="long-link-token-email"
+              placeholder="输入邮箱获取 access_token"
+              @keyup.enter="fetchAccessToken"
+            />
+            <n-button
+              attr-type="button"
+              type="primary"
+              class="access-token-fetch-button"
+              :loading="accessTokenFetching"
+              @click="fetchAccessToken"
+            >
+              获取 access_token
+            </n-button>
           </div>
           <n-form-item class="long-link-token-item">
             <n-input
               v-model:value="form.token"
               type="textarea"
               :autosize="{ minRows: 5, maxRows: 9 }"
-              placeholder="可粘贴 accessToken，或 https://chatgpt.com/api/auth/session 返回的整段 JSON"
+              placeholder="可粘贴 accessToken，或 Session JSON"
               @input="updateTokenHint"
             />
           </n-form-item>
@@ -263,12 +279,14 @@ const proxyDraft = ref('');
 const proxyItems = ref<ProxyListItem[]>([]);
 const showProxyModal = ref(false);
 const tokenHint = ref('暂未识别 token。');
+const tokenEmail = ref('');
 const proxyStatus = ref('未检查代理状态；代理池为空时将使用服务器本机出口。');
 const proxyStatusTone = ref<'default' | 'success' | 'error'>('default');
 const configLoading = ref(false);
 const configSaving = ref(false);
 const proxyChecking = ref(false);
 const generating = ref(false);
+const accessTokenFetching = ref(false);
 const result = ref<Sub2ApiLongLinkCheckoutResponse | null>(null);
 
 const resultUrl = computed(() => result.value?.url || '');
@@ -361,6 +379,26 @@ async function generateLongLink(): Promise<void> {
   }
 }
 
+async function fetchAccessToken(): Promise<void> {
+  const email = tokenEmail.value.trim();
+  if (!email) {
+    message.warning('请先输入邮箱');
+    return;
+  }
+
+  accessTokenFetching.value = true;
+  try {
+    const response = await api.getSub2ApiGptAccessToken(email);
+    form.token = response.accessToken;
+    updateTokenHint();
+    message.success('access_token 已填入');
+  } catch (error) {
+    message.error(getErrorMessage(error));
+  } finally {
+    accessTokenFetching.value = false;
+  }
+}
+
 function updateCurrencyForCountry(country: string): void {
   form.currency = currencyByCountry.get(country) ?? 'USD';
 }
@@ -374,10 +412,6 @@ function updateTokenHint(): void {
   const payload = decodeJwtPayload(token);
   const email = payload.email || (payload['https://api.openai.com/profile'] as { email?: string } | undefined)?.email || '';
   tokenHint.value = email ? `已识别 token，可能关联邮箱：${email}` : '已识别 token。';
-}
-
-async function copySessionUrl(): Promise<void> {
-  await copyText('https://chatgpt.com/api/auth/session', 'Session 地址已复制');
 }
 
 async function copyResultUrl(): Promise<void> {
@@ -819,8 +853,15 @@ function getErrorMessage(error: unknown): string {
   margin-bottom: 0;
 }
 
-.session-copy-button {
-  flex-shrink: 0;
+.long-link-token-fetch {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.access-token-fetch-button {
+  min-width: 150px;
 }
 
 .long-link-grid {
@@ -1093,6 +1134,7 @@ pre {
 
 @media (max-width: 760px) {
   .long-link-grid,
+  .long-link-token-fetch,
   .result-link-row,
   .proxy-status-panel,
   .proxy-item {

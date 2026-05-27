@@ -1735,6 +1735,28 @@ app.get('/api/sub2api/accounts/gpt-json-export', async (c) => {
   });
 });
 
+app.get('/api/sub2api/accounts/access-token', async (c) => {
+  const email = normalizeExportEmail(c.req.query('email'));
+  const config = await getSub2ApiConfig(c.env.DB);
+  ensureSub2ApiConfigured(config);
+
+  const rawAccounts = await searchRawSub2ApiAccounts(config, email);
+  const matchedAccounts = rawAccounts.filter((item) => doesSub2ApiRecordMatchEmail(item, email));
+
+  if (matchedAccounts.length === 0) {
+    throw new HTTPException(400, { message: '未找到这个邮箱的 GPT 账号，请检查邮箱是否填写正确' });
+  }
+
+  const items = await collectSub2ApiGptExportItems(email, matchedAccounts);
+  const accessToken = items.find((item) => item.access_token.trim())?.access_token.trim() ?? '';
+
+  if (!accessToken) {
+    throw new HTTPException(400, { message: '这个邮箱没有可用的 access_token，请先重新导入或刷新 GPT 凭据' });
+  }
+
+  return c.json({ email, accessToken });
+});
+
 app.post('/api/sub2api/accounts/gpt-valid-check', async (c) => {
   const config = await getSub2ApiConfig(c.env.DB);
   ensureSub2ApiConfigured(config);

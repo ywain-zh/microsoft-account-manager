@@ -525,6 +525,12 @@ export const api = {
     return requestBlob(`/api/sub2api/accounts/gpt-json-export${buildQuery({ email })}`);
   },
 
+  getSub2ApiGptAccessToken(email: string): Promise<{ email: string; accessToken: string }> {
+    return request<{ email: string; accessToken: string }>(
+      `/api/sub2api/accounts/access-token${buildQuery({ email })}`
+    );
+  },
+
   checkSub2ApiGptValidity(payload: {
     email: string;
     service: MailGptValidityService;
