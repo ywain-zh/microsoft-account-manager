@@ -2276,6 +2276,11 @@ textarea:focus-visible {
   min-width: 220px;
 }
 
+.gpt-plan-filter-select {
+  width: 128px;
+  min-width: 116px;
+}
+
 .toolbar-search .n-input,
 .n-input,
 .n-base-selection {

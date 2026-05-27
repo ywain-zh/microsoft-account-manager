@@ -18,6 +18,7 @@ import type {
   ImportResult,
   MailGptValidityService,
   MailFetchMode,
+  GptPlanFilter,
   OpenAiModelsResponse,
   Sub2ApiConfig,
   Sub2ApiDeleteAccountsResponse,
@@ -206,8 +207,8 @@ export const api = {
     });
   },
 
-  listAccounts(keyword?: string): Promise<{ items: AccountItem[] }> {
-    return request<{ items: AccountItem[] }>(`/api/accounts${buildQuery({ keyword })}`);
+  listAccounts(keyword?: string, gptPlan?: GptPlanFilter): Promise<{ items: AccountItem[] }> {
+    return request<{ items: AccountItem[] }>(`/api/accounts${buildQuery({ keyword, gptPlan })}`);
   },
 
   createAccount(payload: AccountPayload): Promise<{ item: AccountItem }> {
@@ -539,12 +540,14 @@ export const api = {
     page: number;
     pageSize: number;
     keyword?: string;
+    gptPlan?: GptPlanFilter;
   }): Promise<CloudMailAccountListResponse> {
     return request<CloudMailAccountListResponse>(
       `/api/cloud-mail/accounts${buildQuery({
         page: payload.page,
         pageSize: payload.pageSize,
-        keyword: payload.keyword
+        keyword: payload.keyword,
+        gptPlan: payload.gptPlan
       })}`
     );
   },

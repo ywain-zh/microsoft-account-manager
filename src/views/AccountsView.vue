@@ -13,6 +13,16 @@
             />
           </div>
 
+          <div class="list-toolbar-block">
+            <n-select
+              v-model:value="gptPlanFilter"
+              class="gpt-plan-filter-select"
+              size="small"
+              :options="gptPlanFilterOptions"
+              @update:value="handleGptPlanFilterChange"
+            />
+          </div>
+
           <div class="list-toolbar-block toolbar-button-group">
             <n-button
               size="small"
@@ -419,6 +429,7 @@ import {
   NModal,
   NPagination,
   NProgress,
+  NSelect,
   NSpace,
   NSpin,
   NTag,
@@ -427,6 +438,7 @@ import {
 import MailInboxViewer from '../components/MailInboxViewer.vue';
 import SecretInput from '../components/SecretInput.vue';
 import { useAdminConsole } from '../state/admin-console';
+import { GPT_PLAN_FILTER_OPTIONS, resolveGptValidityLabel } from '../utils/gpt-validity';
 import type { AccountItem } from '../types';
 
 const CopyGlyph = () =>
@@ -525,6 +537,7 @@ const router = useRouter();
 const {
   accounts,
   searchKeyword,
+  gptPlanFilter,
   checkedRowKeys,
   tablePageSize,
   tableLoading,
@@ -605,6 +618,7 @@ const {
 
 const txtFileInputRef = ref<HTMLInputElement | null>(null);
 const tablePage = ref(1);
+const gptPlanFilterOptions = GPT_PLAN_FILTER_OPTIONS;
 const passwordDrafts = reactive<Record<number, string>>({});
 const passwordSavingIds = ref<number[]>([]);
 const passwordPendingValues = reactive<Record<number, string>>({});
@@ -698,6 +712,11 @@ watch(tablePageSize, () => {
 
 function handleSearch(): void {
   clearSearchDebounce();
+  tablePage.value = 1;
+  void loadAccounts();
+}
+
+function handleGptPlanFilterChange(): void {
   tablePage.value = 1;
   void loadAccounts();
 }
@@ -918,6 +937,7 @@ function renderGptValidityCell(row: AccountItem): ReturnType<typeof h> {
   const result = getGptValidityResult(row.account) ?? row.gptValidity;
   const isValid = result?.valid === true;
   const isFailed = result && !isValid;
+  const validLabel = resolveGptValidityLabel(result);
   const title = checking
     ? `正在检测 ${row.account} 的 GPT 是否有效`
     : result?.message
@@ -940,7 +960,7 @@ function renderGptValidityCell(row: AccountItem): ReturnType<typeof h> {
       void checkGptValidity(row.account);
     }
   }, [
-    isValid ? h('span', { class: 'gpt-validity-label' }, 'GPT有效') : null,
+    validLabel ? h('span', { class: 'gpt-validity-label' }, validLabel) : null,
     h('span', { class: 'gpt-validity-refresh' }, [h(RefreshGlyph)])
   ]);
 }

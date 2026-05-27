@@ -19,6 +19,17 @@
             </n-input>
           </div>
 
+          <div class="list-toolbar-block">
+            <n-select
+              v-model:value="gptPlanFilter"
+              class="gpt-plan-filter-select"
+              size="small"
+              :options="gptPlanFilterOptions"
+              :disabled="!hasConfiguredCloudMail"
+              @update:value="handleGptPlanFilterChange"
+            />
+          </div>
+
           <div class="list-toolbar-block toolbar-button-group toolbar-button-group-iconic">
             <n-tag v-if="checkedRowKeys.length > 0" size="small" class="toolbar-selection-tag" type="warning">
               已选 {{ checkedRowKeys.length }} 条
@@ -379,6 +390,7 @@ import {
 import MailInboxViewer from '../components/MailInboxViewer.vue';
 import SecretInput from '../components/SecretInput.vue';
 import { useCloudMailConsole } from '../state/cloud-mail-console';
+import { GPT_PLAN_FILTER_OPTIONS, resolveGptValidityLabel } from '../utils/gpt-validity';
 import type { CloudMailAccountItem } from '../types';
 
 const SearchGlyph = () =>
@@ -607,6 +619,7 @@ const {
   shareVisible,
   serviceErrorMessage,
   searchKeyword,
+  gptPlanFilter,
   tablePage,
   tablePageSize,
   total,
@@ -739,6 +752,7 @@ const shareUrlInputProps = {
 
 const rowKey = (row: CloudMailAccountItem): number => row.userId;
 const SEARCH_DEBOUNCE_MS = 300;
+const gptPlanFilterOptions = GPT_PLAN_FILTER_OPTIONS;
 let searchDebounceTimer: number | null = null;
 
 watch(searchKeyword, () => {
@@ -761,6 +775,11 @@ function scheduleSearch(): void {
 }
 
 function handleSearchInputEnter(): void {
+  clearSearchDebounce();
+  void handleSearch();
+}
+
+function handleGptPlanFilterChange(): void {
   clearSearchDebounce();
   void handleSearch();
 }
@@ -838,6 +857,7 @@ function renderGptValidityCell(row: CloudMailAccountItem): ReturnType<typeof h> 
   const result = getGptValidityResult(row.email) ?? row.gptValidity;
   const isValid = result?.valid === true;
   const isFailed = result && !isValid;
+  const validLabel = resolveGptValidityLabel(result);
   const title = checking
     ? `正在检测 ${row.email} 的 GPT 是否有效`
     : result?.message
@@ -860,7 +880,7 @@ function renderGptValidityCell(row: CloudMailAccountItem): ReturnType<typeof h> 
       void checkGptValidity(row.email);
     }
   }, [
-    isValid ? h('span', { class: 'gpt-validity-label' }, 'GPT有效') : null,
+    validLabel ? h('span', { class: 'gpt-validity-label' }, validLabel) : null,
     h('span', { class: 'gpt-validity-refresh' }, [h(RefreshGlyph)])
   ]);
 }

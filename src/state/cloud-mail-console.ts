@@ -11,6 +11,7 @@ import type {
   CloudMailCreatePayload,
   CloudMailMessagesResponse,
   CloudMailShareResponse,
+  GptPlanFilter,
   Sub2ApiGptValidityResponse
 } from '../types';
 
@@ -75,6 +76,7 @@ interface CloudMailAccountsQuery {
   page: number;
   pageSize: number;
   keyword: string;
+  gptPlan: GptPlanFilter;
 }
 
 function createDefaultCloudMailConfig(): CloudMailConfig {
@@ -208,7 +210,7 @@ function removeSessionCacheByPrefix(prefix: string): void {
 
 function getAccountsCacheKey(query: CloudMailAccountsQuery): string {
   return `${CLOUD_MAIL_ACCOUNTS_CACHE_PREFIX}${encodeURIComponent(
-    `${query.page}|${query.pageSize}|${query.keyword.trim().toLowerCase()}`
+    `${query.page}|${query.pageSize}|${query.keyword.trim().toLowerCase()}|${query.gptPlan}`
   )}`;
 }
 
@@ -270,6 +272,7 @@ const shareVisible = ref(false);
 const serviceErrorMessage = ref('');
 
 const searchKeyword = ref(readPersistedSearchKeyword());
+const gptPlanFilter = ref<GptPlanFilter>('');
 const tablePage = ref(1);
 const tablePageSize = ref(20);
 const total = ref(0);
@@ -456,7 +459,8 @@ function getCurrentAccountsQuery(): CloudMailAccountsQuery {
   return {
     page: tablePage.value,
     pageSize: tablePageSize.value,
-    keyword: searchKeyword.value.trim()
+    keyword: searchKeyword.value.trim(),
+    gptPlan: gptPlanFilter.value
   };
 }
 
@@ -1154,6 +1158,7 @@ export function useCloudMailConsole() {
     shareVisible,
     serviceErrorMessage,
     searchKeyword,
+    gptPlanFilter,
     tablePage,
     tablePageSize,
     total,

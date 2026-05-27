@@ -309,6 +309,7 @@ export interface SystemBackupJobResponse {
 }
 
 export type Sub2ApiPlanType = 'free' | 'plus' | 'team' | '';
+export type GptPlanFilter = Sub2ApiPlanType | 'empty';
 export type Sub2ApiDetectionOutcome = 'success' | 'quota' | 'unauthorized' | 'timeout' | 'abnormal';
 export type Sub2ApiLogLevel = 'info' | 'success' | 'warning' | 'error';
 

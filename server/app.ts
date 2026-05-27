@@ -313,6 +313,7 @@ interface TranslationTestResult {
 }
 
 type Sub2ApiPlanType = 'free' | 'plus' | 'team' | '';
+type GptPlanFilter = Sub2ApiPlanType | 'empty';
 type Sub2ApiDetectionOutcome = 'success' | 'quota' | 'unauthorized' | 'timeout' | 'abnormal';
 type Sub2ApiLogLevel = 'info' | 'success' | 'warning' | 'error';
 
@@ -913,7 +914,8 @@ app.post('/api/auth/logout', (c) => {
 });
 app.get('/api/accounts', async (c) => {
   const keyword = (c.req.query('keyword') ?? '').trim();
-  const items = await queryAccountListItems(c.env.DB, keyword);
+  const gptPlan = normalizeGptPlanFilter(c.req.query('gptPlan'));
+  const items = await queryAccountListItems(c.env.DB, keyword, gptPlan);
   return c.json({ items });
 });
 
@@ -921,7 +923,8 @@ app.get('/api/open/accounts', async (c) => {
   await validateMailApiRequest(c);
 
   const keyword = (c.req.query('keyword') ?? '').trim();
-  const items = await queryAccountListItems(c.env.DB, keyword);
+  const gptPlan = normalizeGptPlanFilter(c.req.query('gptPlan'));
+  const items = await queryAccountListItems(c.env.DB, keyword, gptPlan);
   return c.json({ items });
 });
 
@@ -1461,7 +1464,7 @@ app.get('/api/external/microsoft/accounts', async (c) => {
   await validateMailApiRequest(c);
 
   const email = asText(c.req.query('email')).trim();
-  const items = await queryAccountListItems(c.env.DB, email);
+  const items = await queryAccountListItems(c.env.DB, email, '');
   return c.json({
     items: items.map(serializeExternalMicrosoftAccount),
     total: items.length
@@ -1521,7 +1524,8 @@ app.get('/api/external/cloud-mail/accounts', async (c) => {
   const result = await listCloudMailAccounts(c.env.DB, config, {
     page: 1,
     pageSize: 20,
-    keyword: email
+    keyword: email,
+    gptPlan: ''
   });
 
   return c.json(result);
@@ -2046,11 +2050,13 @@ app.get('/api/cloud-mail/accounts', async (c) => {
   const page = parsePageNumber(c.req.query('page'), 1);
   const pageSize = parsePageNumber(c.req.query('pageSize'), 20, 1, 100);
   const keyword = asText(c.req.query('keyword')).trim();
+  const gptPlan = normalizeGptPlanFilter(c.req.query('gptPlan'));
 
   const result = await listCloudMailAccounts(c.env.DB, config, {
     page,
     pageSize,
-    keyword
+    keyword,
+    gptPlan
   });
 
   return c.json(result);
@@ -5143,6 +5149,53 @@ function normalizeSub2ApiPlanType(value: unknown): Sub2ApiPlanType {
   return '';
 }
 
+function normalizeGptPlanFilter(value: unknown): GptPlanFilter {
+  const normalized = asText(value).trim().toLowerCase();
+  if (!normalized) {
+    return '';
+  }
+
+  if (normalized === 'plus' || normalized === 'free' || normalized === 'team' || normalized === 'empty') {
+    return normalized;
+  }
+
+  throw new HTTPException(400, { message: 'GPT 过滤条件无效' });
+}
+
+function matchesGptPlanFilter(
+  result: Sub2ApiGptValidityResponse | null | undefined,
+  filter: GptPlanFilter
+): boolean {
+  if (!filter) {
+    return true;
+  }
+
+  if (filter === 'empty') {
+    return result?.valid !== true;
+  }
+
+  return result?.valid === true && result.planType === filter;
+}
+
+function appendGptPlanFilterSql(
+  whereParts: string[],
+  bindings: (string | number)[],
+  filter: GptPlanFilter,
+  alias = 'gpt'
+): void {
+  if (!filter) {
+    return;
+  }
+
+  if (filter === 'empty') {
+    whereParts.push(`(${alias}.status IS NULL OR ${alias}.status <> 'valid')`);
+    return;
+  }
+
+  whereParts.push(`${alias}.status = 'valid' AND ${alias}.plan_type = ?`);
+  bindings.push(filter);
+}
+
 async function testSub2ApiAccount(
   config: Sub2ApiConfig,
   account: Sub2ApiAccountItem,
@@ -5816,7 +5869,7 @@ async function findCloudMailAccountByExactEmail(
 async function listCloudMailAccountsFromRemote(
   db: D1Database,
   config: CloudMailConfig,
-  options: { page: number; pageSize: number; keyword: string }
+  options: { page: number; pageSize: number; keyword: string; gptPlan: GptPlanFilter }
 ): Promise<CloudMailListResponse> {
   const page = Math.max(1, options.page);
   const pageSize = Math.max(1, Math.min(options.pageSize, 100));
@@ -5876,8 +5929,12 @@ async function listCloudMailAccountsFromRemote(
 async function listCloudMailAccounts(
   db: D1Database,
   config: CloudMailConfig,
-  options: { page: number; pageSize: number; keyword: string }
+  options: { page: number; pageSize: number; keyword: string; gptPlan: GptPlanFilter }
 ): Promise<CloudMailListResponse> {
+  if (options.gptPlan) {
+    return await listCloudMailAccountCache(db, config, options);
+  }
+
   try {
     return await listCloudMailAccountsFromRemote(db, config, options);
   } catch (error) {
@@ -5933,7 +5990,7 @@ async function getCloudMailAccountCacheSyncedAt(db: D1Database, configKey: strin
 async function queryCloudMailAccountCache(
   db: D1Database,
   configKey: string,
-  options: { page: number; pageSize: number; keyword: string }
+  options: { page: number; pageSize: number; keyword: string; gptPlan: GptPlanFilter }
 ): Promise<CloudMailListResponse> {
   const page = Math.max(1, options.page);
   const pageSize = Math.max(1, Math.min(options.pageSize, 100));
@@ -5946,10 +6003,18 @@ async function queryCloudMailAccountCache(
     whereParts.push('LOWER(c.email) LIKE ?');
     bindings.push(`%${keyword}%`);
   }
+  appendGptPlanFilterSql(whereParts, bindings, options.gptPlan);
 
   const whereSql = whereParts.join(' AND ');
   const totalRow = await db
-    .prepare(`SELECT COUNT(*) AS total FROM cloud_mail_account_cache c WHERE ${whereSql}`)
+    .prepare(
+      `SELECT COUNT(*) AS total
+       FROM cloud_mail_account_cache c
+       LEFT JOIN mail_gpt_validity_status gpt
+         ON gpt.service = 'cloud-mail'
+        AND gpt.normalized_email = LOWER(TRIM(c.email))
+       WHERE ${whereSql}`
+    )
     .bind(...bindings)
     .first<{ total: number }>();
   const total = toCloudMailNumber(totalRow?.total, 0);
@@ -5997,7 +6062,7 @@ async function queryCloudMailAccountCache(
 async function listCloudMailAccountCache(
   db: D1Database,
   config: CloudMailConfig,
-  options: { page: number; pageSize: number; keyword: string }
+  options: { page: number; pageSize: number; keyword: string; gptPlan: GptPlanFilter }
 ): Promise<CloudMailListResponse> {
   const configKey = getCloudMailCacheKey(config);
   const cachedTotal = await countCloudMailAccountCache(db, configKey);
@@ -6853,41 +6918,45 @@ function calculateTokenCountdownDays(tokenBaseAt: string | null): number | null 
   return Math.max(0, TOKEN_LIFETIME_DAYS - elapsedDays);
 }
 
-async function queryAccounts(db: D1Database, keyword: string): Promise<AccountRow[]> {
-  let statement: D1PreparedStatement;
+async function queryAccounts(
+  db: D1Database,
+  keyword: string,
+  gptPlan: GptPlanFilter = ''
+): Promise<AccountRow[]> {
+  const whereParts: string[] = [];
+  const bindings: (string | number)[] = [];
 
   if (keyword) {
     const like = `%${keyword}%`;
-    statement = db
-      .prepare(
-        `${ACCOUNT_SELECT_SQL}
-         WHERE a.account LIKE ?
-            OR a.remark LIKE ?
-            OR EXISTS (
+    whereParts.push(`(
+      a.account LIKE ?
+      OR a.remark LIKE ?
+      OR EXISTS (
               SELECT 1
               FROM account_aliases alias
               WHERE alias.account_id = a.id
                 AND alias.alias_account LIKE ?
             )
-         ORDER BY a.id DESC`
-      )
-      .bind(like, like, like);
-  } else {
-    statement = db.prepare(`${ACCOUNT_SELECT_SQL} ORDER BY a.id DESC`);
+    )`);
+    bindings.push(like, like, like);
   }
+  appendGptPlanFilterSql(whereParts, bindings, gptPlan);
 
+  const whereSql = whereParts.length > 0 ? ` WHERE ${whereParts.join(' AND ')}` : '';
+  const accountSql = `${ACCOUNT_SELECT_SQL}${whereSql} ORDER BY a.id DESC`;
+  const statement = bindings.length > 0 ? db.prepare(accountSql).bind(...bindings) : db.prepare(accountSql);
   const { results } = await statement.all<AccountRow>();
   return results ?? [];
 }
 
-async function queryAccountListItems(db: D1Database, keyword: string): Promise<
+async function queryAccountListItems(db: D1Database, keyword: string, gptPlan: GptPlanFilter): Promise<
   Array<AccountListItem & {
     gptValidity: Sub2ApiGptValidityResponse | null;
     tokenBaseAt: string | null;
     tokenCountdownDays: number | null;
   }>
 > {
-  const accounts = await queryAccounts(db, keyword);
+  const accounts = await queryAccounts(db, keyword, gptPlan);
   const accountIds = accounts.map((item) => item.id);
   const aliasesByAccount = await queryAccountAliasMap(db, accountIds);
   const normalizedKeyword = normalizeEmailAddress(keyword);
@@ -6907,14 +6976,16 @@ async function queryAccountListItems(db: D1Database, keyword: string): Promise<
       aliases: aliasEmails,
       aliasCount: aliasEmails.length
     };
-    rows.push(primaryRow);
+    if (matchesGptPlanFilter(primaryRow.gptValidity, gptPlan)) {
+      rows.push(primaryRow);
+    }
 
     for (const alias of aliases) {
       if (normalizedKeyword && !alias.aliasAccount.includes(normalizedKeyword)) {
         continue;
       }
 
-      rows.push({
+      const aliasRow: (typeof rows)[number] = {
         ...primaryRow,
         account: alias.aliasAccount,
         password: account.password,
@@ -6926,7 +6997,10 @@ async function queryAccountListItems(db: D1Database, keyword: string): Promise<
         aliasId: alias.id,
         matchedAlias: alias.aliasAccount,
         gptValidity: buildGptValidityResponseFromRow(alias.aliasAccount, account)
-      });
+      };
+      if (matchesGptPlanFilter(aliasRow.gptValidity, gptPlan)) {
+        rows.push(aliasRow);
+      }
     }
   }
 

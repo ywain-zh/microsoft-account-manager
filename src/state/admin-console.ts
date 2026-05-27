@@ -10,6 +10,7 @@ import type {
   AccountMailItem,
   AccountPayload,
   BatchActionResult,
+  GptPlanFilter,
   IngestConfig,
   MailFetchMode,
   Sub2ApiGptValidityResponse,
@@ -101,6 +102,7 @@ let lastMicrosoftOauthEventId = '';
 
 const accounts = ref<AccountItem[]>([]);
 const searchKeyword = ref(readPersistedSearchKeyword());
+const gptPlanFilter = ref<GptPlanFilter>('');
 const checkedRowKeys = ref<number[]>([]);
 const tablePageSize = ref(20);
 
@@ -521,7 +523,7 @@ async function consumeTokenRefreshStream(response: Response): Promise<BatchActio
 async function loadAccounts(): Promise<boolean> {
   tableLoading.value = true;
   try {
-    const response = await api.listAccounts(searchKeyword.value.trim());
+    const response = await api.listAccounts(searchKeyword.value.trim(), gptPlanFilter.value);
     accounts.value = response.items;
     mergeGptValidityResults(response.items);
     const available = new Set(
@@ -1451,6 +1453,7 @@ export function useAdminConsole() {
     oauthPopupLoading,
     accounts,
     searchKeyword,
+    gptPlanFilter,
     checkedRowKeys,
     tablePageSize,
     tableLoading,
