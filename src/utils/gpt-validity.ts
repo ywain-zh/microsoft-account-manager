@@ -13,7 +13,7 @@ export function formatGptPlanLabel(planType: Sub2ApiPlanType): string {
     return 'Plus';
   }
 
-  if (planType === 'free') {
+  if (planType === 'free' || planType === '') {
     return 'Free';
   }
 

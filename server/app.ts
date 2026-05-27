@@ -5174,6 +5174,10 @@ function matchesGptPlanFilter(
     return result?.valid !== true;
   }
 
+  if (filter === 'free') {
+    return result?.valid === true && (result.planType === 'free' || result.planType === '');
+  }
+
   return result?.valid === true && result.planType === filter;
 }
 
@@ -5189,6 +5193,11 @@ function appendGptPlanFilterSql(
 
   if (filter === 'empty') {
     whereParts.push(`(${alias}.status IS NULL OR ${alias}.status <> 'valid')`);
+    return;
+  }
+
+  if (filter === 'free') {
+    whereParts.push(`(${alias}.status = 'valid' AND (${alias}.plan_type IS NULL OR ${alias}.plan_type = '' OR ${alias}.plan_type = 'free'))`);
     return;
   }
 
@@ -5561,7 +5570,7 @@ function formatSub2ApiResultMessage(result: Sub2ApiTestResult): string {
 }
 
 function formatSub2ApiPlanLabel(planType: Sub2ApiPlanType): string {
-  if (planType === 'free') {
+  if (planType === 'free' || planType === '') {
     return 'Free';
   }
 
