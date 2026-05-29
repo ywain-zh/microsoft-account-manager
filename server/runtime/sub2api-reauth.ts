@@ -118,7 +118,7 @@ export async function runSub2ApiReauthTask(options: RunSub2ApiReauthTaskOptions)
   const targets = normalizeTargets(options.payload.targets);
   const dryRun = options.payload.dryRun === true;
   const verifyAfterImport = options.payload.verifyAfterImport ?? options.reauthConfig.verifyAfterImport;
-  const modelId = normalizeText(options.payload.modelId) || 'gpt-5.4';
+  const modelId = normalizeText(options.payload.modelId) || 'gpt-5.5';
   const summary = createDefaultSummary(targets.length, dryRun);
 
   options.onProgress({ totalAccounts: targets.length, processedAccounts: 0 });

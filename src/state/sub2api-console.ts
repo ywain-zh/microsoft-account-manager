@@ -17,7 +17,7 @@ import type {
 } from '../types';
 
 const { message } = createDiscreteApi(['message']);
-const DEFAULT_SUB2API_MODEL_ID = 'gpt-5.4';
+const DEFAULT_SUB2API_MODEL_ID = 'gpt-5.5';
 const SUB2API_MODEL_STORAGE_KEY = 'sub2api-checker-model-id';
 const MAX_LOG_ITEMS = 1200;
 const ABNORMAL_ACCOUNTS_PAGE_SIZE = 10;

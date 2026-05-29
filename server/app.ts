@@ -577,7 +577,7 @@ const DEFAULT_CLOUD_MAIL_CONFIG: CloudMailConfig = {
 const SUB2API_CONFIG_KEY = 'sub2api_config';
 const SUB2API_REAUTH_CONFIG_KEY = 'sub2api_reauth_config';
 const SUB2API_LONG_LINK_CONFIG_KEY = 'sub2api_long_link_config';
-const DEFAULT_SUB2API_TEST_MODEL = 'gpt-5.4';
+const DEFAULT_SUB2API_TEST_MODEL = 'gpt-5.5';
 const SUB2API_PAGE_SIZE = 100;
 
 const DEFAULT_SUB2API_CONFIG: Sub2ApiConfig = {
