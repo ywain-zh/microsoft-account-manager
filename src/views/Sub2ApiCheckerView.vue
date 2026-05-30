@@ -217,7 +217,7 @@
     <n-modal v-model:show="showReauthModal" preset="card" title="重新授权 401 账号" style="width: min(820px, 94vw); border-radius: 12px;">
       <div class="reauth-modal-body">
         <p class="config-modal-desc">
-          支持自动登录四步流，也支持手动粘贴 session JSON / accessToken。目标邮箱可单独填写；留空则处理当前检测到的全部 401 邮箱，日志会实时输出到页面终端。
+          支持自动登录六步流，也支持手动粘贴 session JSON / accessToken。目标邮箱可单独填写；留空则处理当前检测到的全部 401 邮箱，日志会实时输出到页面终端。
         </p>
         <n-form label-placement="top" class="config-modal-form">
           <n-form-item label="目标邮箱">
@@ -232,7 +232,7 @@
           </n-form-item>
 
           <n-alert v-if="reauthForm.credentialMode === 'browser-login'" type="info" :bordered="false">
-            将按 1 打开 ChatGPT 官网 → 2 输入邮箱 → 3 读取邮箱验证码 → 4 导入当前会话到 SUB2API 的顺序执行。
+            将按 1 点击登录 → 2 输入邮箱 → 3 获取验证码 → 4 刷新 OAuth并登录 → 5 自动确认 OAuth → 6 SUB2API 回调验证 的顺序执行。
           </n-alert>
 
           <n-form-item
@@ -247,11 +247,14 @@
             />
           </n-form-item>
 
-          <n-space vertical size="small">
+          <n-space v-if="reauthForm.credentialMode !== 'browser-login'" vertical size="small">
             <n-checkbox v-model:checked="reauthForm.dryRun">dry-run：只解析和校验，不导入</n-checkbox>
             <n-checkbox v-model:checked="reauthForm.verifyAfterImport">导入后复测</n-checkbox>
             <n-checkbox v-model:checked="reauthForm.strictEmailMatch">严格校验 session 邮箱与目标邮箱一致</n-checkbox>
             <n-checkbox v-model:checked="reauthForm.allowAccessTokenOnly">允许 accessToken-only</n-checkbox>
+          </n-space>
+          <n-space v-else vertical size="small">
+            <n-checkbox v-model:checked="reauthForm.verifyAfterImport">SUB2API 回调验证后复测</n-checkbox>
           </n-space>
         </n-form>
       </div>
@@ -259,7 +262,7 @@
         <div class="config-modal-footer">
           <n-button :disabled="reauthLoading" @click="closeReauthModal">取消</n-button>
           <n-button type="primary" :loading="reauthLoading" @click="startReauth">
-            {{ reauthForm.credentialMode === 'browser-login' ? '开始四步重新授权' : reauthForm.dryRun ? '开始 dry-run' : '开始重新授权' }}
+            {{ reauthForm.credentialMode === 'browser-login' ? '开始六步重新授权' : reauthForm.dryRun ? '开始 dry-run' : '开始重新授权' }}
           </n-button>
         </div>
       </template>
@@ -444,7 +447,7 @@ const showConfigModal = ref(false);
 const logTerminalRef = ref<HTMLElement | null>(null);
 
 const reauthCredentialModeOptions = [
-  { label: '自动登录四步流', value: 'browser-login' },
+  { label: '自动登录六步流', value: 'browser-login' },
   { label: 'session JSON', value: 'session-json' },
   { label: 'accessToken', value: 'access-token' }
 ];

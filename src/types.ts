@@ -201,9 +201,11 @@ export interface Sub2ApiReauthTarget {
 
 export interface Sub2ApiReauthStartPayload {
   targets: Sub2ApiReauthTarget[];
-  credentialMode: 'browser-login' | 'session-json' | 'access-token';
+  credentialMode: 'browser-login' | 'browser-oauth' | 'session-json' | 'access-token';
   sessionPayload?: unknown;
   sessionPayloads?: Record<string, unknown>;
+  oauthDraft?: unknown;
+  oauthCallbackUrl?: string;
   dryRun?: boolean;
   verifyAfterImport?: boolean;
   allowAccessTokenOnly?: boolean;

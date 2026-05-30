@@ -1,5 +1,15 @@
 export type Sub2ApiReauthAuthMode = 'admin-api-key' | 'password';
-export type Sub2ApiReauthCredentialMode = 'browser-login' | 'session-json' | 'access-token';
+import {
+  createSub2ApiAuthContext,
+  requestSub2ApiJson,
+  resolveSub2ApiAccountTargetContext,
+  sanitizeSensitive,
+  submitSub2ApiOpenAiOAuthCallback,
+  type Sub2ApiAuthContext,
+  type Sub2ApiOAuthDraft
+} from './sub2api-oauth.js';
+
+export type Sub2ApiReauthCredentialMode = 'browser-login' | 'browser-oauth' | 'session-json' | 'access-token';
 export type Sub2ApiReauthLogLevel = 'info' | 'success' | 'warning' | 'error';
 
 export interface Sub2ApiAdminConfig {
@@ -33,6 +43,8 @@ export interface Sub2ApiReauthStartPayload {
   credentialMode: Sub2ApiReauthCredentialMode;
   sessionPayload?: unknown;
   sessionPayloads?: Record<string, unknown>;
+  oauthDraft?: Sub2ApiOAuthDraft;
+  oauthCallbackUrl?: string;
   dryRun?: boolean;
   verifyAfterImport?: boolean;
   allowAccessTokenOnly?: boolean;
@@ -75,25 +87,6 @@ interface RunSub2ApiReauthTaskOptions {
   isAborted?: () => boolean;
 }
 
-interface Sub2ApiAuthContext {
-  headers: Record<string, string>;
-  label: string;
-}
-
-interface Sub2ApiGroupItem {
-  id: number;
-  name: string;
-}
-
-interface Sub2ApiProxyItem {
-  id: number;
-  name: string;
-  protocol: string;
-  host: string;
-  port: string;
-  status: string;
-}
-
 interface ParsedSessionInput {
   session: Record<string, unknown> | null;
   accessToken: string;
@@ -133,21 +126,9 @@ export async function runSub2ApiReauthTask(options: RunSub2ApiReauthTaskOptions)
   const auth = await createSub2ApiAuthContext(options.sub2apiConfig, options.reauthConfig);
   options.onLog('info', `Sub2API 管理接口鉴权完成，模式：${auth.label}`);
 
-  options.onLog('info', `正在查找 Sub2API 分组：${options.reauthConfig.groupNames.join('、')}`);
-  const groups = await getGroupsByNames(options.sub2apiConfig, auth, options.reauthConfig.groupNames);
-  const groupIds = groups.map((group) => group.id).filter((id) => Number.isSafeInteger(id) && id > 0);
-  if (groupIds.length === 0) {
-    throw new Error('Sub2API 返回的目标分组 ID 无效');
-  }
-  options.onLog('success', `已匹配 Sub2API 分组：${groups.map((group) => `${group.name}（#${group.id}）`).join('、')}`);
-
-  const proxy = options.reauthConfig.defaultProxyName
-    ? await resolveSub2ApiProxy(options.sub2apiConfig, auth, options.reauthConfig.defaultProxyName)
-    : null;
-  if (proxy) {
-    options.onLog('info', `已选择 Sub2API 默认代理 ${buildProxyDisplayName(proxy)}`);
-  } else {
-    options.onLog('info', '未配置 Sub2API 默认代理，本次导入不使用代理');
+  let sessionImportContext: { groupIds: number[]; proxyId: number | null } | null = null;
+  if (options.payload.credentialMode !== 'browser-oauth') {
+    sessionImportContext = await prepareSessionImportContext(options, auth);
   }
 
   for (let index = 0; index < targets.length; index += 1) {
@@ -160,6 +141,45 @@ export async function runSub2ApiReauthTask(options: RunSub2ApiReauthTaskOptions)
     options.onLog('info', `[${index + 1}/${targets.length}] 开始处理 ${label}`, target);
 
     try {
+      if (options.payload.credentialMode === 'browser-oauth') {
+        if (dryRun) {
+          summary.skippedAccounts += 1;
+          options.onLog('warning', `[${label}] browser-login OAuth 模式不支持 dry-run，已跳过`, target);
+          continue;
+        }
+        if (!options.payload.oauthDraft || !options.payload.oauthCallbackUrl) {
+          throw new Error('浏览器 OAuth 模式缺少 OAuth 草稿或 localhost 回调地址');
+        }
+
+        const result = await submitSub2ApiOpenAiOAuthCallback({
+          sub2apiConfig: options.sub2apiConfig,
+          reauthConfig: options.reauthConfig,
+          auth,
+          draft: options.payload.oauthDraft,
+          callbackUrl: options.payload.oauthCallbackUrl,
+          accountEmail: target.accountEmail,
+          onLog: options.onLog,
+          target
+        });
+
+        summary.createdAccounts += result.accountId ? 1 : 0;
+        summary.updatedAccounts += result.accountId ? 0 : 1;
+
+        if (verifyAfterImport && options.verifyTarget) {
+          const verifyEmail = result.email || normalizeEmail(target.accountEmail);
+          options.onLog('info', `[${label}] 开始 SUB2API 回调验证后复测，模型 ${modelId}`, target);
+          const verifyResult = await options.verifyTarget(target, verifyEmail, modelId);
+          options.onLog(verifyResult.valid ? 'success' : 'warning', `[${label}] 复测结果：${verifyResult.message}`, target);
+        }
+
+        summary.succeededAccounts += 1;
+        continue;
+      }
+
+      if (!sessionImportContext) {
+        throw new Error('session 导入上下文未初始化');
+      }
+
       const parsed = parseTargetSessionInput(target, options.payload, options.reauthConfig);
       options.onLog('info', `[${label}] 已解析 ChatGPT ${parsed.session ? 'session JSON' : 'accessToken'}`, target);
 
@@ -180,14 +200,14 @@ export async function runSub2ApiReauthTask(options: RunSub2ApiReauthTaskOptions)
 
       const importPayload: Record<string, unknown> = {
         content: parsed.importContent,
-        group_ids: groupIds,
+        group_ids: sessionImportContext.groupIds,
         name: parsed.authorizedEmail || normalizeEmail(target.accountEmail) || normalizeText(target.accountName),
         priority: options.reauthConfig.accountPriority,
         auto_pause_on_expired: options.reauthConfig.autoPauseOnExpired,
         update_existing: options.reauthConfig.updateExisting
       };
-      if (proxy) {
-        importPayload.proxy_id = proxy.id;
+      if (sessionImportContext.proxyId) {
+        importPayload.proxy_id = sessionImportContext.proxyId;
       }
       if (parsed.expiresAt) {
         importPayload.expires_at = parsed.expiresAt;
@@ -253,6 +273,22 @@ export async function runSub2ApiReauthTask(options: RunSub2ApiReauthTaskOptions)
   return summary;
 }
 
+async function prepareSessionImportContext(
+  options: RunSub2ApiReauthTaskOptions,
+  auth: Sub2ApiAuthContext
+): Promise<{ groupIds: number[]; proxyId: number | null }> {
+  const context = await resolveSub2ApiAccountTargetContext({
+    sub2apiConfig: options.sub2apiConfig,
+    reauthConfig: options.reauthConfig,
+    auth,
+    onLog: options.onLog
+  });
+  return {
+    groupIds: context.groupIds,
+    proxyId: context.proxyId
+  };
+}
+
 function createDefaultSummary(totalAccounts: number, dryRun: boolean): Sub2ApiReauthSummary {
   return {
     totalAccounts,
@@ -290,122 +326,6 @@ function normalizeTargets(value: unknown): Sub2ApiReauthTarget[] {
   }
 
   return targets;
-}
-
-async function createSub2ApiAuthContext(
-  sub2apiConfig: Sub2ApiAdminConfig,
-  reauthConfig: Sub2ApiReauthConfig
-): Promise<Sub2ApiAuthContext> {
-  if (reauthConfig.authMode === 'password') {
-    if (!reauthConfig.adminEmail || !reauthConfig.adminPassword) {
-      throw new Error('请先填写 Sub2API 管理员邮箱和密码');
-    }
-
-    const loginData = await requestSub2ApiJson(sub2apiConfig, '/api/v1/auth/login', {
-      method: 'POST',
-      body: {
-        email: reauthConfig.adminEmail,
-        password: reauthConfig.adminPassword
-      },
-      secrets: [reauthConfig.adminPassword]
-    });
-    const token = normalizeText(readRecord(loginData)?.access_token ?? readRecord(loginData)?.accessToken);
-    if (!token) {
-      throw new Error('Sub2API 登录返回缺少 access_token');
-    }
-
-    return {
-      label: 'password',
-      headers: { Authorization: `Bearer ${token}` }
-    };
-  }
-
-  if (!sub2apiConfig.adminApiKey) {
-    throw new Error('请先保存 Sub2API 管理员 API Key');
-  }
-
-  return {
-    label: 'admin-api-key',
-    headers: { 'x-api-key': sub2apiConfig.adminApiKey }
-  };
-}
-
-async function getGroupsByNames(
-  config: Sub2ApiAdminConfig,
-  auth: Sub2ApiAuthContext,
-  groupNames: string[]
-): Promise<Sub2ApiGroupItem[]> {
-  const targetNames = normalizeGroupNames(groupNames);
-  const payload = await requestSub2ApiJson(config, '/api/v1/admin/groups/all', { method: 'GET', auth });
-  const groups = Array.isArray(payload) ? payload : [];
-  const matched: Sub2ApiGroupItem[] = [];
-  const missing: string[] = [];
-
-  for (const targetName of targetNames) {
-    const normalized = targetName.toLowerCase();
-    const group = groups.find((item) => {
-      const record = readRecord(item);
-      const name = normalizeText(record?.name).toLowerCase();
-      const platform = normalizeText(record?.platform).toLowerCase();
-      return name === normalized && (!platform || platform === 'openai');
-    });
-
-    const record = readRecord(group);
-    const id = Number(record?.id);
-    if (record && Number.isSafeInteger(id) && id > 0) {
-      matched.push({ id, name: normalizeText(record.name) || targetName });
-    } else {
-      missing.push(targetName);
-    }
-  }
-
-  if (missing.length > 0) {
-    throw new Error(`Sub2API 中未找到以下 openai 分组：${missing.join('、')}`);
-  }
-
-  return matched;
-}
-
-async function resolveSub2ApiProxy(
-  config: Sub2ApiAdminConfig,
-  auth: Sub2ApiAuthContext,
-  preference: string
-): Promise<Sub2ApiProxyItem | null> {
-  const payload = await requestSub2ApiJson(config, '/api/v1/admin/proxies/all', {
-    method: 'GET',
-    auth,
-    query: { with_count: 'true' }
-  });
-  const proxies = Array.isArray(payload) ? payload.map(normalizeProxyItem).filter((item): item is Sub2ApiProxyItem => item !== null) : [];
-  const activeProxies = proxies.filter((proxy) => !proxy.status || proxy.status.toLowerCase() === 'active');
-  const normalizedPreference = normalizeText(preference).toLowerCase();
-  const preferredId = Number(normalizedPreference);
-
-  if (Number.isSafeInteger(preferredId) && preferredId > 0) {
-    const matched = activeProxies.find((proxy) => proxy.id === preferredId);
-    if (matched) {
-      return matched;
-    }
-    throw new Error(`Sub2API 默认代理 ID “${preference}”不存在或未启用`);
-  }
-
-  const exactMatches = activeProxies.filter((proxy) => proxy.name.toLowerCase() === normalizedPreference);
-  if (exactMatches.length === 1) {
-    return exactMatches[0];
-  }
-  if (exactMatches.length > 1) {
-    throw new Error(`Sub2API 默认代理“${preference}”匹配到多个代理，请改填代理 ID`);
-  }
-
-  const fuzzyMatches = activeProxies.filter((proxy) => buildProxyDisplayName(proxy).toLowerCase().includes(normalizedPreference));
-  if (fuzzyMatches.length === 1) {
-    return fuzzyMatches[0];
-  }
-  if (fuzzyMatches.length > 1) {
-    throw new Error(`Sub2API 默认代理“${preference}”匹配到多个代理，请改填代理 ID`);
-  }
-
-  throw new Error(`Sub2API 默认代理“${preference}”不存在或未启用`);
 }
 
 function parseTargetSessionInput(
@@ -495,109 +415,6 @@ function validateTargetEmailMatch(
   if (targetEmail !== authorizedEmail) {
     throw new Error(`session 邮箱 ${authorizedEmail} 与目标邮箱 ${targetEmail} 不一致`);
   }
-}
-
-async function requestSub2ApiJson(
-  config: Sub2ApiAdminConfig,
-  path: string,
-  options: {
-    method?: string;
-    auth?: Sub2ApiAuthContext;
-    body?: unknown;
-    query?: Record<string, string | number | undefined>;
-    secrets?: string[];
-  } = {}
-): Promise<unknown> {
-  const headers = new Headers(options.auth?.headers);
-  headers.set('Accept', 'application/json');
-  if (options.body !== undefined) {
-    headers.set('Content-Type', 'application/json');
-  }
-
-  let response: Response;
-  try {
-    response = await fetch(buildUrl(config.baseUrl, path, options.query), {
-      method: options.method ?? 'GET',
-      headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body)
-    });
-  } catch {
-    throw new Error('Sub2API 服务连接失败，请检查地址');
-  }
-
-  const rawText = await response.text();
-  const payload = parseJsonOrNull(rawText);
-  const record = readRecord(payload);
-  if (record && Object.prototype.hasOwnProperty.call(record, 'code')) {
-    if (Number(record.code) === 0) {
-      return record.data;
-    }
-    throw new Error(sanitizeSensitive(extractRemoteMessage(payload) || `Sub2API 请求失败 (${response.status})`, options.secrets));
-  }
-
-  if (!response.ok) {
-    throw new Error(sanitizeSensitive(extractRemoteMessage(payload) || extractRemoteMessage(rawText) || `Sub2API 请求失败 (${response.status})`, options.secrets));
-  }
-
-  return payload;
-}
-
-function buildUrl(baseUrl: string, path: string, query?: Record<string, string | number | undefined>): string {
-  const normalizedBase = normalizeBaseUrl(baseUrl);
-  const url = new URL(path.replace(/^\/+/, ''), normalizedBase.endsWith('/') ? normalizedBase : `${normalizedBase}/`);
-  for (const [key, value] of Object.entries(query ?? {})) {
-    if (value !== undefined && value !== '') {
-      url.searchParams.set(key, String(value));
-    }
-  }
-  return url.toString();
-}
-
-function normalizeBaseUrl(value: string): string {
-  const raw = normalizeText(value);
-  const withProtocol = /^[a-z]+:\/\//i.test(raw) ? raw : `https://${raw}`;
-  const url = new URL(withProtocol);
-  url.search = '';
-  url.hash = '';
-  const pathname = url.pathname.replace(/\/+$/, '').replace(/\/api\/v1$/i, '');
-  return `${url.origin}${pathname}`;
-}
-
-function normalizeGroupNames(value: unknown): string[] {
-  const source = Array.isArray(value) ? value : normalizeText(value).split(/[\r\n,，;；]+/);
-  const seen = new Set<string>();
-  const items: string[] = [];
-  for (const item of source) {
-    const name = normalizeText(item);
-    const key = name.toLowerCase();
-    if (!name || seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    items.push(name);
-  }
-  return items.length ? items : ['openai-plus'];
-}
-
-function normalizeProxyItem(value: unknown): Sub2ApiProxyItem | null {
-  const record = readRecord(value);
-  const id = Number(record?.id);
-  if (!record || !Number.isSafeInteger(id) || id <= 0) {
-    return null;
-  }
-  return {
-    id,
-    name: normalizeText(record.name),
-    protocol: normalizeText(record.protocol),
-    host: normalizeText(record.host),
-    port: normalizeText(record.port),
-    status: normalizeText(record.status)
-  };
-}
-
-function buildProxyDisplayName(proxy: Sub2ApiProxyItem): string {
-  const address = proxy.protocol && proxy.host && proxy.port ? `${proxy.protocol}://${proxy.host}:${proxy.port}` : '';
-  return [proxy.name || '(未命名代理)', `#${proxy.id}`, address].filter(Boolean).join(' ');
 }
 
 function resolveAuthorizedEmail(session: Record<string, unknown> | null, accessToken: string): string {
@@ -718,18 +535,6 @@ function normalizeCount(value: unknown): number {
 
 function resolveTargetLabel(target: Sub2ApiReauthTarget): string {
   return target.accountEmail || target.accountName || (target.accountId ? `账号 ID ${target.accountId}` : '未知账号');
-}
-
-function sanitizeSensitive(value: unknown, secrets: unknown = []): string {
-  let text = normalizeText(value);
-  const items = Array.isArray(secrets) ? secrets : [secrets];
-  for (const secret of items) {
-    const raw = normalizeText(secret);
-    if (raw && raw.length >= 8) {
-      text = text.split(raw).join('[REDACTED]');
-    }
-  }
-  return text;
 }
 
 function getErrorMessage(error: unknown): string {

@@ -17,6 +17,10 @@ import {
   runChatGptHeadlessReauth
 } from './runtime/chatgpt-headless-reauth.js';
 import {
+  createSub2ApiAuthContext,
+  generateSub2ApiOpenAiOAuth
+} from './runtime/sub2api-oauth.js';
+import {
   runSub2ApiReauthTask,
   type Sub2ApiReauthConfig,
   type Sub2ApiReauthLogLevel,
@@ -4177,7 +4181,7 @@ async function runSub2ApiReauthBackgroundTask(
 
   try {
     emitLog('info', '重新授权后台任务已启动');
-    const taskPayload = await resolveSub2ApiReauthPayload(env, reauthConfig, body, emitLog, () => task.aborted);
+    const taskPayload = await resolveSub2ApiReauthPayload(env, config, reauthConfig, body, emitLog, () => task.aborted);
     const summary = await runSub2ApiReauthTask({
       sub2apiConfig: config,
       reauthConfig,
@@ -4257,6 +4261,7 @@ function createShortId(prefix: string): string {
 
 async function resolveSub2ApiReauthPayload(
   env: Bindings,
+  config: Sub2ApiConfig,
   reauthConfig: Sub2ApiReauthConfig,
   body: Sub2ApiReauthStartPayload,
   onLog: (level: Sub2ApiReauthLogLevel, message: string, target?: Sub2ApiReauthTarget) => void,
@@ -4272,9 +4277,20 @@ async function resolveSub2ApiReauthPayload(
   }
 
   const target = targets[0];
+  onLog('info', '步骤 4：正在刷新 OAuth并登录，准备生成 Sub2API OpenAI OAuth 地址', target);
+  const auth = await createSub2ApiAuthContext(config, reauthConfig);
+  const oauthDraft = await generateSub2ApiOpenAiOAuth({
+    sub2apiConfig: config,
+    reauthConfig,
+    auth,
+    onLog,
+    target
+  });
+
   const result = await runChatGptHeadlessReauth({
     target,
     headless: true,
+    oauthUrl: oauthDraft.oauthUrl,
     onLog,
     isAborted,
     readVerificationCode: async (email, startedAt) => {
@@ -4287,12 +4303,17 @@ async function resolveSub2ApiReauthPayload(
       return codeResult.code;
     }
   });
+  if (!result.oauthCallbackUrl) {
+    throw new Error('自动确认 OAuth 未返回 localhost 回调地址');
+  }
 
   return {
     ...body,
     targets,
-    credentialMode: 'session-json',
-    sessionPayload: result.sessionPayload
+    credentialMode: 'browser-oauth',
+    oauthDraft,
+    oauthCallbackUrl: result.oauthCallbackUrl,
+    dryRun: false
   };
 }
 

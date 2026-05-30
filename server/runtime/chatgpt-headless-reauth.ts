@@ -10,12 +10,14 @@ export interface ChatGptHeadlessReauthOptions {
   timeoutMs?: number;
   onLog: (level: Sub2ApiReauthLogLevel, message: string, target?: Sub2ApiReauthTarget) => void;
   readVerificationCode: (email: string, startedAt: Date) => Promise<string | null>;
+  oauthUrl?: string;
   isAborted?: () => boolean;
 }
 
 export interface ChatGptHeadlessReauthResult {
-  sessionPayload: unknown;
-  accessToken: string;
+  sessionPayload?: unknown;
+  accessToken?: string;
+  oauthCallbackUrl?: string;
 }
 
 interface BrowserLike {
@@ -83,6 +85,7 @@ interface PageLike {
   locator(selector: string): LocatorLike;
   waitForSelector(selector: string, options?: { timeout?: number }): Promise<unknown>;
   waitForURL(predicate: (url: URL) => boolean, options?: { timeout?: number }): Promise<unknown>;
+  url?(): string;
   evaluate<T>(callback: () => Promise<T> | T): Promise<T>;
   title(): Promise<string>;
   content(): Promise<string>;
@@ -124,7 +127,7 @@ export async function runChatGptHeadlessReauth(
   let page: PageLike | null = null;
 
   try {
-    options.onLog('info', '步骤 1：打开 ChatGPT 官网', options.target);
+    options.onLog('info', '步骤 1：点击登录前打开 ChatGPT 官网', options.target);
     const profile = createBrowserProfile();
     session = await createBrowserSession(playwright, profile, email, options);
     profile.userAgent = createWindowsChromeUserAgent(await session.browserVersion());
@@ -140,15 +143,18 @@ export async function runChatGptHeadlessReauth(
     await page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded' });
     await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => undefined);
     await logPageState(options, page, '步骤 1 页面状态');
-    options.onLog('success', '步骤 1 完成：ChatGPT 官网已打开', options.target);
+    options.onLog('success', '步骤 1 完成：ChatGPT 官网已打开，准备点击登录', options.target);
 
     const existingSession = await tryReadExistingChatGptSession(page, email);
     if (existingSession) {
       options.onLog('success', '检测到持久化 profile 中已有有效 ChatGPT 会话，跳过邮箱验证码登录', options.target);
+      if (options.oauthUrl) {
+        return { oauthCallbackUrl: await completeOAuthAuthorization(page, options) };
+      }
       return existingSession;
     }
 
-    options.onLog('info', `步骤 2：登录并输入邮箱 ${email}`, options.target);
+    options.onLog('info', `步骤 2：输入邮箱 ${email}`, options.target);
     await startLogin(page);
     await fillEmail(page, email, profile);
     await logPageState(options, page, '步骤 2 提交邮箱后页面状态');
@@ -166,8 +172,12 @@ export async function runChatGptHeadlessReauth(
     await fillVerificationCode(page, code, profile);
     options.onLog('success', '步骤 3 完成：验证码已提交', options.target);
 
-    options.onLog('info', '步骤 4：读取当前 ChatGPT 会话', options.target);
     await waitForLoggedIn(page);
+    if (options.oauthUrl) {
+      return { oauthCallbackUrl: await completeOAuthAuthorization(page, options) };
+    }
+
+    options.onLog('info', '步骤 4：读取当前 ChatGPT 会话', options.target);
     const sessionPayload = await readChatGptSession(page);
     const accessToken = normalizeText(readRecord(sessionPayload)?.accessToken ?? readRecord(sessionPayload)?.access_token);
     if (!accessToken) {
@@ -186,6 +196,81 @@ export async function runChatGptHeadlessReauth(
     throw error;
   } finally {
     await session?.close().catch(() => undefined);
+  }
+}
+
+async function completeOAuthAuthorization(page: PageLike, options: ChatGptHeadlessReauthOptions): Promise<string> {
+  const oauthUrl = normalizeText(options.oauthUrl);
+  if (!oauthUrl) {
+    throw new Error('缺少 SUB2API OAuth 登录地址');
+  }
+
+  options.onLog('info', '步骤 4：刷新 OAuth并登录，正在打开 SUB2API OAuth 地址', options.target);
+  await page.goto(oauthUrl, { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => undefined);
+  await logPageState(options, page, '步骤 4 OAuth 页面状态');
+
+  options.onLog('info', '步骤 5：自动确认 OAuth，正在查找授权继续按钮并监听 localhost 回调', options.target);
+  const callbackPromise = waitForLocalhostCallback(page, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  await clickOAuthConsentContinue(page);
+  const callbackUrl = await callbackPromise;
+  options.onLog('success', `步骤 5 完成：已捕获 localhost OAuth 回调：${redactCallbackUrl(callbackUrl)}`, options.target);
+  return callbackUrl;
+}
+
+async function clickOAuthConsentContinue(page: PageLike): Promise<void> {
+  const buttons = [
+    page.getByRole('button', { name: /^(continue|authorize|allow|accept|继续|授权|允许|同意)$/i }).first(),
+    page.locator('button:has-text("Continue"), button:has-text("继续"), button:has-text("Authorize"), button:has-text("授权"), button:has-text("Allow"), button:has-text("允许")').first(),
+    page.locator('input[type="submit"], button[type="submit"]').first()
+  ];
+
+  for (let round = 1; round <= 3; round += 1) {
+    for (const button of buttons) {
+      if (await button.isVisible({ timeout: 5000 }).catch(() => false)) {
+        await humanClick(page, button);
+        return;
+      }
+    }
+    await page.waitForTimeout(1200);
+  }
+
+  throw new Error('步骤 5 失败：未找到 OAuth 授权继续按钮');
+}
+
+async function waitForLocalhostCallback(page: PageLike, timeoutMs: number): Promise<string> {
+  const deadline = Date.now() + Math.max(30000, timeoutMs);
+  while (Date.now() < deadline) {
+    const currentUrl = typeof page.url === 'function' ? page.url() : await page.evaluate(() => location.href).catch(() => '');
+    if (isLocalhostOAuthCallbackUrl(currentUrl)) {
+      return currentUrl;
+    }
+    await page.waitForTimeout(500);
+  }
+  throw new Error(`步骤 5 失败：${Math.round(Math.max(30000, timeoutMs) / 1000)} 秒内未捕获到 localhost OAuth 回调`);
+}
+
+function isLocalhostOAuthCallbackUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return ['localhost', '127.0.0.1'].includes(url.hostname)
+      && ['/auth/callback', '/codex/callback'].includes(url.pathname)
+      && Boolean(url.searchParams.get('code'))
+      && Boolean(url.searchParams.get('state'));
+  } catch {
+    return false;
+  }
+}
+
+function redactCallbackUrl(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl);
+    if (url.searchParams.has('code')) {
+      url.searchParams.set('code', '[REDACTED]');
+    }
+    return url.toString();
+  } catch {
+    return '[invalid callback url]';
   }
 }
 
