@@ -187,8 +187,10 @@ def _call_checkout(token, payload, proxy, accept_language):
     if _looks_like_cloudflare_challenge(text):
         raise RuntimeError("请求被 Cloudflare 拦截，请确认运行环境已安装 curl_cffi 并更换代理出口重试。")
     data = _parse_response_json(text)
-    if isinstance(data, dict) and proxy_used:
-        data["proxy_used"] = proxy_used
+    if isinstance(data, dict):
+        data.setdefault("checkout_ui_mode", payload.get("checkout_ui_mode") or "hosted")
+        if proxy_used:
+            data["proxy_used"] = proxy_used
     if status >= 400:
         raise RuntimeError(_api_error_message(data, f"ChatGPT checkout 请求失败 ({status})"))
     return status, _enrich_links(data)
@@ -248,6 +250,10 @@ def _stripe_checkout_url(session_id):
 
 def _stripe_return_url(session_id):
     return f"https://pay.openai.com/c/pay/{session_id}?redirect_pm_type=gopay&lid=local&ui_mode=hosted"
+
+
+def _openai_pay_url(session_id):
+    return f"https://pay.openai.com/c/pay/{urllib.parse.quote(str(session_id), safe='')}?ui_mode=hosted"
 
 
 def _stripe_due_amount(page):
@@ -478,11 +484,15 @@ def _enrich_links(data):
     processor = data.get("processor_entity")
     if session_id and processor and not data.get("chatgpt_checkout_url"):
         data["chatgpt_checkout_url"] = f"https://chatgpt.com/checkout/{processor}/{session_id}"
+    has_openai_payurl = False
     for key in ("url", "stripe_hosted_url", "checkout_url"):
         value = data.get(key)
         if isinstance(value, str) and value.startswith("https://pay.openai.com/"):
             data["openai_payurl"] = value
+            has_openai_payurl = True
             break
+    if not has_openai_payurl and session_id and data.get("checkout_ui_mode") == "hosted":
+        data["openai_payurl"] = _openai_pay_url(session_id)
     if not data.get("link_type"):
         data["link_type"] = "hosted"
     return data

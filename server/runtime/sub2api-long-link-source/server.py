@@ -1007,8 +1007,10 @@ def _call_checkout_curl_cffi(token, payload, proxy=""):
                 last_error = "请求仍被 Cloudflare 拦截。请确认 run.bat 使用的是带 curl_cffi 的 Python 环境。"
                 continue
             data = _parse_response_json(text)
-            if isinstance(data, dict) and candidate:
-                data["proxy_used"] = candidate
+            if isinstance(data, dict):
+                data.setdefault("checkout_ui_mode", payload.get("checkout_ui_mode") or "hosted")
+                if candidate:
+                    data["proxy_used"] = candidate
             return response.status_code, data
         except Exception as exc:
             last_error = str(exc)
@@ -1039,8 +1041,10 @@ def _call_checkout_urllib(token, payload, proxy=""):
             with open_func(req, timeout=30) as resp:
                 text = resp.read().decode("utf-8", errors="replace")
                 data = _parse_response_json(text)
-                if isinstance(data, dict) and candidate:
-                    data["proxy_used"] = candidate
+                if isinstance(data, dict):
+                    data.setdefault("checkout_ui_mode", payload.get("checkout_ui_mode") or "hosted")
+                    if candidate:
+                        data["proxy_used"] = candidate
                 return resp.status, data
         except urllib.error.HTTPError as exc:
             text = exc.read().decode("utf-8", errors="replace")
@@ -1048,8 +1052,10 @@ def _call_checkout_urllib(token, payload, proxy=""):
                 last_error = "当前 Python 环境缺少 curl_cffi，普通请求被 Cloudflare 拦截。请用 run.bat 启动，或安装 curl_cffi。"
                 continue
             data = _parse_response_json(text)
-            if isinstance(data, dict) and candidate:
-                data["proxy_used"] = candidate
+            if isinstance(data, dict):
+                data.setdefault("checkout_ui_mode", payload.get("checkout_ui_mode") or "hosted")
+                if candidate:
+                    data["proxy_used"] = candidate
             return exc.code, data
         except urllib.error.URLError as exc:
             last_error = str(exc.reason)
@@ -1174,11 +1180,15 @@ def _enrich_links(data):
     processor = data.get("processor_entity")
     if session_id and processor and not data.get("chatgpt_checkout_url"):
         data["chatgpt_checkout_url"] = f"https://chatgpt.com/checkout/{processor}/{session_id}"
+    has_openai_payurl = False
     for key in ("url", "stripe_hosted_url", "checkout_url"):
         value = data.get(key)
         if isinstance(value, str) and value.startswith("https://pay.openai.com/"):
             data["openai_payurl"] = value
+            has_openai_payurl = True
             break
+    if not has_openai_payurl and session_id and data.get("checkout_ui_mode") == "hosted":
+        data["openai_payurl"] = f"https://pay.openai.com/c/pay/{urllib.parse.quote(str(session_id), safe='')}?ui_mode=hosted"
     return data
 
 

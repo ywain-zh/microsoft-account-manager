@@ -100,6 +100,23 @@ test('normalizeCheckoutResponse prefers GoPay provider links and maps snake_case
   assert.equal(response.direct, false);
 });
 
+test('normalizeCheckoutResponse synthesizes OpenAI Pay URL for hosted checkout sessions', () => {
+  const response = normalizeCheckoutResponse(
+    {
+      link_type: 'hosted',
+      checkout_ui_mode: 'hosted',
+      checkout_session_id: 'cs_live_123',
+      processor_entity: 'openai_llc',
+      url: 'https://chatgpt.com/checkout/openai_llc/cs_live_123'
+    },
+    null
+  );
+
+  assert.equal(response.url, 'https://pay.openai.com/c/pay/cs_live_123?ui_mode=hosted');
+  assert.equal(response.openaiPayUrl, 'https://pay.openai.com/c/pay/cs_live_123?ui_mode=hosted');
+  assert.equal(response.chatgptCheckoutUrl, 'https://chatgpt.com/checkout/openai_llc/cs_live_123');
+});
+
 test('normalizeLongLinkProxyCandidates expands shorthand and masks auth-ready display', () => {
   const candidates = normalizeLongLinkProxyCandidates('127.0.0.1:7890\nhost.test:8080:user:pass');
   assert.equal(candidates.length, 5);

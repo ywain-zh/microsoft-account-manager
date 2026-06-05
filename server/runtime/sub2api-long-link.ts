@@ -242,6 +242,7 @@ export function normalizeCheckoutResponse(data: unknown, candidate: ProxyCandida
   const record = data as Record<string, unknown>;
   const sessionId = normalizeText(record.checkout_session_id);
   const processor = normalizeText(record.processor_entity);
+  const checkoutUiMode = normalizeCheckoutUiMode(record.checkout_ui_mode);
   const chatgptCheckoutUrl =
     normalizeText(record.chatgpt_checkout_url) ||
     (sessionId && processor ? `https://chatgpt.com/checkout/${processor}/${sessionId}` : '');
@@ -253,6 +254,7 @@ export function normalizeCheckoutResponse(data: unknown, candidate: ProxyCandida
   const openaiPayUrl =
     normalizeText(record.openai_payurl) ||
     [normalizeText(record.url), stripeHostedUrl, checkoutUrl].find((value) => value.startsWith('https://pay.openai.com/')) ||
+    (checkoutUiMode === 'hosted' && sessionId ? buildOpenAiPayUrl(sessionId) : '') ||
     '';
   const url = [
     providerRedirectUrl,
@@ -524,6 +526,10 @@ function toProxyCandidate(original: string, endpoint: ProxyEndpoint): ProxyCandi
 
 function normalizeCheckoutUiMode(value: unknown): Sub2ApiLongLinkCheckoutUiMode {
   return value === 'custom' || value === 'redirect' ? value : 'hosted';
+}
+
+function buildOpenAiPayUrl(sessionId: string): string {
+  return `https://pay.openai.com/c/pay/${encodeURIComponent(sessionId)}?ui_mode=hosted`;
 }
 
 function normalizeAcceptLanguage(value: unknown): string {
