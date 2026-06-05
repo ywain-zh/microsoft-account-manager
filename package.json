@@ -8,7 +8,7 @@
     "dev:web": "vite",
     "dev:server": "node --watch --experimental-strip-types server/main.ts",
     "build:web": "vite build",
-    "build:server": "esbuild server/main.ts server/cli/migrate.ts server/cli/import-legacy.ts --bundle --platform=node --format=esm --target=node22 --external:better-sqlite3 --outdir=build/server --outbase=server --entry-names=[dir]/[name]",
+    "build:server": "esbuild server/main.ts server/cli/migrate.ts server/cli/import-legacy.ts --bundle --platform=node --format=esm --target=node22 --external:better-sqlite3 --outdir=build/server --outbase=server --entry-names=[dir]/[name] && node scripts/copy-runtime-assets.mjs",
     "build": "npm run build:web && npm run build:server",
     "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
     "db:migrate": "node build/server/cli/migrate.js",

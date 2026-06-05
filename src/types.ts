@@ -148,6 +148,8 @@ export interface Sub2ApiLongLinkProxyCheckResponse {
 export interface Sub2ApiLongLinkCheckoutPayload {
   token: string;
   plan: 'plus' | 'team';
+  linkType?: 'hosted' | 'gopay';
+  checkoutUiMode?: 'hosted' | 'custom' | 'redirect';
   country: string;
   currency: string;
   locale: string;
@@ -156,6 +158,12 @@ export interface Sub2ApiLongLinkCheckoutPayload {
   workspaceName?: string;
   seatQuantity?: number;
   proxyPool?: string;
+  gopayName?: string;
+  gopayLine1?: string;
+  gopayLine2?: string;
+  gopayCity?: string;
+  gopayState?: string;
+  gopayPostalCode?: string;
 }
 
 export interface Sub2ApiLongLinkCheckoutResponse {
@@ -163,6 +171,15 @@ export interface Sub2ApiLongLinkCheckoutResponse {
   url: string;
   chatgptCheckoutUrl: string;
   openaiPayUrl: string;
+  stripeHostedUrl: string;
+  checkoutUrl: string;
+  stripeRedirectUrl: string;
+  providerRedirectUrl: string;
+  longUrl: string;
+  fallback: string;
+  providerError: string;
+  expectedAmount: number | null;
+  linkType: 'hosted' | 'gopay';
   proxyUsed: string;
   direct: boolean;
   raw: unknown;

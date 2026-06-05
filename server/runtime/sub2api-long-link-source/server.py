@@ -9,14 +9,32 @@ import urllib.request
 
 
 HOST = "127.0.0.1"
-PORT = 7790
+PORT = 17790
 CHECKOUT_URL = "https://chatgpt.com/backend-api/payments/checkout"
+STRIPE_API_BASE = "https://api.stripe.com/v1"
+STRIPE_CHECKOUT_REFERER = "https://checkout.stripe.com/c/pay/{session_id}"
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/136.0.0.0 Safari/537.36"
+)
 IP_CHECK_URLS = (
     "http://iprust.io/ip.json",
     "https://ipwho.is/",
     "https://api.myip.com/",
     "https://ipinfo.io/json",
 )
+GOPAY_DEFAULT_BILLING = {
+    "name": "Budi Santoso",
+    "address": {
+        "country": "ID",
+        "line1": "Jl. MH Thamrin No. 10",
+        "line2": "",
+        "city": "Jakarta",
+        "state": "DKI Jakarta",
+        "postal_code": "10350",
+    },
+}
 
 try:
     from curl_cffi import requests as curl_requests
@@ -70,8 +88,8 @@ INDEX_HTML = r"""<!doctype html>
   <div class="wrap">
     <div class="card">
       <h1>本地支付长链生成器</h1>
-      <div class="muted">版本：地区下拉 + 币种自动跟随</div>
-      <p>粘贴 ChatGPT accessToken 后，本机后端会创建新的 hosted checkout 支付会话，返回 pay.openai.com 长链。</p>
+      <div class="muted">版本：hosted + GoPay（实验性）</div>
+      <p>粘贴 ChatGPT accessToken 后，本机后端可以直接返回 hosted checkout 长链，或继续提取 GoPay 的 Midtrans 跳转长链。</p>
       <div class="warn">隐私说明：本工具不在服务端保存 token、代理、优惠码或生成结果；代理仅保存在用户自己的浏览器 localStorage；服务端请求日志已关闭。</div>
 
       <div class="row" style="justify-content:space-between;align-items:center;margin-top:18px;margin-bottom:8px">
@@ -87,6 +105,13 @@ INDEX_HTML = r"""<!doctype html>
           <select id="plan">
             <option value="plus">ChatGPT Plus</option>
             <option value="team">ChatGPT Team</option>
+          </select>
+        </div>
+        <div>
+          <label>链类型</label>
+          <select id="linkType">
+            <option value="hosted" selected>hosted：站内 / Stripe 页面</option>
+            <option value="gopay">gopay：提取 Midtrans 跳转长链</option>
           </select>
         </div>
         <div>
@@ -134,6 +159,38 @@ INDEX_HTML = r"""<!doctype html>
           <input id="currency" value="EUR" maxlength="3" readonly />
           <div class="muted">币种跟随地区自动填充。</div>
         </div>
+      </div>
+      <div id="gopayHint" class="muted" style="display:none;margin-top:8px">GoPay 仅支持 ID / IDR。若 Plus 开启免费月导致应付金额为 0，后端会直接提示你关闭优惠参数。</div>
+
+      <div id="gopayFields" style="display:none">
+        <label>GoPay 账单资料</label>
+        <div class="grid">
+          <div>
+            <label>姓名</label>
+            <input id="gopayName" value="Budi Santoso" />
+          </div>
+          <div>
+            <label>邮编</label>
+            <input id="gopayPostalCode" value="10350" />
+          </div>
+          <div>
+            <label>地址 1</label>
+            <input id="gopayLine1" value="Jl. MH Thamrin No. 10" />
+          </div>
+          <div>
+            <label>省 / 州</label>
+            <input id="gopayState" value="DKI Jakarta" />
+          </div>
+          <div>
+            <label>地址 2</label>
+            <input id="gopayLine2" placeholder="可留空" />
+          </div>
+          <div>
+            <label>城市</label>
+            <input id="gopayCity" value="Jakarta" />
+          </div>
+        </div>
+        <div class="muted">留空时会优先使用 Stripe 页面里的资料；若没有，再回退到这里的默认印尼资料。</div>
       </div>
 
       <label>出口代理（可选）</label>
@@ -287,6 +344,19 @@ INDEX_HTML = r"""<!doctype html>
       $('teamFields').style.display = isTeam ? 'block' : 'none';
     }
 
+    function updateLinkTypeFields() {
+      const isGopay = $('linkType').value === 'gopay';
+      $('gopayFields').style.display = isGopay ? 'block' : 'none';
+      $('gopayHint').style.display = isGopay ? 'block' : 'none';
+      $('mode').disabled = isGopay;
+      $('country').disabled = isGopay;
+      if (isGopay) {
+        $('mode').value = 'hosted';
+        if ($('country').value !== 'ID') $('country').value = 'ID';
+        updateCurrencyForCountry();
+      }
+    }
+
     function loadSavedProxy() {
       try {
         const saved = localStorage.getItem(PROXY_STORAGE_KEY) || '';
@@ -318,8 +388,11 @@ INDEX_HTML = r"""<!doctype html>
 
     function linkLabel(key) {
       const labels = {
-        url: 'Stripe/外部支付链接',
-        stripe_hosted_url: 'Stripe/外部支付链接',
+        provider_redirect_url: 'GoPay 提供方长链',
+        long_url: '最终长链',
+        stripe_redirect_url: 'Stripe Redirect URL',
+        url: 'OpenAI 站内长链',
+        stripe_hosted_url: 'Stripe Hosted 页面',
         checkout_url: 'ChatGPT 支付短链',
         chatgpt_checkout_url: 'ChatGPT 支付短链',
         openai_payurl: 'OpenAI 站内长链',
@@ -329,8 +402,11 @@ INDEX_HTML = r"""<!doctype html>
 
     function setResult(payload) {
       const links = [];
-      for (const key of ['url', 'stripe_hosted_url', 'checkout_url', 'chatgpt_checkout_url']) {
-        if (payload[key]) links.push([key, payload[key]]);
+      const seen = new Set();
+      for (const key of ['provider_redirect_url', 'long_url', 'stripe_redirect_url', 'stripe_hosted_url', 'url', 'checkout_url', 'chatgpt_checkout_url', 'openai_payurl']) {
+        if (!payload[key] || seen.has(payload[key])) continue;
+        seen.add(payload[key]);
+        links.push([key, payload[key]]);
       }
       currentLink = links.length ? links[0][1] : '';
       $('copy').disabled = !currentLink;
@@ -376,7 +452,9 @@ INDEX_HTML = r"""<!doctype html>
         $('proxy').value = payload.proxy_used;
         saveProxy(false);
       }
-      if (currentLink) setOk('已生成支付长链。PayPal 邮箱自动填写取决于该会话绑定的 ChatGPT 账号。');
+      if (currentLink) {
+        setOk(payload.link_type === 'gopay' ? '已生成 GoPay 长链。' : '已生成支付长链。PayPal 邮箱自动填写取决于该会话绑定的 ChatGPT 账号。');
+      }
     }
 
     $('token').addEventListener('input', updateTokenHint);
@@ -394,6 +472,7 @@ INDEX_HTML = r"""<!doctype html>
     $('country').addEventListener('change', updateCurrencyForCountry);
     $('proxy').addEventListener('change', saveProxy);
     $('plan').addEventListener('change', updatePlanFields);
+    $('linkType').addEventListener('change', updateLinkTypeFields);
 
     $('saveProxy').addEventListener('click', saveProxy);
 
@@ -453,6 +532,7 @@ INDEX_HTML = r"""<!doctype html>
 
       const body = {
         token,
+        link_type: $('linkType').value,
         plan: $('plan').value,
         checkout_ui_mode: $('mode').value,
         country: $('country').value.trim().toUpperCase(),
@@ -462,6 +542,12 @@ INDEX_HTML = r"""<!doctype html>
         promo_code: extractPromoCode($('promoCode').value),
         workspace_name: $('workspace').value.trim(),
         seat_quantity: Number($('seats').value || 2),
+        gopay_name: $('gopayName').value.trim(),
+        gopay_line1: $('gopayLine1').value.trim(),
+        gopay_line2: $('gopayLine2').value.trim(),
+        gopay_city: $('gopayCity').value.trim(),
+        gopay_state: $('gopayState').value.trim(),
+        gopay_postal_code: $('gopayPostalCode').value.trim(),
       };
 
       $('go').disabled = true;
@@ -499,6 +585,7 @@ INDEX_HTML = r"""<!doctype html>
 
     loadSavedProxy();
     updatePlanFields();
+    updateLinkTypeFields();
     updateCurrencyForCountry();
     updateTokenHint();
   </script>
@@ -582,11 +669,7 @@ def _request_headers(token):
         "Origin": "https://chatgpt.com",
         "Referer": "https://chatgpt.com/",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/136.0.0.0 Safari/537.36"
-        ),
+        "User-Agent": BROWSER_USER_AGENT,
     }
 
 
@@ -617,6 +700,287 @@ def _proxy_candidates(value):
         if scheme not in schemes:
             schemes.append(scheme)
     return [f"{scheme}://{rest}" for scheme in schemes]
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _build_urllib_opener(proxy="", allow_redirects=True):
+    handlers = []
+    if proxy:
+        handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+    if not allow_redirects:
+        handlers.append(_NoRedirectHandler())
+    return urllib.request.build_opener(*handlers)
+
+
+def _http_request(method, url, headers=None, body=None, proxy="", allow_redirects=True, timeout=30):
+    payload = body.encode("utf-8") if isinstance(body, str) else body
+    last_error = ""
+    for candidate in _proxy_candidates(proxy):
+        if curl_requests is not None:
+            try:
+                proxies = {"http": candidate, "https": candidate} if candidate else None
+                response = curl_requests.request(
+                    method,
+                    url,
+                    data=payload,
+                    headers=headers or {},
+                    impersonate="chrome136",
+                    proxies=proxies,
+                    timeout=timeout,
+                    allow_redirects=allow_redirects,
+                )
+                return response.status_code, response.text, dict(response.headers), str(response.url)
+            except Exception as exc:
+                last_error = str(exc)
+                continue
+
+        if candidate.lower().startswith(("socks4://", "socks4a://", "socks5://", "socks5h://")):
+            last_error = "当前 Python 环境不支持 urllib 使用 socks 代理，请用 run.bat 启动 curl_cffi 环境。"
+            continue
+
+        req = urllib.request.Request(url, data=payload, method=method, headers=headers or {})
+        opener = _build_urllib_opener(candidate, allow_redirects=allow_redirects)
+        try:
+            with opener.open(req, timeout=timeout) as resp:
+                text = resp.read().decode("utf-8", errors="replace")
+                return resp.status, text, dict(resp.headers.items()), resp.geturl()
+        except urllib.error.HTTPError as exc:
+            text = exc.read().decode("utf-8", errors="replace")
+            return exc.code, text, dict(exc.headers.items()), exc.geturl()
+        except urllib.error.URLError as exc:
+            last_error = str(exc.reason)
+
+    return 502, json.dumps({"error": last_error or "请求失败"}), {}, url
+
+
+def _stripe_headers(session_id):
+    return {
+        "Accept": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Origin": "https://checkout.stripe.com",
+        "Referer": STRIPE_CHECKOUT_REFERER.format(session_id=session_id),
+        "User-Agent": BROWSER_USER_AGENT,
+    }
+
+
+def _stripe_post_form(path, form, session_id, proxy=""):
+    status, text, resp_headers, final_url = _http_request(
+        "POST",
+        f"{STRIPE_API_BASE}/{path.lstrip('/')}",
+        headers=_stripe_headers(session_id),
+        body=urllib.parse.urlencode({k: v for k, v in form.items() if v is not None}),
+        proxy=proxy,
+        timeout=30,
+    )
+    return status, _parse_response_json(text), resp_headers, final_url
+
+
+def _stripe_checkout_url(session_id):
+    return STRIPE_CHECKOUT_REFERER.format(session_id=session_id)
+
+
+def _stripe_return_url(session_id):
+    return f"https://pay.openai.com/c/pay/{session_id}?redirect_pm_type=gopay&lid=local&ui_mode=hosted"
+
+
+def _api_error_message(data, default="请求失败"):
+    if isinstance(data, dict):
+        error = data.get("error")
+        if isinstance(error, dict):
+            return error.get("message") or error.get("code") or default
+        return data.get("message") or data.get("error") or default
+    return default
+
+
+def _stripe_due_amount(page):
+    if not isinstance(page, dict):
+        return 0
+    total_summary = page.get("total_summary") if isinstance(page.get("total_summary"), dict) else {}
+    invoice = page.get("invoice") if isinstance(page.get("invoice"), dict) else {}
+    line_item_group = page.get("line_item_group") if isinstance(page.get("line_item_group"), dict) else {}
+    for value in (
+        total_summary.get("due"),
+        total_summary.get("total"),
+        invoice.get("amount_due"),
+        line_item_group.get("total"),
+    ):
+        if isinstance(value, int):
+            return value
+    return 0
+
+
+def _gopay_billing_details(body, page):
+    customer = page.get("customer") if isinstance(page, dict) and isinstance(page.get("customer"), dict) else {}
+    customer_address = customer.get("address") if isinstance(customer.get("address"), dict) else {}
+    default_address = GOPAY_DEFAULT_BILLING["address"]
+
+    def pick(*values):
+        for value in values:
+            text = str(value or "").strip()
+            if text:
+                return text
+        return ""
+
+    address = {
+        "country": "ID",
+        "line1": pick(body.get("gopay_line1"), customer_address.get("line1"), default_address["line1"]),
+        "line2": pick(body.get("gopay_line2"), customer_address.get("line2"), default_address["line2"]),
+        "city": pick(body.get("gopay_city"), customer_address.get("city"), default_address["city"]),
+        "state": pick(body.get("gopay_state"), customer_address.get("state"), default_address["state"]),
+        "postal_code": pick(body.get("gopay_postal_code"), customer_address.get("postal_code"), default_address["postal_code"]),
+    }
+
+    return {
+        "name": pick(body.get("gopay_name"), customer.get("name"), GOPAY_DEFAULT_BILLING["name"]),
+        "address": address,
+    }
+
+
+def _stripe_create_gopay_payment_method(session_id, publishable_key, billing, proxy=""):
+    status, data, _, _ = _stripe_post_form(
+        "payment_methods",
+        {
+            "type": "gopay",
+            "billing_details[name]": billing["name"],
+            "billing_details[address][country]": billing["address"]["country"],
+            "billing_details[address][line1]": billing["address"]["line1"],
+            "billing_details[address][line2]": billing["address"]["line2"],
+            "billing_details[address][city]": billing["address"]["city"],
+            "billing_details[address][state]": billing["address"]["state"],
+            "billing_details[address][postal_code]": billing["address"]["postal_code"],
+            "key": publishable_key,
+        },
+        session_id,
+        proxy=proxy,
+    )
+    return status, data
+
+
+def _stripe_confirm_gopay_payment_page(session_id, publishable_key, payment_method_id, expected_amount, proxy=""):
+    status, data, _, _ = _stripe_post_form(
+        f"payment_pages/{session_id}/confirm",
+        {
+            "eid": "NA",
+            "payment_method": payment_method_id,
+            "expected_payment_method_type": "gopay",
+            "return_url": _stripe_return_url(session_id),
+            "consent[terms_of_service]": "accepted",
+            "expected_amount": str(expected_amount),
+            "key": publishable_key,
+        },
+        session_id,
+        proxy=proxy,
+    )
+    return status, data
+
+
+def _stripe_follow_redirect_location(url, proxy=""):
+    if not url:
+        return ""
+    status, _text, headers, _final_url = _http_request(
+        "GET",
+        url,
+        headers={"User-Agent": BROWSER_USER_AGENT},
+        proxy=proxy,
+        allow_redirects=False,
+        timeout=30,
+    )
+    if 300 <= status < 400:
+        return headers.get("Location") or headers.get("location") or ""
+    return ""
+
+
+def _create_gopay_link(token, body, proxy=""):
+    country = (body.get("country") or "").upper()
+    currency = (body.get("currency") or "").upper()
+    if country != "ID" or currency != "IDR":
+        return 400, {"error": "GoPay 仅支持 ID / IDR，请把地区设为印度尼西亚、币种设为 IDR。"}
+
+    checkout_body = dict(body)
+    checkout_body["checkout_ui_mode"] = "hosted"
+    checkout_status, checkout_data = _call_checkout(token, _checkout_payload(checkout_body), proxy)
+    checkout_data = _enrich_links(checkout_data)
+    if checkout_status >= 400 or not isinstance(checkout_data, dict):
+        return checkout_status, checkout_data
+
+    session_id = checkout_data.get("checkout_session_id")
+    publishable_key = checkout_data.get("publishable_key")
+    if not session_id or not publishable_key:
+        return 502, {
+            "error": "OpenAI checkout 返回缺少 checkout_session_id 或 publishable_key。",
+            "raw_checkout": checkout_data,
+        }
+
+    init_status, init_data, _, _ = _stripe_post_form(
+        f"payment_pages/{session_id}/init",
+        {
+            "eid": "NA",
+            "browser_locale": "en-US",
+            "browser_timezone": "Asia/Shanghai",
+            "redirect_type": "url",
+            "key": publishable_key,
+        },
+        session_id,
+        proxy=proxy,
+    )
+    if init_status >= 400 or not isinstance(init_data, dict):
+        return init_status, {"error": _api_error_message(init_data, "Stripe checkout 初始化失败。"), "raw": init_data}
+
+    expected_amount = _stripe_due_amount(init_data)
+    if expected_amount <= 0:
+        return 400, {
+            "error": "当前 checkout 应付金额为 0。GoPay 需要真实应付金额；如果你开启了 Plus 免费月，请先关闭优惠参数再试。",
+            "raw_checkout": checkout_data,
+            "raw_stripe_page": init_data,
+        }
+
+    billing = _gopay_billing_details(body, init_data)
+    payment_method_status, payment_method = _stripe_create_gopay_payment_method(
+        session_id, publishable_key, billing, proxy=proxy
+    )
+    if payment_method_status >= 400 or not isinstance(payment_method, dict):
+        return payment_method_status, {"error": _api_error_message(payment_method, "创建 GoPay payment method 失败。"), "raw": payment_method}
+
+    confirm_status, confirm_data = _stripe_confirm_gopay_payment_page(
+        session_id,
+        publishable_key,
+        payment_method.get("id") or "",
+        expected_amount,
+        proxy=proxy,
+    )
+    if confirm_status >= 400 or not isinstance(confirm_data, dict):
+        return confirm_status, {"error": _api_error_message(confirm_data, "GoPay confirm 失败。"), "raw": confirm_data}
+
+    payment_intent = confirm_data.get("payment_intent") if isinstance(confirm_data.get("payment_intent"), dict) else {}
+    next_action = payment_intent.get("next_action") if isinstance(payment_intent.get("next_action"), dict) else {}
+    redirect_to_url = next_action.get("redirect_to_url") if isinstance(next_action.get("redirect_to_url"), dict) else {}
+    stripe_redirect_url = redirect_to_url.get("url") or ""
+    provider_redirect_url = _stripe_follow_redirect_location(stripe_redirect_url, proxy=proxy) if stripe_redirect_url else ""
+    stripe_hosted_url = _stripe_checkout_url(session_id)
+
+    result = dict(checkout_data)
+    result.update(
+        {
+            "link_type": "gopay",
+            "checkout_ui_mode": "hosted",
+            "payment_method_type": "gopay",
+            "stripe_hosted_url": stripe_hosted_url,
+            "stripe_redirect_url": stripe_redirect_url,
+            "provider_redirect_url": provider_redirect_url,
+            "long_url": provider_redirect_url or stripe_redirect_url or checkout_data.get("openai_payurl") or "",
+            "fallback": "" if provider_redirect_url else (stripe_redirect_url or checkout_data.get("openai_payurl") or ""),
+            "provider_error": "" if provider_redirect_url else "未能从 Stripe 跳转中提取出 GoPay 提供方地址。",
+            "expected_amount": expected_amount,
+            "gopay_billing_details": billing,
+        }
+    )
+    if body.get("checkout_ui_mode") != "hosted":
+        result["checkout_ui_mode_forced"] = "hosted"
+    return 200, _enrich_links(result)
 
 
 def _call_checkout(token, payload, proxy=""):
@@ -860,10 +1224,14 @@ class Handler(BaseHTTPRequestHandler):
             if not token:
                 self._send_json(400, {"error": "没有识别到 accessToken"})
                 return
-            payload = _checkout_payload(body)
             proxy = _normalize_proxy(body.get("proxy"))
-            status, data = _call_checkout(token, payload, proxy)
-            data = _enrich_links(data)
+            link_type = (body.get("link_type") or "hosted").lower()
+            if link_type == "gopay":
+                status, data = _create_gopay_link(token, body, proxy)
+            else:
+                payload = _checkout_payload(body)
+                status, data = _call_checkout(token, payload, proxy)
+                data = _enrich_links(data)
             self._send_json(status, data)
         except Exception as exc:
             self._send_json(500, {"error": str(exc)})

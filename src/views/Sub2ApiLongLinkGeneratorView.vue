@@ -26,6 +26,7 @@
         <section class="long-link-token-section">
           <div class="long-link-section-head">
             <h2>Access Token 或 Session JSON</h2>
+            <n-button attr-type="button" size="small" secondary @click="copySessionUrl">复制 Session 地址</n-button>
           </div>
           <div class="long-link-token-fetch">
             <n-input
@@ -58,27 +59,66 @@
 
         <section class="long-link-options-section">
           <div class="long-link-grid">
-          <n-form-item label="方案">
-            <n-select v-model:value="form.plan" :options="planOptions" />
-          </n-form-item>
-          <n-form-item label="支付页语言">
-            <n-select v-model:value="form.locale" :options="localeOptions" />
-          </n-form-item>
-          <n-form-item label="地区">
-            <n-select v-model:value="form.country" filterable :options="countryOptions" @update:value="updateCurrencyForCountry" />
-          </n-form-item>
-          <n-form-item label="币种">
-            <n-input v-model:value="form.currency" readonly />
-          </n-form-item>
+            <n-form-item label="方案">
+              <n-select v-model:value="form.plan" :options="planOptions" />
+            </n-form-item>
+            <n-form-item label="链类型">
+              <n-select v-model:value="form.linkType" :options="linkTypeOptions" @update:value="updateLinkTypeFields" />
+            </n-form-item>
+            <n-form-item label="支付页模式">
+              <n-select v-model:value="form.checkoutUiMode" :options="checkoutModeOptions" :disabled="isGopayMode" />
+            </n-form-item>
+            <n-form-item label="支付页语言">
+              <n-select v-model:value="form.locale" :options="localeOptions" />
+            </n-form-item>
+            <n-form-item label="地区">
+              <n-select
+                v-model:value="form.country"
+                filterable
+                :disabled="isGopayMode"
+                :options="countryOptions"
+                @update:value="updateCurrencyForCountry"
+              />
+            </n-form-item>
+            <n-form-item label="币种">
+              <n-input v-model:value="form.currency" readonly />
+            </n-form-item>
+          </div>
+
+          <div v-if="isGopayMode" class="gopay-panel">
+            <div class="gopay-panel-head">
+              <h3>GoPay 账单资料</h3>
+              <p>GoPay 仅支持印度尼西亚 ID / IDR；如果 Plus 免费月导致金额为 0，请关闭优惠参数。</p>
+            </div>
+            <div class="long-link-grid">
+              <n-form-item label="姓名">
+                <n-input v-model:value="form.gopayName" placeholder="Budi Santoso" />
+              </n-form-item>
+              <n-form-item label="邮编">
+                <n-input v-model:value="form.gopayPostalCode" placeholder="10350" />
+              </n-form-item>
+              <n-form-item label="地址 1">
+                <n-input v-model:value="form.gopayLine1" placeholder="Jl. MH Thamrin No. 10" />
+              </n-form-item>
+              <n-form-item label="省 / 州">
+                <n-input v-model:value="form.gopayState" placeholder="DKI Jakarta" />
+              </n-form-item>
+              <n-form-item label="地址 2">
+                <n-input v-model:value="form.gopayLine2" placeholder="可留空" />
+              </n-form-item>
+              <n-form-item label="城市">
+                <n-input v-model:value="form.gopayCity" placeholder="Jakarta" />
+              </n-form-item>
+            </div>
           </div>
 
           <div v-if="form.plan === 'team'" class="long-link-grid">
-          <n-form-item label="Team 工作区名称">
-            <n-input v-model:value="form.workspaceName" placeholder="linux-do" />
-          </n-form-item>
-          <n-form-item label="席位数">
-            <n-input-number v-model:value="form.seatQuantity" :min="2" :max="1000" />
-          </n-form-item>
+            <n-form-item label="Team 工作区名称">
+              <n-input v-model:value="form.workspaceName" placeholder="linux-do" />
+            </n-form-item>
+            <n-form-item label="席位数">
+              <n-input-number v-model:value="form.seatQuantity" :min="2" :max="1000" />
+            </n-form-item>
           </div>
 
           <n-form-item v-if="form.plan === 'team'" label="Team 优惠码 / 优惠链接">
@@ -102,9 +142,17 @@
           <h3>生成结果</h3>
           <span>{{ result?.direct ? '本机出口' : result?.proxyUsed || '代理出口' }}</span>
         </div>
-        <div class="result-link-row">
-          <code>{{ resultUrl }}</code>
-            <n-button attr-type="button" size="small" @click="copyResultUrl">复制</n-button>
+        <div class="result-links">
+          <div v-for="item in resultLinks" :key="`${item.key}-${item.url}`" class="result-link-row">
+            <div class="result-link-main">
+              <span>{{ item.label }}</span>
+              <code>{{ item.url }}</code>
+            </div>
+            <div class="result-link-actions">
+              <n-button attr-type="button" size="small" @click="copyResultLink(item.url)">复制</n-button>
+              <n-button attr-type="button" size="small" @click="openResultLink(item.url)">打开</n-button>
+            </div>
+          </div>
         </div>
         <n-collapse>
           <n-collapse-item title="原始返回" name="raw">
@@ -217,6 +265,12 @@ interface ProxyListItem {
   statusText: string;
 }
 
+interface ResultLinkItem {
+  key: string;
+  label: string;
+  url: string;
+}
+
 const { message } = createDiscreteApi(['message']);
 
 const COUNTRY_OPTIONS: CountryOption[] = [
@@ -253,6 +307,17 @@ const planOptions = [
   { label: 'ChatGPT Team', value: 'team' }
 ];
 
+const linkTypeOptions = [
+  { label: 'Hosted 长链', value: 'hosted' },
+  { label: 'GoPay 长链', value: 'gopay' }
+];
+
+const checkoutModeOptions = [
+  { label: 'hosted：pay.openai.com 长链', value: 'hosted' },
+  { label: 'custom：chatgpt.com/checkout 链接', value: 'custom' },
+  { label: 'redirect', value: 'redirect' }
+];
+
 const localeOptions = [
   { label: '英文', value: 'en-US' },
   { label: '中文', value: 'zh-CN' },
@@ -265,13 +330,21 @@ const currencyByCountry = new Map(COUNTRY_OPTIONS.map((item) => [item.value, ite
 const form = reactive({
   token: '',
   plan: 'plus' as 'plus' | 'team',
+  linkType: 'hosted' as 'hosted' | 'gopay',
+  checkoutUiMode: 'hosted' as 'hosted' | 'custom' | 'redirect',
   locale: 'en-US',
   country: 'US',
   currency: 'USD',
   usePromo: true,
   promoCode: 'STRIPEATLASGPT4BIZ050126',
   workspaceName: 'linux-do',
-  seatQuantity: 2
+  seatQuantity: 2,
+  gopayName: 'Budi Santoso',
+  gopayLine1: 'Jl. MH Thamrin No. 10',
+  gopayLine2: '',
+  gopayCity: 'Jakarta',
+  gopayState: 'DKI Jakarta',
+  gopayPostalCode: '10350'
 });
 
 const proxyPool = ref('');
@@ -289,7 +362,30 @@ const generating = ref(false);
 const accessTokenFetching = ref(false);
 const result = ref<Sub2ApiLongLinkCheckoutResponse | null>(null);
 
-const resultUrl = computed(() => result.value?.url || '');
+const isGopayMode = computed(() => form.linkType === 'gopay');
+const resultLinks = computed<ResultLinkItem[]>(() => {
+  if (!result.value) {
+    return [];
+  }
+  const seen = new Set<string>();
+  return [
+    { key: 'providerRedirectUrl', label: 'GoPay 提供方长链', url: result.value.providerRedirectUrl },
+    { key: 'longUrl', label: '最终长链', url: result.value.longUrl },
+    { key: 'stripeRedirectUrl', label: 'Stripe Redirect URL', url: result.value.stripeRedirectUrl },
+    { key: 'openaiPayUrl', label: 'OpenAI 站内长链', url: result.value.openaiPayUrl },
+    { key: 'stripeHostedUrl', label: 'Stripe Hosted 页面', url: result.value.stripeHostedUrl },
+    { key: 'checkoutUrl', label: 'ChatGPT 支付短链', url: result.value.checkoutUrl },
+    { key: 'url', label: result.value.linkType === 'gopay' ? '主要链接' : '支付长链', url: result.value.url },
+    { key: 'chatgptCheckoutUrl', label: 'ChatGPT Checkout', url: result.value.chatgptCheckoutUrl }
+  ].filter((item) => {
+    if (!item.url || seen.has(item.url)) {
+      return false;
+    }
+    seen.add(item.url);
+    return true;
+  });
+});
+const resultUrl = computed(() => resultLinks.value[0]?.url || result.value?.url || '');
 const rawResultText = computed(() => JSON.stringify(result.value?.raw ?? {}, null, 2));
 
 onMounted(() => {
@@ -362,6 +458,8 @@ async function generateLongLink(): Promise<void> {
     result.value = await api.createSub2ApiLongLinkCheckout({
       token,
       plan: form.plan,
+      linkType: form.linkType,
+      checkoutUiMode: form.checkoutUiMode,
       country: form.country,
       currency: form.currency,
       locale: form.locale,
@@ -369,9 +467,15 @@ async function generateLongLink(): Promise<void> {
       promoCode: form.promoCode,
       workspaceName: form.workspaceName,
       seatQuantity: form.seatQuantity,
-      proxyPool: proxyPool.value
+      proxyPool: proxyPool.value,
+      gopayName: form.gopayName,
+      gopayLine1: form.gopayLine1,
+      gopayLine2: form.gopayLine2,
+      gopayCity: form.gopayCity,
+      gopayState: form.gopayState,
+      gopayPostalCode: form.gopayPostalCode
     });
-    message.success('支付长链已生成');
+    message.success(form.linkType === 'gopay' ? 'GoPay 长链已生成' : '支付长链已生成');
   } catch (error) {
     message.error(getErrorMessage(error));
   } finally {
@@ -403,6 +507,15 @@ function updateCurrencyForCountry(country: string): void {
   form.currency = currencyByCountry.get(country) ?? 'USD';
 }
 
+function updateLinkTypeFields(value = form.linkType): void {
+  if (value !== 'gopay') {
+    return;
+  }
+  form.checkoutUiMode = 'hosted';
+  form.country = 'ID';
+  form.currency = 'IDR';
+}
+
 function updateTokenHint(): void {
   const token = extractToken(form.token);
   if (!token) {
@@ -425,6 +538,18 @@ function openResultUrl(): void {
   if (resultUrl.value) {
     window.open(resultUrl.value, '_blank', 'noopener,noreferrer');
   }
+}
+
+async function copyResultLink(url: string): Promise<void> {
+  await copyText(url, '链接已复制');
+}
+
+function openResultLink(url: string): void {
+  window.open(url, '_blank', 'noopener,noreferrer');
+}
+
+async function copySessionUrl(): Promise<void> {
+  await copyText('https://chatgpt.com/api/auth/session', 'Session 地址已复制');
 }
 
 function openProxyModal(): void {
@@ -870,6 +995,30 @@ function getErrorMessage(error: unknown): string {
   gap: 18px;
 }
 
+.gopay-panel {
+  display: grid;
+  gap: 14px;
+  margin: 4px 0 18px;
+  padding: 16px;
+  border: 1px solid rgba(14, 165, 233, 0.22);
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.gopay-panel-head h3 {
+  margin: 0;
+  color: var(--title);
+  font-size: 0.96rem;
+  font-weight: 700;
+}
+
+.gopay-panel-head p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.6;
+}
+
 .proxy-status-panel {
   display: flex;
   align-items: center;
@@ -949,6 +1098,11 @@ function getErrorMessage(error: unknown): string {
   font-size: 0.86rem;
 }
 
+.result-links {
+  display: grid;
+  gap: 10px;
+}
+
 .result-link-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -960,10 +1114,29 @@ function getErrorMessage(error: unknown): string {
   background: var(--surface-muted);
 }
 
+.result-link-main {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.result-link-main span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
 .result-link-row code {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.result-link-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 pre {
@@ -1160,6 +1333,14 @@ pre {
   }
 
   .long-link-actions :deep(.n-button) {
+    flex: 1 1 auto;
+  }
+
+  .result-link-actions {
+    justify-content: stretch;
+  }
+
+  .result-link-actions :deep(.n-button) {
     flex: 1 1 auto;
   }
 }

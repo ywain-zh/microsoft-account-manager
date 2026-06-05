@@ -266,6 +266,8 @@ interface Sub2ApiConfig {
 interface Sub2ApiLongLinkCheckoutRequest {
   token: string;
   plan: 'plus' | 'team';
+  linkType?: 'hosted' | 'gopay';
+  checkoutUiMode?: 'hosted' | 'custom' | 'redirect';
   country: string;
   currency: string;
   locale: string;
@@ -274,6 +276,12 @@ interface Sub2ApiLongLinkCheckoutRequest {
   workspaceName?: string;
   seatQuantity?: number;
   proxyPool?: string;
+  gopayName?: string;
+  gopayLine1?: string;
+  gopayLine2?: string;
+  gopayCity?: string;
+  gopayState?: string;
+  gopayPostalCode?: string;
 }
 
 interface Sub2ApiLongLinkProxyCheckRequest {
@@ -2840,24 +2848,37 @@ function normalizeSub2ApiLongLinkCheckoutPayload(
   input: Partial<Sub2ApiLongLinkCheckoutRequest>
 ): Sub2ApiLongLinkCheckoutPayload {
   const token = extractChatGptAccessToken(input.token);
+  const linkType = input.linkType === 'gopay' ? 'gopay' : 'hosted';
   const plan = input.plan === 'team' ? 'team' : 'plus';
-  const country = asText(input.country).trim().toUpperCase() || 'US';
-  const currency = asText(input.currency).trim().toUpperCase() || 'USD';
+  const country = linkType === 'gopay' ? 'ID' : asText(input.country).trim().toUpperCase() || 'US';
+  const currency = linkType === 'gopay' ? 'IDR' : asText(input.currency).trim().toUpperCase() || 'USD';
   const locale = asText(input.locale).trim() || 'en-US';
   const payload: Sub2ApiLongLinkCheckoutPayload = {
     token,
     plan,
+    linkType,
+    checkoutUiMode: normalizeSub2ApiLongLinkCheckoutUiMode(input.checkoutUiMode),
     country,
     currency,
     locale,
     usePromo: input.usePromo !== false,
     promoCode: asText(input.promoCode).trim(),
     workspaceName: asText(input.workspaceName).trim(),
-    seatQuantity: normalizeInteger(input.seatQuantity, 2, 2, 1000)
+    seatQuantity: normalizeInteger(input.seatQuantity, 2, 2, 1000),
+    gopayName: asText(input.gopayName).trim(),
+    gopayLine1: asText(input.gopayLine1).trim(),
+    gopayLine2: asText(input.gopayLine2).trim(),
+    gopayCity: asText(input.gopayCity).trim(),
+    gopayState: asText(input.gopayState).trim(),
+    gopayPostalCode: asText(input.gopayPostalCode).trim()
   };
 
   validateSub2ApiLongLinkCheckoutPayload(payload);
   return payload;
+}
+
+function normalizeSub2ApiLongLinkCheckoutUiMode(value: unknown): 'hosted' | 'custom' | 'redirect' {
+  return value === 'custom' || value === 'redirect' ? value : 'hosted';
 }
 
 function normalizeTranslationConfig(input: Partial<TranslationConfig>): TranslationConfig {
@@ -3010,11 +3031,29 @@ function validateSub2ApiLongLinkCheckoutPayload(payload: Sub2ApiLongLinkCheckout
   if (payload.locale.length > 32) {
     throw new HTTPException(400, { message: '支付页语言长度异常' });
   }
+  if (payload.checkoutUiMode !== 'hosted' && payload.checkoutUiMode !== 'custom' && payload.checkoutUiMode !== 'redirect') {
+    throw new HTTPException(400, { message: '支付页模式不支持' });
+  }
   if ((payload.promoCode ?? '').length > 255) {
     throw new HTTPException(400, { message: '优惠码长度不能超过 255 个字符' });
   }
   if ((payload.workspaceName ?? '').length > 120) {
     throw new HTTPException(400, { message: 'Team 工作区名称不能超过 120 个字符' });
+  }
+  if (payload.linkType === 'gopay' && (payload.country !== 'ID' || payload.currency !== 'IDR')) {
+    throw new HTTPException(400, { message: 'GoPay 仅支持 ID / IDR' });
+  }
+  for (const [label, value, limit] of [
+    ['GoPay 姓名', payload.gopayName, 120],
+    ['GoPay 地址 1', payload.gopayLine1, 255],
+    ['GoPay 地址 2', payload.gopayLine2, 255],
+    ['GoPay 城市', payload.gopayCity, 120],
+    ['GoPay 省 / 州', payload.gopayState, 120],
+    ['GoPay 邮编', payload.gopayPostalCode, 40]
+  ] as const) {
+    if ((value ?? '').length > limit) {
+      throw new HTTPException(400, { message: `${label}长度不能超过 ${limit} 个字符` });
+    }
   }
 }
 
