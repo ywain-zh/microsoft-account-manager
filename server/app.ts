@@ -1,5 +1,5 @@
-import { spawn } from 'node:child_process';
 import http from 'node:http';
+import { spawn } from 'node:child_process';
 import { createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
 import { Hono } from 'hono';
@@ -13,22 +13,6 @@ import {
   getSystemBackupJob,
   startSystemBackup
 } from './runtime/system-backup.js';
-import {
-  runChatGptHeadlessReauth
-} from './runtime/chatgpt-headless-reauth.js';
-import {
-  createSub2ApiAuthContext,
-  generateSub2ApiOpenAiOAuth
-} from './runtime/sub2api-oauth.js';
-import {
-  runSub2ApiReauthTask,
-  type Sub2ApiReauthConfig,
-  type Sub2ApiReauthLogLevel,
-  type Sub2ApiReauthProgress,
-  type Sub2ApiReauthStartPayload,
-  type Sub2ApiReauthSummary,
-  type Sub2ApiReauthTarget
-} from './runtime/sub2api-reauth.js';
 import {
   DEFAULT_SUB2API_LONG_LINK_CONFIG,
   checkSub2ApiLongLinkProxy,
@@ -396,23 +380,6 @@ interface Sub2ApiDeleteAccountDetail {
   message: string;
 }
 
-interface ChatGptVerificationCodeResult {
-  code: string | null;
-  source: MailReadService | null;
-  message: string;
-}
-
-interface Sub2ApiReauthTaskResponse {
-  taskId: string;
-  status: 'running' | 'success' | 'error' | 'cancelled';
-  createdAt: string;
-  updatedAt: string;
-  logs: Sub2ApiDetectionLogItem[];
-  progress: Sub2ApiReauthProgress;
-  summary: Sub2ApiReauthSummary | null;
-  error: string | null;
-}
-
 interface Sub2ApiGptExportItem {
   id_token: string;
   access_token: string;
@@ -587,7 +554,6 @@ const DEFAULT_CLOUD_MAIL_CONFIG: CloudMailConfig = {
 };
 
 const SUB2API_CONFIG_KEY = 'sub2api_config';
-const SUB2API_REAUTH_CONFIG_KEY = 'sub2api_reauth_config';
 const SUB2API_LONG_LINK_CONFIG_KEY = 'sub2api_long_link_config';
 const DEFAULT_SUB2API_TEST_MODEL = 'gpt-5.5';
 const SUB2API_PAGE_SIZE = 100;
@@ -595,20 +561,6 @@ const SUB2API_PAGE_SIZE = 100;
 const DEFAULT_SUB2API_CONFIG: Sub2ApiConfig = {
   baseUrl: '',
   adminApiKey: ''
-};
-
-const DEFAULT_SUB2API_REAUTH_CONFIG: Sub2ApiReauthConfig = {
-  authMode: 'admin-api-key',
-  adminEmail: '',
-  adminPassword: '',
-  groupNames: ['openai-plus'],
-  defaultProxyName: '',
-  accountPriority: 1,
-  updateExisting: true,
-  autoPauseOnExpired: true,
-  verifyAfterImport: true,
-  strictEmailMatch: true,
-  allowAccessTokenOnly: false
 };
 
 const TRANSLATION_CONFIG_KEY = 'translation_config';
@@ -672,24 +624,6 @@ const ACCOUNT_SELECT_SQL = `
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
-const SUB2API_REAUTH_TASK_MAX_AGE_MS = 2 * 60 * 60 * 1000;
-const SUB2API_REAUTH_TASK_MAX_LOGS = 500;
-
-interface Sub2ApiReauthBackgroundTask {
-  id: string;
-  status: 'running' | 'success' | 'error' | 'cancelled';
-  createdAt: string;
-  updatedAt: string;
-  logs: Sub2ApiDetectionLogItem[];
-  progress: Sub2ApiReauthProgress;
-  summary: Sub2ApiReauthSummary | null;
-  error: string | null;
-  isBrowserLogin: boolean;
-  aborted: boolean;
-}
-
-const sub2ApiReauthTasks = new Map<string, Sub2ApiReauthBackgroundTask>();
-let sub2ApiBrowserReauthRunning = false;
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -1665,19 +1599,6 @@ app.put('/api/sub2api/config', async (c) => {
   return c.json({ item });
 });
 
-app.get('/api/sub2api/reauth/config', async (c) => {
-  const item = await getSub2ApiReauthConfig(c.env.DB);
-  return c.json({ item });
-});
-
-app.put('/api/sub2api/reauth/config', async (c) => {
-  const body = await readJson<Partial<Sub2ApiReauthConfig>>(c);
-  const item = normalizeSub2ApiReauthConfig(body);
-  validateSub2ApiReauthConfig(item);
-  await setAppSetting(c.env.DB, SUB2API_REAUTH_CONFIG_KEY, JSON.stringify(item));
-  return c.json({ item });
-});
-
 app.get('/api/sub2api/long-link/config', async (c) => {
   const item = await getSub2ApiLongLinkConfig(c.env.DB);
   return c.json({ item });
@@ -2017,41 +1938,6 @@ app.post('/api/sub2api/check', async (c) => {
       Connection: 'keep-alive'
     }
   });
-});
-
-app.post('/api/sub2api/reauth/start', async (c) => {
-  const config = await getSub2ApiConfig(c.env.DB);
-  ensureSub2ApiConfigured(config);
-  const reauthConfig = await getSub2ApiReauthConfig(c.env.DB);
-  const body = await readJson<Sub2ApiReauthStartPayload>(c);
-  const usesBrowserLogin = body.credentialMode === 'browser-login';
-
-  cleanupSub2ApiReauthTasks();
-
-  if (usesBrowserLogin && sub2ApiBrowserReauthRunning) {
-    throw new HTTPException(409, { message: '已有浏览器重新授权任务正在运行，请等待当前任务结束后再试' });
-  }
-
-  const task = createSub2ApiReauthBackgroundTask(usesBrowserLogin, body.targets?.length ?? 0);
-  sub2ApiReauthTasks.set(task.id, task);
-
-  if (usesBrowserLogin) {
-    sub2ApiBrowserReauthRunning = true;
-  }
-
-  void runSub2ApiReauthBackgroundTask(c.env, task, config, reauthConfig, body);
-
-  return c.json({ taskId: task.id });
-});
-
-app.get('/api/sub2api/reauth/tasks/:taskId', (c) => {
-  cleanupSub2ApiReauthTasks();
-  const task = sub2ApiReauthTasks.get(c.req.param('taskId'));
-  if (!task) {
-    throw new HTTPException(404, { message: '重新授权任务不存在或已过期' });
-  }
-
-  return c.json(createSub2ApiReauthTaskResponse(task));
 });
 
 app.post('/api/sub2api/accounts/batch-delete', async (c) => {
@@ -2670,21 +2556,6 @@ async function getSub2ApiConfig(db: D1Database): Promise<Sub2ApiConfig> {
   }
 }
 
-async function getSub2ApiReauthConfig(db: D1Database): Promise<Sub2ApiReauthConfig> {
-  const value = await getAppSetting(db, SUB2API_REAUTH_CONFIG_KEY);
-
-  if (!value) {
-    return DEFAULT_SUB2API_REAUTH_CONFIG;
-  }
-
-  try {
-    const parsed = JSON.parse(value) as Partial<Sub2ApiReauthConfig>;
-    return normalizeSub2ApiReauthConfig(parsed);
-  } catch {
-    return DEFAULT_SUB2API_REAUTH_CONFIG;
-  }
-}
-
 async function getSub2ApiLongLinkConfig(db: D1Database): Promise<Sub2ApiLongLinkConfig> {
   const value = await getAppSetting(db, SUB2API_LONG_LINK_CONFIG_KEY);
 
@@ -2827,23 +2698,6 @@ function normalizeSub2ApiConfig(input: Partial<Sub2ApiConfig>): Sub2ApiConfig {
   };
 }
 
-function normalizeSub2ApiReauthConfig(input: Partial<Sub2ApiReauthConfig>): Sub2ApiReauthConfig {
-  const authMode = input.authMode === 'password' ? 'password' : 'admin-api-key';
-  return {
-    authMode,
-    adminEmail: asText(input.adminEmail).trim().toLowerCase(),
-    adminPassword: asText(input.adminPassword).trim(),
-    groupNames: normalizeSub2ApiReauthGroupNames(input.groupNames),
-    defaultProxyName: asText(input.defaultProxyName).trim(),
-    accountPriority: normalizeInteger(input.accountPriority, DEFAULT_SUB2API_REAUTH_CONFIG.accountPriority, 1, 10000),
-    updateExisting: input.updateExisting !== false,
-    autoPauseOnExpired: input.autoPauseOnExpired !== false,
-    verifyAfterImport: input.verifyAfterImport !== false,
-    strictEmailMatch: input.strictEmailMatch !== false,
-    allowAccessTokenOnly: input.allowAccessTokenOnly === true
-  };
-}
-
 function normalizeSub2ApiLongLinkCheckoutPayload(
   input: Partial<Sub2ApiLongLinkCheckoutRequest>
 ): Sub2ApiLongLinkCheckoutPayload {
@@ -2944,25 +2798,11 @@ function normalizeSub2ApiBaseUrl(value: unknown): string {
     const url = new URL(withProtocol);
     url.search = '';
     url.hash = '';
-    const pathname = url.pathname.replace(/\/+$/, '').replace(/\/api\/v1$/i, '');
+    const pathname = url.pathname.replace(/\/+$/, '').replace(/\/api\/v1$/i, '').replace(/\/dashboard$/i, '');
     return `${url.origin}${pathname}`;
   } catch {
     return raw;
   }
-}
-
-function normalizeSub2ApiReauthGroupNames(value: unknown): string[] {
-  const items = Array.isArray(value) ? value : asText(value).split(/[\r\n,，;；]+/);
-  const normalized = Array.from(
-    new Set(
-      items
-        .map((item) => asText(item).trim())
-        .filter(Boolean)
-        .map((item) => ({ key: item.toLowerCase(), value: item }))
-        .map((item, index, source) => source.find((candidate) => candidate.key === item.key)?.value ?? item.value)
-    )
-  );
-  return normalized.length > 0 ? normalized : DEFAULT_SUB2API_REAUTH_CONFIG.groupNames;
 }
 
 function normalizeTranslationBaseUrl(value: unknown): string {
@@ -2982,30 +2822,6 @@ function normalizeTranslationBaseUrl(value: unknown): string {
     return `${url.origin}${path}`;
   } catch {
     return raw;
-  }
-}
-
-function validateSub2ApiReauthConfig(config: Sub2ApiReauthConfig): void {
-  if (config.authMode === 'password') {
-    if (!config.adminEmail || !config.adminPassword) {
-      throw new HTTPException(400, { message: '密码模式需要填写 Sub2API 管理员邮箱和密码' });
-    }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(config.adminEmail)) {
-      throw new HTTPException(400, { message: 'Sub2API 管理员邮箱格式不合法' });
-    }
-  }
-
-  if (config.groupNames.length === 0) {
-    throw new HTTPException(400, { message: '请至少填写一个 Sub2API 分组' });
-  }
-  if (config.groupNames.some((item) => item.length > 120)) {
-    throw new HTTPException(400, { message: 'Sub2API 分组名称不能超过 120 个字符' });
-  }
-  if (config.defaultProxyName.length > 120) {
-    throw new HTTPException(400, { message: '默认代理名称不能超过 120 个字符' });
-  }
-  if (config.adminPassword.length > 255) {
-    throw new HTTPException(400, { message: 'Sub2API 管理员密码长度不能超过 255 个字符' });
   }
 }
 
@@ -4175,325 +3991,6 @@ async function collectSub2ApiGptExportItems(email: string, rawAccounts: unknown[
   }
 
   return items;
-}
-
-function createSub2ApiReauthBackgroundTask(isBrowserLogin: boolean, totalAccounts: number): Sub2ApiReauthBackgroundTask {
-  const now = new Date().toISOString();
-  return {
-    id: createShortId('reauth'),
-    status: 'running',
-    createdAt: now,
-    updatedAt: now,
-    logs: [],
-    progress: { totalAccounts: Math.max(totalAccounts, 0), processedAccounts: 0 },
-    summary: null,
-    error: null,
-    isBrowserLogin,
-    aborted: false
-  };
-}
-
-async function runSub2ApiReauthBackgroundTask(
-  env: Bindings,
-  task: Sub2ApiReauthBackgroundTask,
-  config: Sub2ApiConfig,
-  reauthConfig: Sub2ApiReauthConfig,
-  body: Sub2ApiReauthStartPayload
-): Promise<void> {
-  let logCounter = 0;
-  const emitLog = (
-    level: Sub2ApiReauthLogLevel,
-    message: string,
-    target?: Sub2ApiReauthTarget
-  ): void => {
-    logCounter += 1;
-    pushSub2ApiReauthTaskLog(task, {
-      id: `${Date.now()}-${logCounter}`,
-      timestamp: new Date().toISOString(),
-      level,
-      message,
-      accountId: target?.accountId ?? null,
-      accountName: target?.accountName ?? null,
-      accountEmail: target?.accountEmail ?? null
-    });
-  };
-
-  try {
-    emitLog('info', '重新授权后台任务已启动');
-    const taskPayload = await resolveSub2ApiReauthPayload(env, config, reauthConfig, body, emitLog, () => task.aborted);
-    const summary = await runSub2ApiReauthTask({
-      sub2apiConfig: config,
-      reauthConfig,
-      payload: taskPayload,
-      onLog: emitLog,
-      onProgress: (progress: Sub2ApiReauthProgress) => updateSub2ApiReauthTaskProgress(task, progress),
-      isAborted: () => task.aborted,
-      verifyTarget: async (target, email, modelId) => {
-        const result = await checkSub2ApiGptValidity(config, email, modelId);
-        await syncSub2ApiGptValidityToMatchedMailAccounts(env.DB, result);
-        return {
-          valid: result.valid,
-          message: result.message || (result.valid ? '账号可用' : '账号不可用')
-        };
-      }
-    });
-    task.summary = summary;
-    task.status = task.aborted ? 'cancelled' : 'success';
-    task.updatedAt = new Date().toISOString();
-    emitLog(task.status === 'success' ? 'success' : 'warning', task.status === 'success' ? '重新授权后台任务完成' : '重新授权后台任务已取消');
-  } catch (error) {
-    const message = getErrorMessage(error);
-    task.status = task.aborted ? 'cancelled' : 'error';
-    task.error = message;
-    task.updatedAt = new Date().toISOString();
-    emitLog('error', message);
-  } finally {
-    if (task.isBrowserLogin) {
-      sub2ApiBrowserReauthRunning = false;
-    }
-  }
-}
-
-function pushSub2ApiReauthTaskLog(task: Sub2ApiReauthBackgroundTask, item: Sub2ApiDetectionLogItem): void {
-  task.logs.push(item);
-  if (task.logs.length > SUB2API_REAUTH_TASK_MAX_LOGS) {
-    task.logs.splice(0, task.logs.length - SUB2API_REAUTH_TASK_MAX_LOGS);
-  }
-  task.updatedAt = item.timestamp;
-}
-
-function updateSub2ApiReauthTaskProgress(task: Sub2ApiReauthBackgroundTask, progress: Sub2ApiReauthProgress): void {
-  task.progress = progress;
-  task.updatedAt = new Date().toISOString();
-}
-
-function createSub2ApiReauthTaskResponse(task: Sub2ApiReauthBackgroundTask): Sub2ApiReauthTaskResponse {
-  return {
-    taskId: task.id,
-    status: task.status,
-    createdAt: task.createdAt,
-    updatedAt: task.updatedAt,
-    logs: task.logs,
-    progress: task.progress,
-    summary: task.summary,
-    error: task.error
-  };
-}
-
-function cleanupSub2ApiReauthTasks(): void {
-  const now = Date.now();
-  for (const [id, task] of sub2ApiReauthTasks) {
-    if (task.status === 'running') {
-      continue;
-    }
-    if (now - Date.parse(task.updatedAt) > SUB2API_REAUTH_TASK_MAX_AGE_MS) {
-      sub2ApiReauthTasks.delete(id);
-    }
-  }
-}
-
-function createShortId(prefix: string): string {
-  const bytes = new Uint8Array(9);
-  crypto.getRandomValues(bytes);
-  return `${prefix}_${encodeBase64UrlBytes(bytes)}`;
-}
-
-async function resolveSub2ApiReauthPayload(
-  env: Bindings,
-  config: Sub2ApiConfig,
-  reauthConfig: Sub2ApiReauthConfig,
-  body: Sub2ApiReauthStartPayload,
-  onLog: (level: Sub2ApiReauthLogLevel, message: string, target?: Sub2ApiReauthTarget) => void,
-  isAborted: () => boolean
-): Promise<Sub2ApiReauthStartPayload> {
-  if (body.credentialMode !== 'browser-login') {
-    return body;
-  }
-
-  const targets = normalizeReauthTargetsForBrowserLogin(body.targets);
-  if (targets.length !== 1) {
-    throw new HTTPException(400, { message: '浏览器登录模式一次只能处理一个目标邮箱' });
-  }
-
-  const target = targets[0];
-  onLog('info', '步骤 4：正在刷新 OAuth并登录，准备生成 Sub2API OpenAI OAuth 地址', target);
-  const auth = await createSub2ApiAuthContext(config, reauthConfig);
-  const oauthDraft = await generateSub2ApiOpenAiOAuth({
-    sub2apiConfig: config,
-    reauthConfig,
-    auth,
-    onLog,
-    target
-  });
-
-  const result = await runChatGptHeadlessReauth({
-    target,
-    headless: true,
-    oauthUrl: oauthDraft.oauthUrl,
-    onLog,
-    isAborted,
-    readVerificationCode: async (email, startedAt) => {
-      const codeResult = await readChatGptVerificationCode(env, email, startedAt);
-      if (codeResult.code) {
-        onLog('success', `步骤 3：已从 ${codeResult.source === 'cloud-mail' ? 'Cloud Mail' : '微软邮箱'} 读取验证码`, target);
-      } else {
-        onLog('info', `步骤 3：${codeResult.message}`, target);
-      }
-      return codeResult.code;
-    }
-  });
-  if (!result.oauthCallbackUrl) {
-    throw new Error('自动确认 OAuth 未返回 localhost 回调地址');
-  }
-
-  return {
-    ...body,
-    targets,
-    credentialMode: 'browser-oauth',
-    oauthDraft,
-    oauthCallbackUrl: result.oauthCallbackUrl,
-    dryRun: false
-  };
-}
-
-function normalizeReauthTargetsForBrowserLogin(value: unknown): Sub2ApiReauthTarget[] {
-  const items = Array.isArray(value) ? value : [];
-  const targets: Sub2ApiReauthTarget[] = [];
-
-  for (const item of items) {
-    const record = asRecord(item);
-    const accountEmail = normalizeEmailAddress(record.accountEmail ?? record.email);
-    if (!accountEmail) {
-      continue;
-    }
-    const accountId = Number(record.accountId ?? record.id);
-    targets.push({
-      accountId: Number.isSafeInteger(accountId) && accountId > 0 ? accountId : undefined,
-      accountEmail,
-      accountName: toNullableText(record.accountName ?? record.name),
-      reason: asText(record.reason).trim()
-    });
-  }
-
-  return targets;
-}
-
-async function readChatGptVerificationCode(
-  env: Bindings,
-  email: string,
-  startedAt: Date
-): Promise<ChatGptVerificationCodeResult> {
-  const normalizedEmail = normalizeEmailAddress(email);
-  if (!normalizedEmail) {
-    return { code: null, source: null, message: '目标邮箱为空，无法读取验证码' };
-  }
-
-  if (await hasCloudMailAccount(env.DB, normalizedEmail)) {
-    try {
-      const config = await getCloudMailConfig(env.DB);
-      ensureCloudMailConfigured(config);
-      const messages = await listCloudMailMessages(config, normalizedEmail);
-      const code = extractVerificationCodeFromMessages(messages, startedAt);
-      if (code) {
-        return { code, source: 'cloud-mail', message: '已读取 Cloud Mail 验证码' };
-      }
-      return { code: null, source: 'cloud-mail', message: 'Cloud Mail 暂未收到验证码邮件' };
-    } catch (error) {
-      return { code: null, source: 'cloud-mail', message: `Cloud Mail 取件失败：${getErrorMessage(error)}` };
-    }
-  }
-
-  const resolved = await resolveAccountByAddress(env.DB, normalizedEmail);
-  if (resolved) {
-    try {
-      const result = await fetchAccountMessages(
-        { MS_CLIENT_ID: env.MS_CLIENT_ID, MS_CLIENT_SECRET: env.MS_CLIENT_SECRET },
-        env.DB,
-        resolved.account,
-        'auto',
-        true
-      );
-      if (!result.ok) {
-        return { code: null, source: 'microsoft', message: `微软邮箱取件失败：${result.message}` };
-      }
-      const recipientContext = await buildRecipientFilterContext(env.DB, resolved.account, resolved.requestedEmail);
-      const messages = applyRecipientFilter(result.messages, recipientContext);
-      const code = extractVerificationCodeFromMessages(messages, startedAt);
-      if (code) {
-        return { code, source: 'microsoft', message: '已读取微软邮箱验证码' };
-      }
-      return { code: null, source: 'microsoft', message: '微软邮箱暂未收到验证码邮件' };
-    } catch (error) {
-      return { code: null, source: 'microsoft', message: `微软邮箱取件失败：${getErrorMessage(error)}` };
-    }
-  }
-
-  return { code: null, source: null, message: '工具箱中未找到该邮箱账号' };
-}
-
-function extractVerificationCodeFromMessages(messages: AccountMailItem[], startedAt: Date): string | null {
-  const startedAtMs = startedAt.getTime() - 10 * 60 * 1000;
-  const candidates = messages.filter((item) => {
-    const receivedAtMs = parseMailTimestamp(item.receivedAt);
-    if (Number.isFinite(receivedAtMs) && receivedAtMs < startedAtMs) {
-      return false;
-    }
-    const text = `${item.subject}\n${item.preview}\n${item.content}`;
-    return /openai|chatgpt|temporary|login|verification|verify|code|验证码|验证|代码/i.test(text);
-  });
-
-  for (const item of candidates) {
-    const text = `${item.subject}\n${item.preview}\n${stripHtml(item.content)}`;
-    const code = extractSixDigitCode(text);
-    if (code) {
-      return code;
-    }
-  }
-
-  return null;
-}
-
-function extractSixDigitCode(value: string): string | null {
-  const normalized = stripHtml(value).replace(/\s+/g, ' ');
-  const preferred = normalized.match(/(?:code|代码|验证码)[^0-9]{0,100}(\d[\s-]*\d[\s-]*\d[\s-]*\d[\s-]*\d[\s-]*\d)/i);
-  const fallback = normalized.match(/(?<!\d)(\d[\s-]*\d[\s-]*\d[\s-]*\d[\s-]*\d[\s-]*\d)(?!\d)/);
-  const digits = (preferred?.[1] ?? fallback?.[1] ?? '').replace(/\D/g, '');
-  return digits.length === 6 ? digits : null;
-}
-
-function stripHtml(value: string): string {
-  return value
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCharCode(Number.parseInt(code, 16)));
-}
-
-function parseMailTimestamp(value: string): number {
-  const parsed = Date.parse(value);
-  if (Number.isFinite(parsed)) {
-    return parsed;
-  }
-
-  const localLike = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);
-  if (!localLike) {
-    return Number.NaN;
-  }
-
-  const [, year, month, day, hour, minute, second] = localLike;
-  return new Date(
-    Number(year),
-    Number(month) - 1,
-    Number(day),
-    Number(hour),
-    Number(minute),
-    Number(second)
-  ).getTime();
 }
 
 async function getSub2ApiGptExportItemFromPostgres(accountId: number, email: string): Promise<Sub2ApiGptExportItem | null> {

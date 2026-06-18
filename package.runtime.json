@@ -6,7 +6,6 @@
     "node": ">=22.22.0"
   },
   "dependencies": {
-    "better-sqlite3": "11.10.0",
-    "playwright": "1.60.0"
+    "better-sqlite3": "11.10.0"
   }
 }

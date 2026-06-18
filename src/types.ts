@@ -185,20 +185,6 @@ export interface Sub2ApiLongLinkCheckoutResponse {
   raw: unknown;
 }
 
-export interface Sub2ApiReauthConfig {
-  authMode: 'admin-api-key' | 'password';
-  adminEmail: string;
-  adminPassword: string;
-  groupNames: string[];
-  defaultProxyName: string;
-  accountPriority: number;
-  updateExisting: boolean;
-  autoPauseOnExpired: boolean;
-  verifyAfterImport: boolean;
-  strictEmailMatch: boolean;
-  allowAccessTokenOnly: boolean;
-}
-
 export interface Sub2ApiGroupItem {
   id: number | null;
   name: string;
@@ -207,56 +193,6 @@ export interface Sub2ApiGroupItem {
 export interface Sub2ApiGroupsResponse {
   items: Sub2ApiGroupItem[];
   syncedAt: string;
-}
-
-export interface Sub2ApiReauthTarget {
-  accountId?: number;
-  accountEmail: string;
-  accountName?: string | null;
-  reason?: string;
-}
-
-export interface Sub2ApiReauthStartPayload {
-  targets: Sub2ApiReauthTarget[];
-  credentialMode: 'browser-login' | 'browser-oauth' | 'session-json' | 'access-token';
-  sessionPayload?: unknown;
-  sessionPayloads?: Record<string, unknown>;
-  oauthDraft?: unknown;
-  oauthCallbackUrl?: string;
-  dryRun?: boolean;
-  verifyAfterImport?: boolean;
-  allowAccessTokenOnly?: boolean;
-  strictEmailMatch?: boolean;
-  modelId?: string;
-}
-
-export interface Sub2ApiReauthSummary {
-  totalAccounts: number;
-  processedAccounts: number;
-  succeededAccounts: number;
-  failedAccounts: number;
-  skippedAccounts: number;
-  createdAccounts: number;
-  updatedAccounts: number;
-  importFailedAccounts: number;
-  dryRun: boolean;
-}
-
-export type Sub2ApiReauthTaskStatus = 'running' | 'success' | 'error' | 'cancelled';
-
-export interface Sub2ApiReauthTaskStartResponse {
-  taskId: string;
-}
-
-export interface Sub2ApiReauthTaskResponse {
-  taskId: string;
-  status: Sub2ApiReauthTaskStatus;
-  createdAt: string;
-  updatedAt: string;
-  logs: Sub2ApiDetectionLogItem[];
-  progress: Sub2ApiDetectionProgress;
-  summary: Sub2ApiReauthSummary | null;
-  error: string | null;
 }
 
 export interface Sub2ApiGptValidityResponse {

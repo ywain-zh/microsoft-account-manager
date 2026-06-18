@@ -16,13 +16,13 @@
             tag
             size="small"
             :options="modelOptions"
-            :disabled="runLoading || reauthLoading"
+            :disabled="runLoading"
             placeholder="选择或输入模型"
           />
           <n-button
             size="small"
             :loading="modelLoading"
-            :disabled="runLoading || reauthLoading || !hasConfiguredSub2Api"
+            :disabled="runLoading || !hasConfiguredSub2Api"
             @click="refreshModels"
           >
             获取模型
@@ -39,7 +39,7 @@
         <button
           class="btn btn-success"
           type="button"
-          :disabled="runLoading || reauthLoading || !hasConfiguredSub2Api"
+          :disabled="runLoading || !hasConfiguredSub2Api"
           @click="startDetection"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -49,18 +49,9 @@
         </button>
 
         <button
-          class="btn btn-default"
-          type="button"
-          :disabled="runLoading || reauthLoading || !hasConfiguredSub2Api"
-          @click="openReauthModal()"
-        >
-          {{ reauthLoading ? '重新授权中...' : '重新授权 401 账号' }}
-        </button>
-
-        <button
           class="btn btn-danger-ghost"
           type="button"
-          :disabled="runLoading || reauthLoading || deleteLoading || !hasUnauthorizedCandidates"
+          :disabled="runLoading || deleteLoading || !hasUnauthorizedCandidates"
           @click="clearUnauthorizedAccounts"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -73,7 +64,7 @@
         <button
           class="btn btn-default"
           type="button"
-          :disabled="runLoading || reauthLoading || !hasUnauthorizedCandidates"
+          :disabled="runLoading || !hasUnauthorizedCandidates"
           @click="exportUnauthorizedAccounts"
         >
           导出 401 账号
@@ -108,7 +99,7 @@
       <div class="log-section">
         <div class="log-section-header">
           <div>
-            <span class="log-title">检测 / 重新授权日志</span>
+            <span class="log-title">检测日志</span>
             <span class="log-desc">
               已处理 {{ progress.processedAccounts }} / {{ progress.totalAccounts || summary.totalAccounts }}
               <template v-if="progress.currentAccountName">
@@ -119,13 +110,13 @@
               </template>
             </span>
           </div>
-          <span class="run-status" :class="runLoading || reauthLoading ? 'is-running' : 'is-idle'">
-            {{ runLoading ? '检测中' : reauthLoading ? '重新授权中' : '待运行' }}
+          <span class="run-status" :class="runLoading ? 'is-running' : 'is-idle'">
+            {{ runLoading ? '检测中' : '待运行' }}
           </span>
         </div>
 
         <div ref="logTerminalRef" class="log-terminal">
-          <div v-if="logs.length === 0" class="log-empty">检测或重新授权开始后，日志会实时输出在这里。</div>
+          <div v-if="logs.length === 0" class="log-empty">检测开始后，日志会实时输出在这里。</div>
           <div v-for="item in logs" :key="item.id" class="log-line">
             <span class="log-time">{{ formatLogTime(item.timestamp) }}</span>
             <span class="log-badge" :class="resolveLevelBadgeTone(item.level)">
@@ -168,7 +159,7 @@
           <n-form-item label="目标分组" class="config-grid-main">
             <div class="group-sync-field">
               <n-select
-                v-model:value="selectedReauthGroupName"
+                v-model:value="selectedSub2ApiGroupName"
                 :options="groupOptions"
                 :loading="groupLoading"
                 filterable
@@ -187,83 +178,12 @@
               {{ groupSyncStatusText }}
             </div>
           </n-form-item>
-
-          <n-form-item label="账号优先级" class="config-grid-side">
-            <n-input-number v-model:value="reauthConfigForm.accountPriority" :min="1" :max="10000" />
-          </n-form-item>
         </div>
-
-        <n-form-item label="默认代理名称或 ID">
-          <n-input v-model:value="reauthConfigForm.defaultProxyName" placeholder="留空则不使用代理" />
-        </n-form-item>
-
-        <div class="config-divider">授权规则</div>
-        <n-space vertical size="small" class="reauth-rule-list">
-          <n-checkbox v-model:checked="reauthConfigForm.updateExisting">更新已有账号</n-checkbox>
-          <n-checkbox v-model:checked="reauthConfigForm.autoPauseOnExpired">过期后自动暂停</n-checkbox>
-          <n-checkbox v-model:checked="reauthConfigForm.verifyAfterImport">导入后复测</n-checkbox>
-          <n-checkbox v-model:checked="reauthConfigForm.strictEmailMatch">严格校验 session 邮箱</n-checkbox>
-          <n-checkbox v-model:checked="reauthConfigForm.allowAccessTokenOnly">允许只粘贴 accessToken</n-checkbox>
-        </n-space>
       </n-form>
       <template #footer>
         <div class="config-modal-footer">
           <n-button @click="showConfigModal = false">取消</n-button>
-          <n-button type="primary" :loading="configSaving || reauthConfigSaving" @click="handleSaveAllConfig">保存配置</n-button>
-        </div>
-      </template>
-    </n-modal>
-
-    <n-modal v-model:show="showReauthModal" preset="card" title="重新授权 401 账号" style="width: min(820px, 94vw); border-radius: 12px;">
-      <div class="reauth-modal-body">
-        <p class="config-modal-desc">
-          支持自动登录六步流，也支持手动粘贴 session JSON / accessToken。目标邮箱可单独填写；留空则处理当前检测到的全部 401 邮箱，日志会实时输出到页面终端。
-        </p>
-        <n-form label-placement="top" class="config-modal-form">
-          <n-form-item label="目标邮箱">
-            <n-input
-              v-model:value="reauthForm.targetEmail"
-              placeholder="例如：4k0zp3sy0i@edu.zyspeed.xyz；留空则使用当前检测到的全部 401 邮箱"
-            />
-          </n-form-item>
-
-          <n-form-item label="凭据类型">
-            <n-select v-model:value="reauthForm.credentialMode" :options="reauthCredentialModeOptions" />
-          </n-form-item>
-
-          <n-alert v-if="reauthForm.credentialMode === 'browser-login'" type="info" :bordered="false">
-            将按 1 点击登录 → 2 输入邮箱 → 3 获取验证码 → 4 刷新 OAuth并登录 → 5 自动确认 OAuth → 6 SUB2API 回调验证 的顺序执行。
-          </n-alert>
-
-          <n-form-item
-            v-if="reauthForm.credentialMode !== 'browser-login'"
-            :label="reauthForm.credentialMode === 'access-token' ? 'ChatGPT accessToken' : 'ChatGPT session JSON'"
-          >
-            <n-input
-              v-model:value="reauthForm.sessionPayloadText"
-              type="textarea"
-              :autosize="{ minRows: 8, maxRows: 16 }"
-              :placeholder="reauthForm.credentialMode === 'access-token' ? '粘贴 accessToken' : '粘贴 /api/auth/session 返回的 JSON'"
-            />
-          </n-form-item>
-
-          <n-space v-if="reauthForm.credentialMode !== 'browser-login'" vertical size="small">
-            <n-checkbox v-model:checked="reauthForm.dryRun">dry-run：只解析和校验，不导入</n-checkbox>
-            <n-checkbox v-model:checked="reauthForm.verifyAfterImport">导入后复测</n-checkbox>
-            <n-checkbox v-model:checked="reauthForm.strictEmailMatch">严格校验 session 邮箱与目标邮箱一致</n-checkbox>
-            <n-checkbox v-model:checked="reauthForm.allowAccessTokenOnly">允许 accessToken-only</n-checkbox>
-          </n-space>
-          <n-space v-else vertical size="small">
-            <n-checkbox v-model:checked="reauthForm.verifyAfterImport">SUB2API 回调验证后复测</n-checkbox>
-          </n-space>
-        </n-form>
-      </div>
-      <template #footer>
-        <div class="config-modal-footer">
-          <n-button :disabled="reauthLoading" @click="closeReauthModal">取消</n-button>
-          <n-button type="primary" :loading="reauthLoading" @click="startReauth">
-            {{ reauthForm.credentialMode === 'browser-login' ? '开始六步重新授权' : reauthForm.dryRun ? '开始 dry-run' : '开始重新授权' }}
-          </n-button>
+          <n-button type="primary" :loading="configSaving" @click="handleSaveConfigAndClose">保存配置</n-button>
         </div>
       </template>
     </n-modal>
@@ -376,7 +296,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { NAlert, NButton, NCard, NCheckbox, NForm, NFormItem, NInput, NInputNumber, NModal, NPagination, NSelect, NSpace } from 'naive-ui';
+import { NButton, NCard, NForm, NFormItem, NInput, NModal, NPagination, NSelect } from 'naive-ui';
 import SecretInput from '../components/SecretInput.vue';
 import { useSub2ApiConsole } from '../state/sub2api-console';
 import type { Sub2ApiDetectedIssueItem, Sub2ApiLogLevel } from '../types';
@@ -386,15 +306,11 @@ const sub2api = useSub2ApiConsole();
 const {
   initialDataLoaded,
   configSaving,
-  reauthConfigSaving,
   runLoading,
-  reauthLoading,
   deleteLoading,
   modelLoading,
   groupLoading,
   configForm,
-  reauthConfigForm,
-  reauthForm,
   summary,
   progress,
   logs,
@@ -410,26 +326,21 @@ const {
   abnormalAccountsPageSize,
   modelId,
   modelOptions,
-  selectedReauthGroupName,
+  selectedSub2ApiGroupName,
   groupOptions,
   groupSyncStatusText,
   groupSyncError,
   hasConfiguredSub2Api,
   hasUnauthorizedCandidates,
   hasAbnormalCandidates,
-  showReauthModal,
   showUnauthorizedAccountsModal,
   showAbnormalAccountsModal,
   loadInitialData,
   refreshModels,
   syncSub2ApiGroups,
   saveConfig,
-  saveReauthConfig,
   clearLogs,
   exportUnauthorizedAccounts,
-  openReauthModal,
-  closeReauthModal,
-  startReauth,
   openUnauthorizedAccountsModal,
   closeUnauthorizedAccountsModal,
   setUnauthorizedAccountsPage,
@@ -445,12 +356,6 @@ const {
 
 const showConfigModal = ref(false);
 const logTerminalRef = ref<HTMLElement | null>(null);
-
-const reauthCredentialModeOptions = [
-  { label: '自动登录六步流', value: 'browser-login' },
-  { label: 'session JSON', value: 'session-json' },
-  { label: 'accessToken', value: 'access-token' }
-];
 
 const baseUrlInputProps = {
   autocomplete: 'off',
@@ -569,18 +474,9 @@ async function handleSaveConfig(): Promise<void> {
   await saveConfig();
 }
 
-async function handleSaveReauthConfig(): Promise<void> {
-  await saveReauthConfig();
-}
-
-async function handleSaveAllConfig(): Promise<void> {
+async function handleSaveConfigAndClose(): Promise<void> {
   const configSaved = await saveConfig();
-  if (!configSaved) {
-    return;
-  }
-
-  const reauthSaved = await saveReauthConfig();
-  if (reauthSaved) {
+  if (configSaved) {
     showConfigModal.value = false;
   }
 }
@@ -1020,7 +916,7 @@ onBeforeUnmount(() => {
 
 .config-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 152px;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   align-items: start;
 }
@@ -1032,26 +928,6 @@ onBeforeUnmount(() => {
 
 .config-grid-side :deep(.n-input-number) {
   width: 100%;
-}
-
-.config-divider {
-  margin: 2px 0 -2px;
-  color: #334155;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.reauth-rule-list {
-  border: 1px solid #e2e8f0;
-  border-radius: 4px;
-  padding: 8px 10px;
-  background: #fff;
-}
-
-.reauth-modal-body {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
 }
 
 .form-autofill-guard {

@@ -25,7 +25,6 @@ ENV HOST=0.0.0.0
 ENV PORT=8787
 ENV DB_PATH=/app/data/account-manager.db
 ENV AUTO_IMPORT_LEGACY_DB=true
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ENV LONG_LINK_PYTHON=/opt/long-link-venv/bin/python
 
 RUN apt-get update \
@@ -36,7 +35,6 @@ RUN apt-get update \
 
 COPY --from=runtime-deps /app/node_modules ./node_modules
 COPY --from=runtime-deps /app/package.json ./package.json
-RUN npx playwright install --with-deps chromium
 COPY --from=build /app/build ./build
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/migrations ./migrations

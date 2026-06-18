@@ -28,10 +28,6 @@ import type {
   Sub2ApiLongLinkCheckoutResponse,
   Sub2ApiLongLinkConfig,
   Sub2ApiLongLinkProxyCheckResponse,
-  Sub2ApiReauthConfig,
-  Sub2ApiReauthStartPayload,
-  Sub2ApiReauthTaskResponse,
-  Sub2ApiReauthTaskStartResponse,
   SystemBackupJobResponse,
   TranslationConfig,
   TranslationProvider,
@@ -383,17 +379,6 @@ export const api = {
     });
   },
 
-  getSub2ApiReauthConfig(): Promise<{ item: Sub2ApiReauthConfig }> {
-    return request<{ item: Sub2ApiReauthConfig }>('/api/sub2api/reauth/config');
-  },
-
-  updateSub2ApiReauthConfig(payload: Sub2ApiReauthConfig): Promise<{ item: Sub2ApiReauthConfig }> {
-    return request<{ item: Sub2ApiReauthConfig }>('/api/sub2api/reauth/config', {
-      method: 'PUT',
-      body: JSON.stringify(payload)
-    });
-  },
-
   getSub2ApiLongLinkConfig(): Promise<{ item: Sub2ApiLongLinkConfig }> {
     return request<{ item: Sub2ApiLongLinkConfig }>('/api/sub2api/long-link/config');
   },
@@ -496,20 +481,6 @@ export const api = {
     return requestStream('/api/sub2api/check', {
       method: 'POST',
       body: JSON.stringify(payload),
-      signal
-    });
-  },
-
-  startSub2ApiReauth(payload: Sub2ApiReauthStartPayload, signal?: AbortSignal): Promise<Sub2ApiReauthTaskStartResponse> {
-    return request<Sub2ApiReauthTaskStartResponse>('/api/sub2api/reauth/start', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-      signal
-    });
-  },
-
-  getSub2ApiReauthTask(taskId: string, signal?: AbortSignal): Promise<Sub2ApiReauthTaskResponse> {
-    return request<Sub2ApiReauthTaskResponse>(`/api/sub2api/reauth/tasks/${encodeURIComponent(taskId)}`, {
       signal
     });
   },
