@@ -8,7 +8,7 @@
     "dev:web": "vite",
     "dev:server": "node --watch --experimental-strip-types server/main.ts",
     "build:web": "vite build",
-    "build:server": "esbuild server/main.ts server/cli/migrate.ts server/cli/import-legacy.ts --bundle --platform=node --format=esm --target=node22 --external:better-sqlite3 --outdir=build/server --outbase=server --entry-names=[dir]/[name]",
+    "build:server": "esbuild server/main.ts server/cli/migrate.ts server/cli/import-legacy.ts --bundle --platform=node --format=esm --target=node22 --external:better-sqlite3 --external:undici --outdir=build/server --outbase=server --entry-names=[dir]/[name]",
     "build": "npm run build:web && npm run build:server",
     "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
     "db:migrate": "node build/server/cli/migrate.js",
@@ -25,6 +25,7 @@
     "hono": "^4.8.2",
     "naive-ui": "^2.40.3",
     "playwright": "^1.60.0",
+    "undici": "^8.5.0",
     "vue": "^3.5.13",
     "vue-router": "^4.6.4"
   },

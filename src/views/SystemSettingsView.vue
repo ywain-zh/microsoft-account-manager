@@ -221,7 +221,7 @@
           </n-form>
 
           <div class="external-api-actions">
-            <n-button :loading="proxyLoading" @click="loadProxyConfig">重新载入</n-button>
+            <n-button :loading="proxyTesting" @click="testProxyConfig">测试系统代理</n-button>
             <n-button :disabled="!proxyForm.proxyUrl" @click="clearProxyConfig">清空</n-button>
             <n-button type="primary" :loading="proxySaving" @click="saveProxyConfig">保存代理</n-button>
           </div>
@@ -285,6 +285,7 @@ const externalApiLoading = ref(false);
 const externalApiSaving = ref(false);
 const proxyLoading = ref(false);
 const proxySaving = ref(false);
+const proxyTesting = ref(false);
 const externalTokenHeader = ref('x-mail-api-token');
 const modelLoading = ref(false);
 const testingProvider = ref<TranslationProvider | ''>('');
@@ -464,6 +465,24 @@ async function saveProxyConfig(): Promise<void> {
     message.error(getErrorMessage(error));
   } finally {
     proxySaving.value = false;
+  }
+}
+
+async function testProxyConfig(): Promise<void> {
+  proxyTesting.value = true;
+  try {
+    const { result } = await api.testSystemProxyConfig({
+      proxyUrl: proxyForm.proxyUrl.trim()
+    });
+    if (result.ok) {
+      message.success(`${result.message}，耗时 ${result.elapsedMs}ms`);
+    } else {
+      message.error(result.message);
+    }
+  } catch (error) {
+    message.error(getErrorMessage(error));
+  } finally {
+    proxyTesting.value = false;
   }
 }
 

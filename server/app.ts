@@ -7,6 +7,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { cors } from 'hono/cors';
 import { HTTPException } from 'hono/http-exception';
 import type { Context } from 'hono';
+import { fetch as undiciFetch, ProxyAgent, type RequestInit as UndiciRequestInit } from 'undici';
 import {
   cleanupSystemBackupJob,
   getSystemBackupArchive,
@@ -256,6 +257,15 @@ interface ExternalApiConfig {
 
 interface SystemProxyConfig {
   proxyUrl: string;
+}
+
+interface SystemProxyTestResult {
+  ok: boolean;
+  message: string;
+  targetUrl: string;
+  ip?: string;
+  colo?: string;
+  elapsedMs: number;
 }
 
 interface TranslationResponsePayload {
@@ -1560,6 +1570,14 @@ app.put('/api/system/proxy-config', async (c) => {
   return c.json({ item });
 });
 
+app.post('/api/system/proxy-config/test', async (c) => {
+  const body = await readJson<Partial<SystemProxyConfig>>(c);
+  const item = normalizeSystemProxyConfig(body);
+  validateSystemProxyConfig(item);
+  const result = await testSystemProxyConfig(item);
+  return c.json({ item, result });
+});
+
 app.get('/api/cloud-mail/config', async (c) => {
   const item = await getCloudMailConfig(c.env.DB);
   return c.json({ item });
@@ -2799,6 +2817,72 @@ function validateSystemProxyConfig(config: SystemProxyConfig): void {
   if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
     throw new HTTPException(400, { message: '公益站签到代理当前支持 http:// 或 https:// 代理地址' });
   }
+}
+
+async function testSystemProxyConfig(config: SystemProxyConfig): Promise<SystemProxyTestResult> {
+  if (!config.proxyUrl) {
+    throw new HTTPException(400, { message: '请先填写代理地址' });
+  }
+
+  const targetUrl = 'https://www.cloudflare.com/cdn-cgi/trace';
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await undiciFetch(targetUrl, {
+      method: 'GET',
+      dispatcher: new ProxyAgent(config.proxyUrl),
+      signal: controller.signal,
+      headers: {
+        Accept: 'text/plain',
+        'User-Agent': 'Wangyue-Proxy-Test/1.0'
+      }
+    } satisfies UndiciRequestInit);
+    const elapsedMs = Date.now() - startedAt;
+    const text = await response.text();
+    if (!response.ok) {
+      return {
+        ok: false,
+        message: `代理请求失败：HTTP ${response.status}`,
+        targetUrl,
+        elapsedMs
+      };
+    }
+
+    const trace = parseCloudflareTrace(text);
+    return {
+      ok: true,
+      message: trace.ip
+        ? `代理可用，出口 IP：${trace.ip}${trace.colo ? `，节点：${trace.colo}` : ''}`
+        : '代理可用，测试目标已返回响应',
+      targetUrl,
+      ip: trace.ip,
+      colo: trace.colo,
+      elapsedMs
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: `代理测试失败：${getErrorMessage(error)}`,
+      targetUrl,
+      elapsedMs: Date.now() - startedAt
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function parseCloudflareTrace(text: string): { ip?: string; colo?: string } {
+  const entries = new Map<string, string>();
+  for (const line of text.split(/\r?\n/)) {
+    const index = line.indexOf('=');
+    if (index <= 0) continue;
+    entries.set(line.slice(0, index), line.slice(index + 1));
+  }
+  return {
+    ip: entries.get('ip'),
+    colo: entries.get('colo')
+  };
 }
 
 function normalizeSub2ApiModelId(value: unknown): string {

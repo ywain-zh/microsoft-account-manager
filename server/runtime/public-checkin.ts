@@ -1,13 +1,11 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import http from 'node:http';
-import net from 'node:net';
 import path from 'node:path';
-import tls from 'node:tls';
 import type { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
+import { fetch, ProxyAgent, type Dispatcher, type RequestInit as UndiciRequestInit } from 'undici';
 
-export type PublicCheckinPlatform = 'new-api' | 'one-api' | 'onehub';
+export type PublicCheckinPlatform = 'new-api' | 'one-api' | 'onehub' | 'anyrouter';
 export type PublicCheckinCredentialType = 'password' | 'access_token' | 'cookie';
 export type PublicCheckinAccountStatus = 'active' | 'disabled' | 'error';
 export type PublicCheckinStatus = 'success' | 'failed' | 'skipped';
@@ -181,9 +179,24 @@ function normalizeUrl(url: string): string {
   return value;
 }
 
+function isAnyRouterSite(nameOrUrl: string): boolean {
+  return /\bany\s*router\b/i.test(nameOrUrl) || /(^|\.)anyrouter\./i.test(nameOrUrl);
+}
+
+function inferPublicCheckinPlatform(input: {
+  name?: string;
+  url?: string;
+  platform?: PublicCheckinPlatform;
+}): PublicCheckinPlatform {
+  if (input.platform === 'new-api' && isAnyRouterSite(`${input.name || ''} ${input.url || ''}`)) {
+    return 'anyrouter';
+  }
+  return input.platform || 'new-api';
+}
+
 function normalizePlatform(value: unknown): PublicCheckinPlatform {
   const platform = asString(value).trim();
-  if (platform === 'new-api' || platform === 'one-api' || platform === 'onehub') return platform;
+  if (platform === 'new-api' || platform === 'one-api' || platform === 'onehub' || platform === 'anyrouter') return platform;
   throw new HTTPException(400, { message: '平台类型不支持' });
 }
 
@@ -286,10 +299,12 @@ function validateSiteInput(value: unknown): Pick<PublicCheckinSite, 'name' | 'ur
   const input = asRecord(value);
   const name = asString(input.name).trim();
   if (!name) throw new HTTPException(400, { message: '站点名称不能为空' });
+  const url = normalizeUrl(asString(input.url));
+  const requestedPlatform = normalizePlatform(input.platform);
   return {
     name,
-    url: normalizeUrl(asString(input.url)),
-    platform: normalizePlatform(input.platform)
+    url,
+    platform: inferPublicCheckinPlatform({ name, url, platform: requestedPlatform })
   };
 }
 
@@ -580,6 +595,7 @@ type RawResponse = {
   status: number;
   statusText: string;
   headers: Map<string, string>;
+  setCookieHeaders: string[];
   text: string;
 };
 
@@ -587,6 +603,56 @@ type AdapterOptions = {
   useProxy?: boolean;
   proxyUrl?: string;
 };
+
+const proxyAgentCache = new Map<string, ProxyAgent>();
+
+function headerValue(headers: Map<string, string>, key: string): string {
+  return headers.get(key.toLowerCase()) || '';
+}
+
+function collectSetCookieHeaders(headers: Headers): string[] {
+  const getSetCookie = (headers as unknown as { getSetCookie?: () => string[] }).getSetCookie;
+  if (typeof getSetCookie === 'function') return getSetCookie.call(headers) || [];
+  const single = headers.get('set-cookie');
+  return single ? [single] : [];
+}
+
+function mergeSetCookieValues(cookie: string, setCookieHeaders: string[]): string {
+  let merged = cookie;
+  for (const raw of setCookieHeaders) {
+    const pair = raw.split(';')[0]?.trim();
+    if (!pair) continue;
+    const index = pair.indexOf('=');
+    if (index <= 0) continue;
+    merged = upsertCookieValue(merged, pair.slice(0, index).trim(), pair.slice(index + 1));
+  }
+  return merged;
+}
+
+function getProxyDispatcher(proxyUrl: string): Dispatcher {
+  const resolved = getProxyUrl(proxyUrl);
+  const parsed = new URL(resolved);
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('当前仅支持 HTTP/HTTPS 本地代理');
+  }
+  let agent = proxyAgentCache.get(resolved);
+  if (!agent) {
+    agent = new ProxyAgent(resolved);
+    proxyAgentCache.set(resolved, agent);
+  }
+  return agent;
+}
+
+async function toRawResponse(response: Awaited<ReturnType<typeof fetch>>): Promise<RawResponse> {
+  return {
+    ok: response.ok,
+    status: response.status,
+    statusText: response.statusText,
+    headers: new Map(Array.from(response.headers.entries()).map(([key, value]) => [key.toLowerCase(), value])),
+    setCookieHeaders: collectSetCookieHeaders(response.headers),
+    text: await response.text()
+  };
+}
 
 class PublicCheckinAdapter {
   protected readonly siteUrl: string;
@@ -669,33 +735,36 @@ class PublicCheckinAdapter {
   }
 
   protected async fetchJson<T>(requestPath: string, init: RequestInit = {}): Promise<T> {
-    let response = await this.requestText(requestPath, init);
-    const contentType = response.headers.get('content-type') || '';
-    if (response.text.trim().startsWith('<') || contentType.includes('text/html')) {
+    const initialHeaders = init.headers as Record<string, string> | undefined;
+    let cookie = initialHeaders?.Cookie || initialHeaders?.cookie || '';
+    let lastHtmlResponse: RawResponse | null = null;
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const requestHeaders = cookie
+        ? { ...(initialHeaders || {}), Cookie: cookie }
+        : initialHeaders;
+      const response = await this.requestText(requestPath, { ...init, headers: requestHeaders });
+      if (cookie) cookie = mergeSetCookieValues(cookie, response.setCookieHeaders);
+
+      const contentType = headerValue(response.headers, 'content-type');
+      const isHtml = response.text.trim().startsWith('<') || contentType.includes('text/html');
+      if (!isHtml) return this.parseJsonResponse<T>(response);
+
+      lastHtmlResponse = response;
+      if (!cookie) break;
       const nextAcwScV2 = solveAcwScV2(response.text);
-      const headers = init.headers as Record<string, string> | undefined;
-      const cookie = headers?.Cookie || headers?.cookie;
-      if (nextAcwScV2 && cookie) {
-        response = await this.requestText(requestPath, {
-          ...init,
-          headers: {
-            ...(headers || {}),
-            Cookie: upsertCookieValue(cookie, 'acw_sc__v2', nextAcwScV2)
-          }
-        });
-        const retryContentType = response.headers.get('content-type') || '';
-        if (!response.text.trim().startsWith('<') && !retryContentType.includes('text/html')) {
-          return this.parseJsonResponse<T>(response);
-        }
-      }
-      const title = response.text.match(/<title>\s*([^<]+)\s*<\/title>/i)?.[1]?.trim();
-      const isChallenge = /arg1|acw_sc__v2|cdn_sec_tc|challenge|验证|安全/i.test(response.text);
-      throw new Error(isChallenge
-        ? `站点返回了防护挑战页面${title ? `：${title}` : ''}，请确认已启用本地代理并填写完整浏览器 Cookie / 平台用户 ID`
-        : `站点返回了 HTML 页面${title ? `：${title}` : ''}，不是 JSON API 响应`);
+      if (!nextAcwScV2) break;
+      cookie = upsertCookieValue(cookie, 'acw_sc__v2', nextAcwScV2);
     }
 
-    return this.parseJsonResponse<T>(response);
+    const response = lastHtmlResponse;
+    const text = response?.text || '';
+    const title = text.match(/<title>\s*([^<]+)\s*<\/title>/i)?.[1]?.trim();
+    const isChallenge = /arg1|acw_sc__v2|cdn_sec_tc|challenge|验证|安全/i.test(text);
+    throw new Error(isChallenge
+      ? `站点返回了防护挑战页面${title ? `：${title}` : ''}，请确认已启用本地代理并填写完整浏览器 Cookie / 平台用户 ID`
+      : `站点返回了 HTML 页面${title ? `：${title}` : ''}，不是 JSON API 响应`);
+
   }
 
   private async requestText(requestPath: string, init: RequestInit): Promise<RawResponse> {
@@ -715,43 +784,17 @@ class PublicCheckinAdapter {
     }
 
     const url = new URL(requestPath, this.siteUrl);
-    if (this.useProxy) {
-      return requestViaProxy(url, {
-        method: init.method || 'GET',
-        headers,
-        body,
-        proxyUrl: this.proxyUrl
-      });
-    }
-
-    const fetchResponse = await fetch(url, {
+    const requestInit: UndiciRequestInit = {
       method: init.method || 'GET',
       headers,
-      body
-    });
-    return {
-      ok: fetchResponse.ok,
-      status: fetchResponse.status,
-      statusText: fetchResponse.statusText,
-      headers: new Map(Array.from(fetchResponse.headers.entries()).map(([key, value]) => [key.toLowerCase(), value])),
-      text: await fetchResponse.text()
+      body,
+      dispatcher: this.useProxy ? getProxyDispatcher(this.proxyUrl) : undefined
     };
+    return toRawResponse(await fetch(url, requestInit));
   }
 
   private parseJsonResponse<T>(response: RawResponse): T {
-    let payload: unknown = null;
-    try {
-      payload = response.text ? JSON.parse(response.text) : null;
-    } catch {
-      throw new Error(`站点返回的内容不是 JSON：${response.text.slice(0, 120)}`);
-    }
-    if (!response.ok) {
-      const record = asRecord(payload);
-      const error = asRecord(record.error);
-      const message = asString(record.message || error.message || response.text);
-      throw new Error(`HTTP ${response.status}: ${message || response.statusText}`);
-    }
-    return payload as T;
+    return parseJsonResponsePayload<T>(response);
   }
 
   protected buildAuthHeaders(credential: PublicCheckinCredential): Record<string, string> {
@@ -777,7 +820,6 @@ class PublicCheckinAdapter {
     const value = String(Math.trunc(platformUserId));
     return {
       'New-Api-User': value,
-      'New-API-User': value,
       'Veloera-User': value,
       'voapi-user': value,
       'User-id': value,
@@ -806,6 +848,19 @@ class PublicCheckinAdapter {
   }
 }
 
+class AnyRouterAdapter extends PublicCheckinAdapter {
+  protected override buildAuthHeaders(credential: PublicCheckinCredential): Record<string, string> {
+    if (credential.type === 'cookie' && credential.cookie) {
+      const headers: Record<string, string> = { Cookie: credential.cookie };
+      if (credential.platformUserId && Number.isFinite(credential.platformUserId)) {
+        headers['New-Api-User'] = String(Math.trunc(credential.platformUserId));
+      }
+      return headers;
+    }
+    return super.buildAuthHeaders(credential);
+  }
+}
+
 class OneHubAdapter extends PublicCheckinAdapter {
   override async checkin(credential: PublicCheckinCredential): Promise<CheckinResult> {
     try {
@@ -831,6 +886,7 @@ class OneHubAdapter extends PublicCheckinAdapter {
 }
 
 function createAdapter(platform: PublicCheckinPlatform, siteUrl: string, options: AdapterOptions): PublicCheckinAdapter {
+  if (inferPublicCheckinPlatform({ url: siteUrl, platform }) === 'anyrouter') return new AnyRouterAdapter(siteUrl, options);
   if (platform === 'onehub') return new OneHubAdapter(siteUrl, options);
   return new PublicCheckinAdapter(siteUrl, options);
 }
@@ -844,172 +900,20 @@ function getProxyUrl(configuredProxyUrl = ''): string {
   return trimmed;
 }
 
-async function requestViaProxy(target: URL, input: { method: string; headers: Record<string, string>; body?: string; proxyUrl?: string }): Promise<RawResponse> {
-  const proxy = new URL(getProxyUrl(input.proxyUrl));
-  if (proxy.protocol !== 'http:' && proxy.protocol !== 'https:') {
-    throw new Error('当前仅支持 HTTP/HTTPS 本地代理');
+function parseJsonResponsePayload<T>(response: RawResponse): T {
+  let payload: unknown = null;
+  try {
+    payload = response.text ? JSON.parse(response.text) : null;
+  } catch {
+    throw new Error(`站点返回的内容不是 JSON：${response.text.slice(0, 120)}`);
   }
-
-  const method = input.method.toUpperCase();
-  const body = input.body || '';
-  const headers = { ...input.headers };
-  if (body) headers['Content-Length'] = String(Buffer.byteLength(body));
-  headers.Connection = 'close';
-
-  let socket: net.Socket | tls.TLSSocket;
-  let requestTarget = `${target.pathname}${target.search}`;
-  if (target.protocol === 'https:') {
-    const rawSocket = await createProxyTunnel(proxy, target);
-    socket = await tlsConnect(rawSocket, target.hostname);
-  } else {
-    socket = await connectProxySocket(proxy);
-    requestTarget = target.toString();
+  if (!response.ok) {
+    const record = asRecord(payload);
+    const error = asRecord(record.error);
+    const message = asString(record.message || error.message).trim();
+    throw new Error(message || `HTTP ${response.status}: ${response.statusText || response.text}`);
   }
-
-  const requestLines = [
-    `${method} ${requestTarget} HTTP/1.1`,
-    `Host: ${target.host}`,
-    ...Object.entries(headers).map(([key, value]) => `${key}: ${value}`),
-    '',
-    body
-  ];
-  socket.write(requestLines.join('\r\n'));
-  return readRawHttpResponse(socket);
-}
-
-function proxyPort(proxy: URL): number {
-  if (proxy.port) return Number(proxy.port);
-  return proxy.protocol === 'https:' ? 443 : 80;
-}
-
-function proxyAuthHeader(proxy: URL): string | null {
-  if (!proxy.username && !proxy.password) return null;
-  return `Basic ${Buffer.from(`${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`).toString('base64')}`;
-}
-
-function connectProxySocket(proxy: URL): Promise<net.Socket | tls.TLSSocket> {
-  return new Promise((resolve, reject) => {
-    const onError = (error: Error) => reject(error);
-    const socket = proxy.protocol === 'https:'
-      ? tls.connect({ host: proxy.hostname, port: proxyPort(proxy), servername: proxy.hostname }, () => {
-        socket.off('error', onError);
-        resolve(socket);
-      })
-      : net.connect({ host: proxy.hostname, port: proxyPort(proxy) }, () => {
-        socket.off('error', onError);
-        resolve(socket);
-      });
-    socket.once('error', onError);
-  });
-}
-
-async function createProxyTunnel(proxy: URL, target: URL): Promise<net.Socket | tls.TLSSocket> {
-  const socket = await connectProxySocket(proxy);
-  const auth = proxyAuthHeader(proxy);
-  const targetPort = target.port || '443';
-  const lines = [
-    `CONNECT ${target.hostname}:${targetPort} HTTP/1.1`,
-    `Host: ${target.hostname}:${targetPort}`,
-    'Connection: close',
-    ...(auth ? [`Proxy-Authorization: ${auth}`] : []),
-    '',
-    ''
-  ];
-  socket.write(lines.join('\r\n'));
-  const response = await readUntilHeaderEnd(socket);
-  const statusLine = response.toString('latin1').split('\r\n')[0] || '';
-  if (!/^HTTP\/\d\.\d\s+2\d\d\b/.test(statusLine)) {
-    socket.destroy();
-    throw new Error(`代理 CONNECT 失败：${statusLine || '无响应'}`);
-  }
-  return socket;
-}
-
-function tlsConnect(socket: net.Socket | tls.TLSSocket, servername: string): Promise<tls.TLSSocket> {
-  return new Promise((resolve, reject) => {
-    const tlsSocket = tls.connect({ socket, servername }, () => resolve(tlsSocket));
-    tlsSocket.once('error', reject);
-  });
-}
-
-function readUntilHeaderEnd(socket: net.Socket | tls.TLSSocket): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    let buffer = Buffer.alloc(0);
-    const onData = (chunk: Buffer) => {
-      buffer = Buffer.concat([buffer, chunk]);
-      const index = buffer.indexOf('\r\n\r\n');
-      if (index >= 0) {
-        socket.off('data', onData);
-        socket.off('error', onError);
-        resolve(buffer.slice(0, index + 4));
-      }
-    };
-    const onError = (error: Error) => {
-      socket.off('data', onData);
-      reject(error);
-    };
-    socket.on('data', onData);
-    socket.once('error', onError);
-  });
-}
-
-function readRawHttpResponse(socket: net.Socket | tls.TLSSocket): Promise<RawResponse> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    socket.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
-    socket.once('error', reject);
-    socket.once('end', () => {
-      try {
-        resolve(parseRawHttpResponse(Buffer.concat(chunks)));
-      } catch (error) {
-        reject(error);
-      }
-    });
-  });
-}
-
-function parseRawHttpResponse(buffer: Buffer): RawResponse {
-  const separator = buffer.indexOf('\r\n\r\n');
-  if (separator < 0) throw new Error('代理响应格式无效');
-  const headerText = buffer.slice(0, separator).toString('latin1');
-  const bodyRaw = buffer.slice(separator + 4);
-  const [statusLine, ...headerLines] = headerText.split('\r\n');
-  const statusMatch = statusLine.match(/^HTTP\/\d\.\d\s+(\d+)\s*(.*)$/);
-  if (!statusMatch) throw new Error(`代理响应状态行无效：${statusLine}`);
-  const headers = new Map<string, string>();
-  for (const line of headerLines) {
-    const index = line.indexOf(':');
-    if (index <= 0) continue;
-    headers.set(line.slice(0, index).trim().toLowerCase(), line.slice(index + 1).trim());
-  }
-  const status = Number(statusMatch[1]);
-  const body = (headers.get('transfer-encoding') || '').toLowerCase().includes('chunked')
-    ? decodeChunkedBody(bodyRaw)
-    : bodyRaw;
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    statusText: statusMatch[2] || http.STATUS_CODES[status] || '',
-    headers,
-    text: body.toString('utf8')
-  };
-}
-
-function decodeChunkedBody(buffer: Buffer): Buffer {
-  const chunks: Buffer[] = [];
-  let offset = 0;
-  while (offset < buffer.length) {
-    const lineEnd = buffer.indexOf('\r\n', offset);
-    if (lineEnd < 0) break;
-    const sizeText = buffer.slice(offset, lineEnd).toString('latin1').split(';')[0].trim();
-    const size = Number.parseInt(sizeText, 16);
-    if (!Number.isFinite(size) || size < 0) break;
-    offset = lineEnd + 2;
-    if (size === 0) break;
-    chunks.push(buffer.slice(offset, offset + size));
-    offset += size + 2;
-  }
-  return Buffer.concat(chunks);
+  return payload as T;
 }
 
 async function assertUniqueSiteUrl(db: D1Database, url: string, allowedSiteId?: number): Promise<void> {
@@ -1104,7 +1008,7 @@ async function listAccounts(db: D1Database): Promise<PublicCheckinAccount[]> {
       s.updated_at AS site_updated_at
     FROM public_checkin_accounts a
     INNER JOIN public_checkin_sites s ON s.id = a.site_id
-    ORDER BY a.updated_at DESC, a.id DESC
+    ORDER BY COALESCE(a.created_at, a.id) ASC, a.id ASC
   `);
 
   const rewardRows = await dbAll<{ account_id: number; reward: number | null }>(db, `
@@ -1392,7 +1296,7 @@ async function runCheckinAll(db: D1Database, triggeredBy: PublicCheckinTriggered
     FROM public_checkin_accounts a
     INNER JOIN public_checkin_sites s ON s.id = a.site_id
     WHERE a.checkin_enabled = 1 AND a.status <> 'disabled'
-    ORDER BY s.id ASC, a.id ASC
+    ORDER BY COALESCE(a.created_at, a.id) ASC, a.id ASC
   `);
   const results = [];
   for (const row of rows) {
@@ -1864,8 +1768,12 @@ export const publicCheckinTestHooks = {
   normalizeCookieHeader,
   extractPlatformUserIdFromHeaders,
   normalizeCredentialInput,
+  inferPublicCheckinPlatform,
+  mergeSetCookieValues,
+  createAdapter,
   encryptCredential,
   decryptCredentialText,
   solveAcwScV2,
+  parseJsonResponsePayload,
   validateCronExpression
 };

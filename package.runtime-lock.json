@@ -6,7 +6,8 @@
     "": {
       "name": "microsoft-account-manager-runtime",
       "dependencies": {
-        "better-sqlite3": "11.10.0"
+        "better-sqlite3": "11.10.0",
+        "undici": "8.5.0"
       },
       "engines": {
         "node": ">=22.22.0"
@@ -57,6 +58,15 @@
       },
       "engines": {
         "node": ">=10"
+      }
+    },
+    "node_modules/undici": {
+      "version": "8.5.0",
+      "resolved": "https://registry.npmjs.org/undici/-/undici-8.5.0.tgz",
+      "integrity": "sha512-xamtWoB1EshgjpmlXd7GGm2VfdDtw1+rD8uhry8pSNW3If6S8E0m2T2+orSKeZXEn/aPJMviCpDBA65WJt8zhg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">=22.19.0"
       }
     },
     "node_modules/file-uri-to-path": {

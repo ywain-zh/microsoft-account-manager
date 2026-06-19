@@ -74,6 +74,15 @@ export interface SystemProxyConfig {
   proxyUrl: string;
 }
 
+export interface SystemProxyTestResult {
+  ok: boolean;
+  message: string;
+  targetUrl: string;
+  ip?: string;
+  colo?: string;
+  elapsedMs: number;
+}
+
 export interface CloudMailConfig {
   apiBaseUrl: string;
   adminEmail: string;
@@ -131,7 +140,7 @@ export interface Sub2ApiConfig {
   adminApiKey: string;
 }
 
-export type PublicCheckinPlatform = 'new-api' | 'one-api' | 'onehub';
+export type PublicCheckinPlatform = 'new-api' | 'one-api' | 'onehub' | 'anyrouter';
 export type PublicCheckinCredentialType = 'password' | 'access_token' | 'cookie';
 export type PublicCheckinAccountStatus = 'active' | 'disabled' | 'error';
 export type PublicCheckinStatus = 'success' | 'failed' | 'skipped';

@@ -36,6 +36,7 @@ import type {
   Sub2ApiGroupsResponse,
   SystemBackupJobResponse,
   SystemProxyConfig,
+  SystemProxyTestResult,
   TranslationConfig,
   TranslationProvider,
   TranslationResponse,
@@ -331,6 +332,13 @@ export const api = {
   updateSystemProxyConfig(payload: SystemProxyConfig): Promise<{ item: SystemProxyConfig }> {
     return request<{ item: SystemProxyConfig }>('/api/system/proxy-config', {
       method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  testSystemProxyConfig(payload: SystemProxyConfig): Promise<{ item: SystemProxyConfig; result: SystemProxyTestResult }> {
+    return request<{ item: SystemProxyConfig; result: SystemProxyTestResult }>('/api/system/proxy-config/test', {
+      method: 'POST',
       body: JSON.stringify(payload)
     });
   },
