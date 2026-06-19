@@ -138,6 +138,9 @@ let balanceSchedule: SimpleCronTask | null = null;
 let schedulerDb: D1Database | null = null;
 let schedulerStarted = false;
 
+type NotificationsModule = typeof import('./notifications.js');
+let notificationsModulePromise: Promise<NotificationsModule> | null = null;
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
@@ -160,6 +163,30 @@ function asBoolean(value: unknown, fallback = false): boolean {
 function asPositiveInt(value: unknown): number | undefined {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+async function loadNotificationsModule(): Promise<NotificationsModule> {
+  notificationsModulePromise ??= import('./notifications.js').catch((error) => {
+    const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
+    if (code === 'ERR_MODULE_NOT_FOUND') {
+      return import('./notifications.ts' as string) as Promise<NotificationsModule>;
+    }
+    throw error;
+  });
+  return notificationsModulePromise;
+}
+
+async function sendSchedulerSummaryNotification(
+  db: D1Database,
+  results: Awaited<ReturnType<typeof runCheckinAll>>
+): Promise<void> {
+  const notifications = await loadNotificationsModule();
+  await notifications.sendPublicCheckinSchedulerSummaryNotification(db, results);
+}
+
+async function sendSchedulerErrorNotification(db: D1Database, error: unknown): Promise<void> {
+  const notifications = await loadNotificationsModule();
+  await notifications.sendPublicCheckinSchedulerErrorNotification(db, error);
 }
 
 function unixNow(): number {
@@ -1658,7 +1685,17 @@ async function restartPublicCheckinScheduler(db: D1Database): Promise<void> {
   const settings = await getSettings(db);
   checkinSchedule = new SimpleCronTask(settings.checkinCron, settings.timezone, async () => {
     console.info('[PublicCheckin] 开始执行定时签到');
-    await runCheckinAll(db, 'scheduler');
+    try {
+      const results = await runCheckinAll(db, 'scheduler');
+      await sendSchedulerSummaryNotification(db, results).catch((error) => {
+        console.warn('[PublicCheckin] Telegram 签到汇总通知发送失败', error);
+      });
+    } catch (error) {
+      console.error('[PublicCheckin] 定时签到执行异常', error);
+      await sendSchedulerErrorNotification(db, error).catch((notificationError) => {
+        console.warn('[PublicCheckin] Telegram 签到异常通知发送失败', notificationError);
+      });
+    }
   });
   balanceSchedule = null;
   checkinSchedule.start();

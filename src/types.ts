@@ -83,6 +83,24 @@ export interface SystemProxyTestResult {
   elapsedMs: number;
 }
 
+export interface TelegramNotificationConfig {
+  enabled: boolean;
+  botToken?: string;
+  botTokenConfigured?: boolean;
+  clearBotToken?: boolean;
+  chatId: string;
+  useSystemProxy: boolean;
+}
+
+export interface NotificationConfig {
+  telegram: TelegramNotificationConfig;
+}
+
+export interface NotificationTestResult {
+  ok: boolean;
+  message: string;
+}
+
 export interface CloudMailConfig {
   apiBaseUrl: string;
   adminEmail: string;

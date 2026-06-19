@@ -19,6 +19,9 @@
           <n-button :type="activeTab === 'proxy' ? 'primary' : 'default'" @click="activeTab = 'proxy'">
             代理
           </n-button>
+          <n-button :type="activeTab === 'notification' ? 'primary' : 'default'" @click="activeTab = 'notification'">
+            通知
+          </n-button>
         </div>
         <div v-if="activeTab === 'translation'" class="settings-toolbar">
           <span class="settings-toolbar-label">翻译服务首选项</span>
@@ -228,6 +231,56 @@
         </div>
       </section>
 
+      <section v-if="activeTab === 'notification'" class="backup-section">
+        <div class="section-title">
+          <h3>Telegram 通知</h3>
+          <span>{{ telegramStatusLabel }}</span>
+        </div>
+        <n-alert type="info" :bordered="false" class="backup-alert">
+          每日定时签到结束后发送一条 Telegram 汇总；手动签到不发送通知。测试按钮使用已保存配置。
+        </n-alert>
+
+        <div class="external-api-panel">
+          <n-form label-placement="top" autocomplete="off">
+            <div class="form-grid two-cols">
+              <n-form-item label="启用 Telegram">
+                <n-switch v-model:value="notificationForm.telegram.enabled" />
+              </n-form-item>
+              <n-form-item label="复用系统代理">
+                <n-switch v-model:value="notificationForm.telegram.useSystemProxy" />
+              </n-form-item>
+            </div>
+            <div class="form-grid two-cols notification-grid">
+              <n-form-item label="Bot Token">
+                <SecretInput
+                  v-model:value="notificationForm.telegram.botToken"
+                  :placeholder="notificationForm.telegram.botTokenConfigured ? '已配置，留空不修改' : '请输入 Telegram Bot Token'"
+                  :input-props="telegramTokenInputProps"
+                />
+              </n-form-item>
+              <n-form-item label="Chat ID">
+                <n-input
+                  v-model:value="notificationForm.telegram.chatId"
+                  placeholder="例如 123456789 或 -1001234567890"
+                  :input-props="telegramChatIdInputProps"
+                />
+              </n-form-item>
+            </div>
+          </n-form>
+
+          <div class="external-api-actions">
+            <n-button :loading="notificationLoading" @click="loadNotificationConfig">重新载入</n-button>
+            <n-button :disabled="!notificationForm.telegram.botTokenConfigured" @click="clearTelegramBotToken">
+              清空 Token
+            </n-button>
+            <n-button :loading="notificationTesting" @click="testNotificationConfig">发送测试通知</n-button>
+            <n-button type="primary" :loading="notificationSaving" @click="saveNotificationConfig">
+              保存通知配置
+            </n-button>
+          </div>
+        </div>
+      </section>
+
       <div v-if="activeTab === 'translation'" class="settings-footer">
         <n-button :loading="loading" @click="loadConfig">重新载入</n-button>
         <n-button type="primary" :loading="saving" @click="saveConfig">保存配置</n-button>
@@ -247,6 +300,7 @@ import {
   NInput,
   NProgress,
   NSelect,
+  NSwitch,
   NTag,
   createDiscreteApi
 } from 'naive-ui';
@@ -254,7 +308,15 @@ import { api } from '../api';
 import SecretInput from '../components/SecretInput.vue';
 import { copyToClipboard } from '../utils/clipboard';
 import { downloadBlob } from '../utils/download';
-import type { ExternalApiConfig, SystemBackupJob, SystemProxyConfig, TranslationConfig, TranslationProvider, TranslationTestResult } from '../types';
+import type {
+  ExternalApiConfig,
+  NotificationConfig,
+  SystemBackupJob,
+  SystemProxyConfig,
+  TranslationConfig,
+  TranslationProvider,
+  TranslationTestResult
+} from '../types';
 
 const { message } = createDiscreteApi(['message']);
 
@@ -279,6 +341,17 @@ const proxyForm = reactive<SystemProxyConfig>({
   proxyUrl: ''
 });
 
+const notificationForm = reactive<NotificationConfig>({
+  telegram: {
+    enabled: false,
+    botToken: '',
+    botTokenConfigured: false,
+    clearBotToken: false,
+    chatId: '',
+    useSystemProxy: true
+  }
+});
+
 const loading = ref(false);
 const saving = ref(false);
 const externalApiLoading = ref(false);
@@ -286,12 +359,15 @@ const externalApiSaving = ref(false);
 const proxyLoading = ref(false);
 const proxySaving = ref(false);
 const proxyTesting = ref(false);
+const notificationLoading = ref(false);
+const notificationSaving = ref(false);
+const notificationTesting = ref(false);
 const externalTokenHeader = ref('x-mail-api-token');
 const modelLoading = ref(false);
 const testingProvider = ref<TranslationProvider | ''>('');
 const modelItems = ref<string[]>([]);
 const testResults = ref<TranslationTestResult[]>([]);
-const activeTab = ref<'translation' | 'backup' | 'externalApi' | 'proxy'>('translation');
+const activeTab = ref<'translation' | 'backup' | 'externalApi' | 'proxy' | 'notification'>('translation');
 const backupStarting = ref(false);
 const backupJob = ref<SystemBackupJob | null>(null);
 let backupPollTimer: number | null = null;
@@ -329,6 +405,22 @@ const externalApiKeyInputProps = {
 
 const proxyInputProps = {
   name: 'system-proxy-url',
+  autocomplete: 'off',
+  spellcheck: false,
+  'data-lpignore': 'true',
+  'data-1p-ignore': 'true'
+};
+
+const telegramTokenInputProps = {
+  name: 'telegram-bot-token',
+  autocomplete: 'new-password',
+  spellcheck: false,
+  'data-lpignore': 'true',
+  'data-1p-ignore': 'true'
+};
+
+const telegramChatIdInputProps = {
+  name: 'telegram-chat-id',
   autocomplete: 'off',
   spellcheck: false,
   'data-lpignore': 'true',
@@ -376,10 +468,21 @@ const backupLogText = computed(() => {
   return backupJob.value.logs.join('\n');
 });
 
+const telegramStatusLabel = computed(() => {
+  if (notificationForm.telegram.clearBotToken) {
+    return '待清空';
+  }
+  if (!notificationForm.telegram.enabled) {
+    return '未启用';
+  }
+  return notificationForm.telegram.botTokenConfigured ? '已启用' : '待配置';
+});
+
 onMounted(() => {
   void loadConfig();
   void loadExternalApiConfig();
   void loadProxyConfig();
+  void loadNotificationConfig();
   restoreBackupJob();
 });
 
@@ -489,6 +592,53 @@ async function testProxyConfig(): Promise<void> {
 function clearProxyConfig(): void {
   proxyForm.proxyUrl = '';
   void saveProxyConfig();
+}
+
+async function loadNotificationConfig(): Promise<void> {
+  notificationLoading.value = true;
+  try {
+    const { item } = await api.getNotificationConfig();
+    assignNotificationConfig(item);
+  } catch (error) {
+    message.error(getErrorMessage(error));
+  } finally {
+    notificationLoading.value = false;
+  }
+}
+
+async function saveNotificationConfig(): Promise<void> {
+  notificationSaving.value = true;
+  try {
+    const { item } = await api.updateNotificationConfig(normalizeNotificationForm());
+    assignNotificationConfig(item);
+    message.success('通知配置已保存');
+  } catch (error) {
+    message.error(getErrorMessage(error));
+  } finally {
+    notificationSaving.value = false;
+  }
+}
+
+async function testNotificationConfig(): Promise<void> {
+  notificationTesting.value = true;
+  try {
+    const result = await api.testNotificationConfig();
+    if (result.ok) {
+      message.success(result.message);
+    } else {
+      message.error(result.message);
+    }
+  } catch (error) {
+    message.error(getErrorMessage(error));
+  } finally {
+    notificationTesting.value = false;
+  }
+}
+
+function clearTelegramBotToken(): void {
+  notificationForm.telegram.botToken = '';
+  notificationForm.telegram.clearBotToken = true;
+  message.warning('保存后将清空 Telegram Bot Token');
 }
 
 function generateExternalApiKey(): void {
@@ -660,6 +810,28 @@ function normalizeForm(): TranslationConfig {
     openaiModel: form.openaiModel.trim() || DEFAULT_MODEL,
     deeplxBaseUrl: form.deeplxBaseUrl.trim(),
     deeplxApiKey: form.deeplxApiKey.trim()
+  };
+}
+
+function assignNotificationConfig(config: NotificationConfig): void {
+  notificationForm.telegram.enabled = Boolean(config.telegram.enabled);
+  notificationForm.telegram.botToken = '';
+  notificationForm.telegram.botTokenConfigured = Boolean(config.telegram.botTokenConfigured);
+  notificationForm.telegram.clearBotToken = false;
+  notificationForm.telegram.chatId = config.telegram.chatId || '';
+  notificationForm.telegram.useSystemProxy = config.telegram.useSystemProxy !== false;
+}
+
+function normalizeNotificationForm(): NotificationConfig {
+  return {
+    telegram: {
+      enabled: notificationForm.telegram.enabled,
+      botToken: notificationForm.telegram.botToken?.trim() || '',
+      botTokenConfigured: notificationForm.telegram.botTokenConfigured,
+      clearBotToken: Boolean(notificationForm.telegram.clearBotToken),
+      chatId: notificationForm.telegram.chatId.trim(),
+      useSystemProxy: notificationForm.telegram.useSystemProxy
+    }
   };
 }
 

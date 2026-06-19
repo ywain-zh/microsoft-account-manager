@@ -19,6 +19,8 @@ import type {
   MailGptValidityService,
   MailFetchMode,
   GptPlanFilter,
+  NotificationConfig,
+  NotificationTestResult,
   OpenAiModelsResponse,
   PublicCheckinAccount,
   PublicCheckinAccountCredentialResponse,
@@ -340,6 +342,23 @@ export const api = {
     return request<{ item: SystemProxyConfig; result: SystemProxyTestResult }>('/api/system/proxy-config/test', {
       method: 'POST',
       body: JSON.stringify(payload)
+    });
+  },
+
+  getNotificationConfig(): Promise<{ item: NotificationConfig }> {
+    return request<{ item: NotificationConfig }>('/api/system/notification-config');
+  },
+
+  updateNotificationConfig(payload: NotificationConfig): Promise<{ item: NotificationConfig }> {
+    return request<{ item: NotificationConfig }>('/api/system/notification-config', {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  testNotificationConfig(): Promise<NotificationTestResult> {
+    return request<NotificationTestResult>('/api/system/notification-config/test', {
+      method: 'POST'
     });
   },
 

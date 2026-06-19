@@ -14,6 +14,7 @@ import {
   getSystemBackupJob,
   startSystemBackup
 } from './runtime/system-backup.js';
+import { registerNotificationRoutes } from './runtime/notifications.js';
 import { registerPublicCheckinRoutes } from './runtime/public-checkin.js';
 
 type Bindings = {
@@ -666,6 +667,7 @@ app.post('/api/auth/login', async (c) => {
 });
 
 registerPublicCheckinRoutes(app);
+registerNotificationRoutes(app);
 
 
 app.get('/auth/microsoft', async (c) => {
