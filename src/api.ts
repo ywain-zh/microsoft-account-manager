@@ -20,15 +20,22 @@ import type {
   MailFetchMode,
   GptPlanFilter,
   OpenAiModelsResponse,
+  PublicCheckinAccount,
+  PublicCheckinAccountCredentialResponse,
+  PublicCheckinAccountPayload,
+  PublicCheckinBalanceResult,
+  PublicCheckinBatchResult,
+  PublicCheckinLogResponse,
+  PublicCheckinSettings,
+  PublicCheckinSite,
+  PublicCheckinStats,
+  PublicCheckinRunResult,
   Sub2ApiConfig,
   Sub2ApiDeleteAccountsResponse,
   Sub2ApiGptValidityResponse,
   Sub2ApiGroupsResponse,
-  Sub2ApiLongLinkCheckoutPayload,
-  Sub2ApiLongLinkCheckoutResponse,
-  Sub2ApiLongLinkConfig,
-  Sub2ApiLongLinkProxyCheckResponse,
   SystemBackupJobResponse,
+  SystemProxyConfig,
   TranslationConfig,
   TranslationProvider,
   TranslationResponse,
@@ -317,6 +324,17 @@ export const api = {
     });
   },
 
+  getSystemProxyConfig(): Promise<{ item: SystemProxyConfig }> {
+    return request<{ item: SystemProxyConfig }>('/api/system/proxy-config');
+  },
+
+  updateSystemProxyConfig(payload: SystemProxyConfig): Promise<{ item: SystemProxyConfig }> {
+    return request<{ item: SystemProxyConfig }>('/api/system/proxy-config', {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
   refreshAccounts(payload?: { accountIds?: number[] }): Promise<BatchActionResult> {
     return request<BatchActionResult>('/api/accounts/refresh', {
       method: 'POST',
@@ -372,34 +390,130 @@ export const api = {
     return request<{ item: Sub2ApiConfig }>('/api/sub2api/config');
   },
 
+  listPublicCheckinAccounts(): Promise<PublicCheckinAccount[]> {
+    return request<PublicCheckinAccount[]>('/api/public-checkin/accounts');
+  },
+
+  createPublicCheckinAccount(payload: PublicCheckinAccountPayload): Promise<PublicCheckinAccount> {
+    return request<PublicCheckinAccount>('/api/public-checkin/accounts', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  updatePublicCheckinAccount(id: number, payload: PublicCheckinAccountPayload): Promise<PublicCheckinAccount> {
+    return request<PublicCheckinAccount>(`/api/public-checkin/accounts/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  deletePublicCheckinAccount(id: number): Promise<void> {
+    return request<void>(`/api/public-checkin/accounts/${id}`, {
+      method: 'DELETE'
+    });
+  },
+
+  getPublicCheckinCredential(id: number): Promise<PublicCheckinAccountCredentialResponse> {
+    return request<PublicCheckinAccountCredentialResponse>(`/api/public-checkin/accounts/${id}/credential`);
+  },
+
+  testPublicCheckinAccount(id: number): Promise<PublicCheckinBalanceResult> {
+    return request<PublicCheckinBalanceResult>(`/api/public-checkin/accounts/${id}/test`, {
+      method: 'POST'
+    });
+  },
+
+  testPublicCheckinConnection(payload: Pick<PublicCheckinAccountPayload, 'siteId' | 'site' | 'credentialType' | 'credential' | 'useProxy'>): Promise<PublicCheckinBalanceResult> {
+    return request<PublicCheckinBalanceResult>('/api/public-checkin/accounts/test-connection', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  listPublicCheckinSites(): Promise<PublicCheckinSite[]> {
+    return request<PublicCheckinSite[]>('/api/public-checkin/sites');
+  },
+
+  createPublicCheckinSite(payload: Pick<PublicCheckinSite, 'name' | 'url' | 'platform'>): Promise<PublicCheckinSite> {
+    return request<PublicCheckinSite>('/api/public-checkin/sites', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  updatePublicCheckinSite(id: number, payload: Pick<PublicCheckinSite, 'name' | 'url' | 'platform'>): Promise<PublicCheckinSite> {
+    return request<PublicCheckinSite>(`/api/public-checkin/sites/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  deletePublicCheckinSite(id: number): Promise<void> {
+    return request<void>(`/api/public-checkin/sites/${id}`, {
+      method: 'DELETE'
+    });
+  },
+
+  runAllPublicCheckin(): Promise<PublicCheckinBatchResult[]> {
+    return request<PublicCheckinBatchResult[]>('/api/public-checkin/checkin/run-all', {
+      method: 'POST'
+    });
+  },
+
+  runPublicCheckinAccount(id: number): Promise<PublicCheckinRunResult> {
+    return request<PublicCheckinRunResult>(`/api/public-checkin/checkin/run/${id}`, {
+      method: 'POST'
+    });
+  },
+
+  listPublicCheckinLogs(params: {
+    accountId?: number;
+    status?: string;
+    startAt?: number;
+    endAt?: number;
+    limit?: number;
+    offset?: number;
+  }): Promise<PublicCheckinLogResponse> {
+    return request<PublicCheckinLogResponse>(`/api/public-checkin/checkin/logs${buildQuery(params)}`);
+  },
+
+  getPublicCheckinStats(): Promise<PublicCheckinStats> {
+    return request<PublicCheckinStats>('/api/public-checkin/checkin/stats');
+  },
+
+  refreshAllPublicCheckinBalances(): Promise<PublicCheckinBatchResult[]> {
+    return request<PublicCheckinBatchResult[]>('/api/public-checkin/balance/refresh-all', {
+      method: 'POST'
+    });
+  },
+
+  refreshPublicCheckinBalance(id: number): Promise<PublicCheckinBalanceResult> {
+    return request<PublicCheckinBalanceResult>(`/api/public-checkin/balance/refresh/${id}`, {
+      method: 'POST'
+    });
+  },
+
+  getPublicCheckinSettings(): Promise<PublicCheckinSettings> {
+    return request<PublicCheckinSettings>('/api/public-checkin/settings');
+  },
+
+  updatePublicCheckinSettings(payload: PublicCheckinSettings): Promise<PublicCheckinSettings> {
+    return request<PublicCheckinSettings>('/api/public-checkin/settings', {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  cleanupPublicCheckinLogs(): Promise<{ deleted: number }> {
+    return request<{ deleted: number }>('/api/public-checkin/settings/cleanup-logs', {
+      method: 'POST'
+    });
+  },
+
   updateSub2ApiConfig(payload: Sub2ApiConfig): Promise<{ item: Sub2ApiConfig }> {
     return request<{ item: Sub2ApiConfig }>('/api/sub2api/config', {
       method: 'PUT',
-      body: JSON.stringify(payload)
-    });
-  },
-
-  getSub2ApiLongLinkConfig(): Promise<{ item: Sub2ApiLongLinkConfig }> {
-    return request<{ item: Sub2ApiLongLinkConfig }>('/api/sub2api/long-link/config');
-  },
-
-  updateSub2ApiLongLinkConfig(payload: Sub2ApiLongLinkConfig): Promise<{ item: Sub2ApiLongLinkConfig }> {
-    return request<{ item: Sub2ApiLongLinkConfig }>('/api/sub2api/long-link/config', {
-      method: 'PUT',
-      body: JSON.stringify(payload)
-    });
-  },
-
-  checkSub2ApiLongLinkProxy(payload: { proxyPool?: string }): Promise<Sub2ApiLongLinkProxyCheckResponse> {
-    return request<Sub2ApiLongLinkProxyCheckResponse>('/api/sub2api/long-link/proxy-check', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    });
-  },
-
-  createSub2ApiLongLinkCheckout(payload: Sub2ApiLongLinkCheckoutPayload): Promise<Sub2ApiLongLinkCheckoutResponse> {
-    return request<Sub2ApiLongLinkCheckoutResponse>('/api/sub2api/long-link/checkout', {
-      method: 'POST',
       body: JSON.stringify(payload)
     });
   },

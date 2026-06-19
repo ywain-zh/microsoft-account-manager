@@ -16,6 +16,9 @@
           <n-button :type="activeTab === 'externalApi' ? 'primary' : 'default'" @click="activeTab = 'externalApi'">
             接口鉴权
           </n-button>
+          <n-button :type="activeTab === 'proxy' ? 'primary' : 'default'" @click="activeTab = 'proxy'">
+            代理
+          </n-button>
         </div>
         <div v-if="activeTab === 'translation'" class="settings-toolbar">
           <span class="settings-toolbar-label">翻译服务首选项</span>
@@ -196,6 +199,35 @@
         </div>
       </section>
 
+      <section v-if="activeTab === 'proxy'" class="backup-section">
+        <div class="section-title">
+          <h3>本地代理</h3>
+          <span>{{ proxyForm.proxyUrl ? '已配置' : '未配置' }}</span>
+        </div>
+        <n-alert type="info" :bordered="false" class="backup-alert">
+          公益站签到账号勾选“启用本地代理”后，会通过这里配置的代理请求目标站点；留空则不启用代理。
+        </n-alert>
+
+        <div class="external-api-panel">
+          <n-form label-placement="top" autocomplete="off">
+            <n-form-item label="代理地址">
+              <n-input
+                v-model:value="proxyForm.proxyUrl"
+                placeholder="http://127.0.0.1:7890"
+                :input-props="proxyInputProps"
+              />
+              <template #feedback>当前公益站签到代理支持 http:// 或 https:// 代理地址。</template>
+            </n-form-item>
+          </n-form>
+
+          <div class="external-api-actions">
+            <n-button :loading="proxyLoading" @click="loadProxyConfig">重新载入</n-button>
+            <n-button :disabled="!proxyForm.proxyUrl" @click="clearProxyConfig">清空</n-button>
+            <n-button type="primary" :loading="proxySaving" @click="saveProxyConfig">保存代理</n-button>
+          </div>
+        </div>
+      </section>
+
       <div v-if="activeTab === 'translation'" class="settings-footer">
         <n-button :loading="loading" @click="loadConfig">重新载入</n-button>
         <n-button type="primary" :loading="saving" @click="saveConfig">保存配置</n-button>
@@ -222,7 +254,7 @@ import { api } from '../api';
 import SecretInput from '../components/SecretInput.vue';
 import { copyToClipboard } from '../utils/clipboard';
 import { downloadBlob } from '../utils/download';
-import type { ExternalApiConfig, SystemBackupJob, TranslationConfig, TranslationProvider, TranslationTestResult } from '../types';
+import type { ExternalApiConfig, SystemBackupJob, SystemProxyConfig, TranslationConfig, TranslationProvider, TranslationTestResult } from '../types';
 
 const { message } = createDiscreteApi(['message']);
 
@@ -243,16 +275,22 @@ const externalApiForm = reactive<ExternalApiConfig>({
   mailApiToken: ''
 });
 
+const proxyForm = reactive<SystemProxyConfig>({
+  proxyUrl: ''
+});
+
 const loading = ref(false);
 const saving = ref(false);
 const externalApiLoading = ref(false);
 const externalApiSaving = ref(false);
+const proxyLoading = ref(false);
+const proxySaving = ref(false);
 const externalTokenHeader = ref('x-mail-api-token');
 const modelLoading = ref(false);
 const testingProvider = ref<TranslationProvider | ''>('');
 const modelItems = ref<string[]>([]);
 const testResults = ref<TranslationTestResult[]>([]);
-const activeTab = ref<'translation' | 'backup' | 'externalApi'>('translation');
+const activeTab = ref<'translation' | 'backup' | 'externalApi' | 'proxy'>('translation');
 const backupStarting = ref(false);
 const backupJob = ref<SystemBackupJob | null>(null);
 let backupPollTimer: number | null = null;
@@ -283,6 +321,14 @@ const deeplxKeyInputProps = {
 const externalApiKeyInputProps = {
   name: 'external-mail-api-token',
   autocomplete: 'new-password',
+  spellcheck: false,
+  'data-lpignore': 'true',
+  'data-1p-ignore': 'true'
+};
+
+const proxyInputProps = {
+  name: 'system-proxy-url',
+  autocomplete: 'off',
   spellcheck: false,
   'data-lpignore': 'true',
   'data-1p-ignore': 'true'
@@ -332,6 +378,7 @@ const backupLogText = computed(() => {
 onMounted(() => {
   void loadConfig();
   void loadExternalApiConfig();
+  void loadProxyConfig();
   restoreBackupJob();
 });
 
@@ -391,6 +438,38 @@ async function saveExternalApiConfig(): Promise<void> {
   } finally {
     externalApiSaving.value = false;
   }
+}
+
+async function loadProxyConfig(): Promise<void> {
+  proxyLoading.value = true;
+  try {
+    const { item } = await api.getSystemProxyConfig();
+    proxyForm.proxyUrl = item.proxyUrl;
+  } catch (error) {
+    message.error(getErrorMessage(error));
+  } finally {
+    proxyLoading.value = false;
+  }
+}
+
+async function saveProxyConfig(): Promise<void> {
+  proxySaving.value = true;
+  try {
+    const { item } = await api.updateSystemProxyConfig({
+      proxyUrl: proxyForm.proxyUrl.trim()
+    });
+    proxyForm.proxyUrl = item.proxyUrl;
+    message.success(proxyForm.proxyUrl ? '本地代理已保存' : '本地代理已清空');
+  } catch (error) {
+    message.error(getErrorMessage(error));
+  } finally {
+    proxySaving.value = false;
+  }
+}
+
+function clearProxyConfig(): void {
+  proxyForm.proxyUrl = '';
+  void saveProxyConfig();
 }
 
 function generateExternalApiKey(): void {

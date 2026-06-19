@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 export interface RuntimeConfig {
@@ -40,8 +41,51 @@ function asPort(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function loadDotEnvFile(filePath: string): void {
+  if (!existsSync(filePath)) {
+    return;
+  }
+
+  const content = readFileSync(filePath, 'utf8');
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) {
+      continue;
+    }
+
+    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    if (!match) {
+      continue;
+    }
+
+    const [, key, rawValue] = match;
+    if (process.env[key] !== undefined) {
+      continue;
+    }
+    process.env[key] = parseDotEnvValue(rawValue);
+  }
+}
+
+function parseDotEnvValue(value: string): string {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    const unquoted = trimmed.slice(1, -1);
+    return trimmed.startsWith('"')
+      ? unquoted.replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\t/g, '\t')
+      : unquoted;
+  }
+
+  const hashIndex = trimmed.search(/\s#/);
+  return (hashIndex >= 0 ? trimmed.slice(0, hashIndex) : trimmed).trim();
+}
+
 export function resolveRuntimeConfig(): RuntimeConfig {
   const rootDir = process.cwd();
+  loadDotEnvFile(resolve(rootDir, '.env'));
+
   const dbPath = resolve(process.env.DB_PATH ?? resolve(rootDir, 'data/account-manager.db'));
   const legacyDbDir =
     process.env.LEGACY_DB_DIR?.trim() ||

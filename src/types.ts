@@ -70,6 +70,10 @@ export interface ExternalApiConfig {
   mailApiToken: string;
 }
 
+export interface SystemProxyConfig {
+  proxyUrl: string;
+}
+
 export interface CloudMailConfig {
   apiBaseUrl: string;
   adminEmail: string;
@@ -127,62 +131,122 @@ export interface Sub2ApiConfig {
   adminApiKey: string;
 }
 
-export interface Sub2ApiLongLinkConfig {
-  proxyPool: string;
-}
+export type PublicCheckinPlatform = 'new-api' | 'one-api' | 'onehub';
+export type PublicCheckinCredentialType = 'password' | 'access_token' | 'cookie';
+export type PublicCheckinAccountStatus = 'active' | 'disabled' | 'error';
+export type PublicCheckinStatus = 'success' | 'failed' | 'skipped';
+export type PublicCheckinTriggeredBy = 'scheduler' | 'manual';
 
-export interface Sub2ApiLongLinkProxyCheckResponse {
-  ok: true;
-  ip: string;
-  country: string;
-  countryCode: string;
-  region: string;
-  city: string;
-  timezone: string;
-  isp: string;
-  loc: string;
-  proxyUsed: string;
-  direct: boolean;
-}
-
-export interface Sub2ApiLongLinkCheckoutPayload {
-  token: string;
-  plan: 'plus' | 'team';
-  linkType?: 'hosted' | 'gopay';
-  checkoutUiMode?: 'hosted' | 'custom' | 'redirect';
-  country: string;
-  currency: string;
-  locale: string;
-  usePromo: boolean;
-  promoCode?: string;
-  workspaceName?: string;
-  seatQuantity?: number;
-  proxyPool?: string;
-  gopayName?: string;
-  gopayLine1?: string;
-  gopayLine2?: string;
-  gopayCity?: string;
-  gopayState?: string;
-  gopayPostalCode?: string;
-}
-
-export interface Sub2ApiLongLinkCheckoutResponse {
-  ok: true;
+export interface PublicCheckinSite {
+  id: number;
+  name: string;
   url: string;
-  chatgptCheckoutUrl: string;
-  openaiPayUrl: string;
-  stripeHostedUrl: string;
-  checkoutUrl: string;
-  stripeRedirectUrl: string;
-  providerRedirectUrl: string;
-  longUrl: string;
-  fallback: string;
-  providerError: string;
-  expectedAmount: number | null;
-  linkType: 'hosted' | 'gopay';
-  proxyUsed: string;
-  direct: boolean;
-  raw: unknown;
+  platform: PublicCheckinPlatform;
+  createdAt: number | null;
+  updatedAt: number | null;
+}
+
+export interface PublicCheckinCredential {
+  type: PublicCheckinCredentialType;
+  username?: string;
+  password?: string;
+  accessToken?: string;
+  cookie?: string;
+  platformUserId?: number;
+}
+
+export interface PublicCheckinAccount {
+  id: number;
+  siteId: number;
+  label: string;
+  credentialType: PublicCheckinCredentialType;
+  hasCredential: boolean;
+  balance: number | null;
+  balanceUpdatedAt: number | null;
+  checkinEnabled: boolean;
+  useProxy: boolean;
+  status: PublicCheckinAccountStatus;
+  lastError: string | null;
+  lastCheckinReward: number | null;
+  healthState: 'normal' | 'abnormal' | 'failed' | 'unknown';
+  healthMessage: string | null;
+  createdAt: number | null;
+  updatedAt: number | null;
+  site: PublicCheckinSite;
+}
+
+export interface PublicCheckinAccountPayload {
+  siteId?: number;
+  site?: Pick<PublicCheckinSite, 'name' | 'url' | 'platform'>;
+  label: string;
+  credentialType: PublicCheckinCredentialType;
+  credential?: PublicCheckinCredential | null;
+  checkinEnabled: boolean;
+  useProxy: boolean;
+  status?: PublicCheckinAccountStatus;
+}
+
+export interface PublicCheckinLog {
+  id: number;
+  accountId: number;
+  triggeredBy: PublicCheckinTriggeredBy;
+  status: PublicCheckinStatus;
+  reward: number | null;
+  rewardNote: string | null;
+  errorMessage: string | null;
+  executedAt: number;
+  accountLabel: string;
+  siteName: string;
+}
+
+export interface PublicCheckinLogResponse {
+  items: PublicCheckinLog[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface PublicCheckinStats {
+  totalAccounts: number;
+  enabledAccounts: number;
+  todaySuccess: number;
+  todayReward: number;
+  sevenDay: Array<{ status: PublicCheckinStatus; count: number; reward: number }>;
+}
+
+export interface PublicCheckinSettings {
+  checkinCron: string;
+  checkinTime: string;
+  timezone: string;
+}
+
+export interface PublicCheckinBalanceResult {
+  success: boolean;
+  balance?: number;
+  errorMessage?: string;
+}
+
+export interface PublicCheckinRunResult {
+  success: boolean;
+  status: PublicCheckinStatus;
+  reward?: number | null;
+  rewardNote?: string | null;
+  errorMessage?: string | null;
+}
+
+export interface PublicCheckinAccountCredentialResponse {
+  credentialType: PublicCheckinCredentialType;
+  credential: PublicCheckinCredential;
+}
+
+export interface PublicCheckinBatchResult {
+  accountId: number;
+  label?: string;
+  siteName?: string;
+  success?: boolean;
+  balance?: number;
+  errorMessage?: string;
+  result?: PublicCheckinRunResult;
 }
 
 export interface Sub2ApiGroupItem {

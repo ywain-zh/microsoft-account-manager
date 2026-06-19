@@ -19,11 +19,14 @@ export DEPLOY_DIR=/opt/microsoft-account-manager
 export CONTAINER_NAME=microsoft-account-manager
 export IMAGE_REPO=ghcr.io/ywain-zh/microsoft-account-manager
 export IMAGE_TAG=2026.04.15-2
+export PREV_IMAGE_TAG=2026.04.14-2
 export APP_IMAGE=${IMAGE_REPO}:${IMAGE_TAG}
+export PREV_APP_IMAGE=${IMAGE_REPO}:${PREV_IMAGE_TAG}
 export RELEASE_DOC=releases/RELEASE-2026-04-15-02.md
 ```
 
 - 每次新部署前，都必须把 `IMAGE_TAG` 和 `RELEASE_DOC` 改成“本次已审核通过”的版本值。
+- 每次新部署前，必须把 `PREV_IMAGE_TAG` 改成“上一版已验证可回滚”的版本值；首次部署没有上一版时可留空。
 
 ## 审核确认要求
 - 改造完成后必须先输出审核说明，再等待用户审核。
@@ -80,6 +83,38 @@ docker images | grep microsoft-account-manager
 - 生产环境必须使用固定 tag，例如 `ghcr.io/ywain-zh/microsoft-account-manager:2026.04.15-2`。
 - 固定 tag 必须与本次 release 文档中的版本/tag 一致。
 - 回滚时必须切回上一个已验证的固定 tag。
+
+## 重要：服务器镜像清理策略
+- 重要：2C2G / 40G 小服务器每次部署后必须清理旧镜像，否则历史镜像会快速占满磁盘，导致 PostgreSQL、SQLite、日志写入和其他容器异常。
+- 重要：服务器只保留两个本项目镜像：当前部署的 `APP_IMAGE` 和上一版可回滚的 `PREV_APP_IMAGE`。
+- 重要：清理只能删除 `ghcr.io/ywain-zh/microsoft-account-manager:*` 的旧镜像；禁止清理其他服务镜像，例如 `postgres`、`redis`、`mysql`、`sub2api`。
+- 重要：禁止使用 `docker system prune -a` 作为常规部署清理命令，因为它可能删除回滚镜像或其他服务仍需保留的镜像。
+- 镜像清理必须放在健康检查成功之后执行；如果健康检查失败，先按故障排查或回滚流程处理，不要清理上一版回滚镜像。
+- 清理前后必须执行 `df -h /` 和 `docker system df`，并在部署结果中报告磁盘占用。
+
+部署成功后的旧镜像清理命令：
+
+```bash
+cd "$DEPLOY_DIR"
+df -h /
+docker system df
+
+docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}}' \
+  | while read -r image image_id; do
+      case "$image" in
+        "${IMAGE_REPO}:"*)
+          if [ "$image" != "$APP_IMAGE" ] && { [ -z "${PREV_APP_IMAGE:-}" ] || [ "$image" != "$PREV_APP_IMAGE" ]; }; then
+            echo "remove old image: $image"
+            docker image rm "$image" || true
+          fi
+          ;;
+      esac
+    done
+
+df -h /
+docker system df
+docker image ls --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep 'microsoft-account-manager' || true
+```
 
 ## 代码修改后的标准发布流程
 以后只要代码有变更，标准流程固定为“上游同步（如需要） -> 直接在 `dev` 开发 -> 解决冲突并验证 -> 编写 release 文档 -> 推送 `dev` -> push tag 发镜像 -> 等待审核批准 -> 服务器 pull/up”。不要跳过中间步骤，也不要把构建挪到服务器上执行。
@@ -171,12 +206,16 @@ export DEPLOY_DIR=/opt/microsoft-account-manager
 export CONTAINER_NAME=microsoft-account-manager
 export IMAGE_REPO=ghcr.io/ywain-zh/microsoft-account-manager
 export IMAGE_TAG=2026.04.15-2
+export PREV_IMAGE_TAG=
 export APP_IMAGE=${IMAGE_REPO}:${IMAGE_TAG}
+export PREV_APP_IMAGE=
 export RELEASE_DOC=releases/RELEASE-2026-04-15-02.md
 
 cd "$DEPLOY_DIR"
 pwd
 ls -lah
+df -h /
+docker system df
 test -f .env
 test -d data || mkdir -p data
 test -f "$RELEASE_DOC"
@@ -188,6 +227,19 @@ docker compose ps
 docker compose logs --tail=200 microsoft-account-manager
 docker stats --no-stream microsoft-account-manager
 docker compose exec -T microsoft-account-manager wget -qO- http://127.0.0.1:8787/api/health
+docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}}' \
+  | while read -r image image_id; do
+      case "$image" in
+        "${IMAGE_REPO}:"*)
+          if [ "$image" != "$APP_IMAGE" ] && { [ -z "${PREV_APP_IMAGE:-}" ] || [ "$image" != "$PREV_APP_IMAGE" ]; }; then
+            echo "remove old image: $image"
+            docker image rm "$image" || true
+          fi
+          ;;
+      esac
+    done
+df -h /
+docker system df
 ```
 
 ## 后续升级部署步骤
@@ -197,7 +249,7 @@ docker compose exec -T microsoft-account-manager wget -qO- http://127.0.0.1:8787
 3. 先检查用户是否已明确审核通过并批准部署。
 4. 再严格按照本文件的命令顺序执行。
 5. 执行过程中禁止擅自增加未列出的高负载命令。
-6. 执行完成后必须输出：实际执行了哪些命令、部署结果、当前容器状态、健康检查结果、是否需要回滚。
+6. 执行完成后必须输出：实际执行了哪些命令、部署结果、当前容器状态、健康检查结果、旧镜像清理结果、清理前后磁盘占用、是否需要回滚。
 
 升级部署标准命令：
 
@@ -206,12 +258,16 @@ export DEPLOY_DIR=/opt/microsoft-account-manager
 export CONTAINER_NAME=microsoft-account-manager
 export IMAGE_REPO=ghcr.io/ywain-zh/microsoft-account-manager
 export IMAGE_TAG=2026.04.15-2
+export PREV_IMAGE_TAG=2026.04.14-2
 export APP_IMAGE=${IMAGE_REPO}:${IMAGE_TAG}
+export PREV_APP_IMAGE=${IMAGE_REPO}:${PREV_IMAGE_TAG}
 export RELEASE_DOC=releases/RELEASE-2026-04-15-02.md
 
 cd "$DEPLOY_DIR"
 pwd
 ls -lah
+df -h /
+docker system df
 test -f .env
 test -d data || mkdir -p data
 test -f "$RELEASE_DOC"
@@ -225,6 +281,19 @@ docker compose ps
 docker compose logs --tail=200 microsoft-account-manager
 docker stats --no-stream microsoft-account-manager
 docker compose exec -T microsoft-account-manager wget -qO- http://127.0.0.1:8787/api/health
+docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}}' \
+  | while read -r image image_id; do
+      case "$image" in
+        "${IMAGE_REPO}:"*)
+          if [ "$image" != "$APP_IMAGE" ] && { [ -z "${PREV_APP_IMAGE:-}" ] || [ "$image" != "$PREV_APP_IMAGE" ]; }; then
+            echo "remove old image: $image"
+            docker image rm "$image" || true
+          fi
+          ;;
+      esac
+    done
+df -h /
+docker system df
 ```
 
 ## 回滚步骤
@@ -294,6 +363,7 @@ du -sh data
 grep -E '^(APP_IMAGE|PORT|DB_PATH|PUBLIC_DIR|MIGRATIONS_DIR|AUTO_IMPORT_LEGACY_DB|LEGACY_DB_DIR)=' .env
 free -h
 df -h
+docker system df
 docker inspect microsoft-account-manager --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}'
 ```
 
@@ -304,6 +374,8 @@ docker inspect microsoft-account-manager --format '{{.State.Status}} {{if .State
 - 禁止没有 release 文档就部署。
 - 禁止没有审核通过就部署。
 - 禁止没有明确批准就执行 `docker compose pull`、`docker compose up -d`、`docker run`、替换线上、删除旧服务、切换正式端口。
+- 禁止使用 `docker system prune -a` 作为常规部署清理命令。
+- 禁止在健康检查失败时清理上一版回滚镜像。
 - 禁止不按本文件执行部署。
 
 ## 标准命令清单
@@ -317,6 +389,8 @@ test -d data || mkdir -p data
 test -f "$RELEASE_DOC"
 grep '^APP_IMAGE=' .env
 grep -q ':latest$' .env && echo 'ERROR: latest is forbidden' && exit 1 || echo 'APP_IMAGE tag ok'
+df -h /
+docker system df
 docker compose ps
 docker ps --filter name=microsoft-account-manager
 docker images | grep microsoft-account-manager
@@ -327,10 +401,22 @@ docker compose up -d
 docker compose logs --tail=200 microsoft-account-manager
 docker stats --no-stream microsoft-account-manager
 docker compose exec -T microsoft-account-manager wget -qO- http://127.0.0.1:8787/api/health
+docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}}' \
+  | while read -r image image_id; do
+      case "$image" in
+        "${IMAGE_REPO}:"*)
+          if [ "$image" != "$APP_IMAGE" ] && { [ -z "${PREV_APP_IMAGE:-}" ] || [ "$image" != "$PREV_APP_IMAGE" ]; }; then
+            echo "remove old image: $image"
+            docker image rm "$image" || true
+          fi
+          ;;
+      esac
+    done
 ls -lah data
 du -sh data
 grep -E '^(APP_IMAGE|PORT|DB_PATH|PUBLIC_DIR|MIGRATIONS_DIR|AUTO_IMPORT_LEGACY_DB|LEGACY_DB_DIR)=' .env
 free -h
 df -h
+docker system df
 docker inspect microsoft-account-manager --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}'
 ```

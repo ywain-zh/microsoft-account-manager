@@ -28,6 +28,7 @@
 - 没有用户明确批准，不允许执行 `docker compose pull`、`docker compose up -d`、`docker run`、替换线上服务、删除旧服务、切换正式端口。
 - 每次部署前必须先编写对应的 `releases/RELEASE-*.md`；没有 release 文档，不允许部署。
 - 生产环境禁止使用 `latest`，必须使用已审核通过的固定镜像 tag。
+- 重要：服务器部署成功并完成健康检查后，必须按 `DEPLOY_LITE.md` 清理旧镜像；小规格服务器只保留当前镜像和上一版回滚镜像，避免 Docker 历史镜像占满磁盘。
 - 不要仅根据本文件执行部署命令；部署时必须严格按 [DEPLOY_LITE.md](./DEPLOY_LITE.md) 执行。
 
 ## Git 工作流 / 分支说明
@@ -47,6 +48,7 @@
 7. 创建固定 tag 并 push，例如 `git tag 2026.04.16-1 && git push origin 2026.04.16-1`。
 8. 等待 GitHub Actions 将镜像发布到 `ghcr.io/ywain-zh/microsoft-account-manager:<tag>`。
 9. 用户审核通过并明确批准后，才允许按 [DEPLOY_LITE.md](./DEPLOY_LITE.md) 去服务器执行 `docker compose pull` 和 `docker compose up -d`。
+10. 部署健康检查通过后，按 [DEPLOY_LITE.md](./DEPLOY_LITE.md) 的“重要：服务器镜像清理策略”清理旧镜像，只保留当前版本和上一版可回滚版本。
 
 这条顺序是后续唯一推荐路径。服务器不负责构建，只负责拉固定 tag 镜像并运行。
 

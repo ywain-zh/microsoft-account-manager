@@ -56,13 +56,13 @@ const router = createRouter({
           }
         },
         {
-          path: 'services/sub2api/long-link-generator',
-          name: 'sub2api-long-link-generator',
-          component: () => import('./views/Sub2ApiLongLinkGeneratorView.vue'),
+          path: 'services/sub2api/public-checkin',
+          name: 'public-checkin',
+          component: () => import('./views/PublicCheckinView.vue'),
           meta: {
             requiresAuth: true,
-            title: '长链生成器',
-            description: ''
+            title: '公益站签到',
+            description: '维护公益站账号，执行自动签到与余额刷新。'
           }
         },
         {

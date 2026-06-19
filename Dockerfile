@@ -25,12 +25,9 @@ ENV HOST=0.0.0.0
 ENV PORT=8787
 ENV DB_PATH=/app/data/account-manager.db
 ENV AUTO_IMPORT_LEGACY_DB=true
-ENV LONG_LINK_PYTHON=/opt/long-link-venv/bin/python
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl docker.io python3 python3-venv tini wget \
-  && python3 -m venv /opt/long-link-venv \
-  && /opt/long-link-venv/bin/python -m pip install --no-cache-dir "curl_cffi>=0.14.0" \
+  && apt-get install -y --no-install-recommends ca-certificates curl docker.io python3 tini wget \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=runtime-deps /app/node_modules ./node_modules

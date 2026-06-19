@@ -9,3 +9,8 @@ __pycache__/
 .codex-logs/
 *.dev.log
 *.dev.err.log
+.claude/
+.codex-chrome-debug-profile/
+artifacts/
+*.log
+*.err.log

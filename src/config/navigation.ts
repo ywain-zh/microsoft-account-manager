@@ -23,9 +23,9 @@ export const consoleNavigation: ConsoleNavItem[] = [
     path: '/services/sub2api/checker'
   },
   {
-    key: 'sub2api-long-link',
-    label: '长链生成器',
-    path: '/services/sub2api/long-link-generator'
+    key: 'public-checkin',
+    label: '公益站签到',
+    path: '/services/sub2api/public-checkin'
   },
   {
     key: 'sub2api-interfaces',
