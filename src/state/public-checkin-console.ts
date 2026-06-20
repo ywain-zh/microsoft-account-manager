@@ -80,6 +80,15 @@ function formatMoney(value: number | null | undefined): string {
   return value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function formatCompactMoney(value: number | null | undefined): string {
+  if (typeof value !== 'number' || Number.isNaN(value)) return '-';
+  if (Math.abs(value) < 100000) return formatMoney(value);
+  return value.toLocaleString('zh-CN', {
+    notation: 'compact',
+    maximumFractionDigits: 2
+  });
+}
+
 function formatTime(value: number | null | undefined): string {
   if (!value) return '-';
   return new Date(value * 1000).toLocaleString('zh-CN', { hour12: false });
@@ -217,17 +226,38 @@ async function saveAccount(payload: PublicCheckinAccountPayload, id?: number): P
     if (id) {
       await api.updatePublicCheckinAccount(id, payload);
       message.success('账号已更新');
+      await reloadSummary();
     } else {
-      await api.createPublicCheckinAccount(payload);
-      message.success('账号已添加');
+      const created = await api.createPublicCheckinAccount(payload);
+      message.success('账号已添加，正在自动检测');
+      await reloadSummary();
+      void autoTestCreatedAccount(created.id);
     }
-    await reloadSummary();
     return true;
   } catch (error) {
     handleApiError(error);
     return false;
   } finally {
     accountSaving.value = false;
+  }
+}
+
+async function autoTestCreatedAccount(accountId: number): Promise<void> {
+  busyAccountId.value = accountId;
+  try {
+    const result = await api.testPublicCheckinAccount(accountId);
+    (result.success ? message.success : message.error)(balanceNotice(result, '自动检测'));
+  } catch (error) {
+    handleApiError(error);
+  } finally {
+    try {
+      await reloadSummary();
+    } catch (error) {
+      handleApiError(error);
+    }
+    if (busyAccountId.value === accountId) {
+      busyAccountId.value = null;
+    }
   }
 }
 
@@ -377,6 +407,7 @@ export function usePublicCheckinConsole() {
     globalBusy,
     hasAccounts,
     formatMoney,
+    formatCompactMoney,
     formatTime,
     buildPayload,
     loadInitialData,

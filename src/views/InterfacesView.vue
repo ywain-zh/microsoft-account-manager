@@ -420,14 +420,15 @@ function buildStandaloneHtml(content: string): string {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>望月工具箱接口文档</title>
   <style>
-    body { margin: 0; padding: 32px; background: #f3f4f6; color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    :root { --font-sans: "Noto Sans SC", "Fira Sans", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; --font-mono: "Fira Code", "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace; --text-xs: 12px; --text-sm: 13px; --text-base: 14px; --text-md: 15px; --text-lg: 16px; --text-page-title: 22px; --leading-tight: 1.2; --leading-title: 1.35; --leading-body: 1.5; --leading-relaxed: 1.6; --weight-bold: 700; }
+    body { margin: 0; padding: 32px; background: #f3f4f6; color: #0f172a; font-family: var(--font-sans); font-size: var(--text-base); line-height: var(--leading-body); letter-spacing: 0; }
     .api-doc-card { max-width: 1180px; margin: 0 auto; padding: 28px 32px; border-radius: 10px; background: #fff; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08); }
-    h2 { margin: 0; font-size: 26px; }
-    h3 { margin: 0; font-size: 20px; }
-    h4 { margin: 10px 0 0; font-size: 15px; }
-    p { margin: 0; color: #475569; line-height: 1.7; }
-    code, pre { color: #1d4ed8; font-family: "Cascadia Mono", Consolas, monospace; }
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    h2 { margin: 0; font-size: var(--text-page-title); line-height: var(--leading-tight); }
+    h3 { margin: 0; font-size: var(--text-lg); line-height: var(--leading-title); }
+    h4 { margin: 10px 0 0; font-size: var(--text-md); }
+    p { margin: 0; color: #475569; line-height: var(--leading-relaxed); }
+    code, pre { color: #1d4ed8; font-family: var(--font-mono); }
+    table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
     th, td { padding: 9px 8px; border-bottom: 1px solid #e5e7eb; text-align: left; vertical-align: top; }
     th { color: #334155; background: #f8fafc; }
     .api-doc-header { display: flex; justify-content: space-between; gap: 20px; padding-bottom: 18px; border-bottom: 1px solid #e5e7eb; }
@@ -570,14 +571,16 @@ onMounted(async () => {
 .api-doc-header h2 {
   margin: 0;
   color: #0f172a;
-  font-size: 26px;
-  line-height: 1.25;
+  font-size: var(--text-page-title);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
 }
 
 .api-doc-header p {
   margin: 8px 0 0;
   color: #64748b;
-  font-size: 14px;
+  font-size: var(--text-sm);
+  line-height: 1.45;
 }
 
 .api-doc-header-side {
@@ -599,8 +602,8 @@ onMounted(async () => {
 
 .api-doc-base span {
   color: #64748b;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
 }
 
 .api-doc-download-button {
@@ -611,7 +614,7 @@ onMounted(async () => {
 .endpoint-line code,
 .api-doc-section code {
   color: #1d4ed8;
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 .api-doc-tip {
@@ -633,7 +636,9 @@ onMounted(async () => {
 .api-doc-section h3 {
   margin: 0;
   color: #0f172a;
-  font-size: 20px;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-title);
 }
 
 .api-doc-section h4 {
@@ -645,8 +650,8 @@ onMounted(async () => {
 .api-doc-section p {
   margin: 0;
   color: #475569;
-  font-size: 14px;
-  line-height: 1.7;
+  font-size: var(--text-base);
+  line-height: var(--leading-relaxed);
 }
 
 .endpoint-line {
@@ -662,12 +667,12 @@ onMounted(async () => {
 .endpoint-line span {
   flex: 0 0 auto;
   color: #1e40af;
-  font-size: 13px;
-  font-weight: 700;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
 }
 
 .api-doc-section :deep(.n-table) {
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .api-doc-section :deep(th) {

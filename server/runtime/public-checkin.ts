@@ -559,6 +559,29 @@ export function parsePublicCheckinRewardAmount(value: unknown): number | undefin
   return parsed;
 }
 
+function inferPublicCheckinRewardFromBalanceDelta(previousBalance: unknown, latestBalance: unknown): number | null {
+  const before = typeof previousBalance === 'number' && Number.isFinite(previousBalance)
+    ? previousBalance
+    : null;
+  const after = typeof latestBalance === 'number' && Number.isFinite(latestBalance)
+    ? latestBalance
+    : null;
+  if (before == null || after == null) return null;
+
+  const delta = after - before;
+  if (!Number.isFinite(delta) || delta <= 0) return null;
+  return Math.round(delta * 1_000_000) / 1_000_000;
+}
+
+function parseFiniteNumber(value: unknown): number | undefined {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function parseBalancePayload(payload: unknown): number | undefined {
   const source = payload && typeof payload === 'object' && 'data' in payload
     ? (payload as { data?: unknown }).data
@@ -566,11 +589,13 @@ function parseBalancePayload(payload: unknown): number | undefined {
   if (!source || typeof source !== 'object') return undefined;
 
   const record = source as Record<string, unknown>;
-  const balance = Number(record.balance);
-  if (Number.isFinite(balance)) return balance;
+  const quota = parseFiniteNumber(record.quota);
+  if (quota !== undefined) return quota / 500000;
 
-  const quota = Number(record.quota);
-  if (Number.isFinite(quota)) return quota / 500000;
+  const balance = parseFiniteNumber(record.balance);
+  if (balance !== undefined) {
+    return Math.abs(balance) >= 500000 ? balance / 500000 : balance;
+  }
 
   return undefined;
 }
@@ -1252,25 +1277,37 @@ async function executeCheckin(db: D1Database, accountId: number, triggeredBy: Pu
 
   const result = await adapter.checkin(credential);
   const status: PublicCheckinStatus = result.success ? 'success' : 'failed';
-  await insertCheckinLog(db, {
-    accountId,
-    triggeredBy,
-    status,
-    reward: result.reward ?? null,
-    rewardNote: result.rewardNote ?? null,
-    errorMessage: result.errorMessage ?? null
-  });
+  let reward = result.reward ?? null;
 
   if (result.success) {
     await setAccountError(db, accountId, null, 'active');
     try {
-      await refreshBalanceForAccount(db, accountId);
+      const balanceResult = await refreshBalanceForAccount(db, accountId);
+      if (reward == null && balanceResult.success) {
+        reward = inferPublicCheckinRewardFromBalanceDelta(row.account.balance, balanceResult.balance);
+      }
     } catch {}
+    await insertCheckinLog(db, {
+      accountId,
+      triggeredBy,
+      status,
+      reward,
+      rewardNote: result.rewardNote ?? null,
+      errorMessage: result.errorMessage ?? null
+    });
   } else {
+    await insertCheckinLog(db, {
+      accountId,
+      triggeredBy,
+      status,
+      reward,
+      rewardNote: result.rewardNote ?? null,
+      errorMessage: result.errorMessage ?? null
+    });
     await setAccountError(db, accountId, result.errorMessage || '签到失败', 'error');
   }
 
-  return { ...result, status };
+  return { ...result, status, reward };
 }
 
 async function withAccountMutex<T>(key: string, locked: () => Promise<T>, task: () => Promise<T>): Promise<T> {
@@ -1812,5 +1849,7 @@ export const publicCheckinTestHooks = {
   decryptCredentialText,
   solveAcwScV2,
   parseJsonResponsePayload,
+  parseBalancePayload,
+  inferPublicCheckinRewardFromBalanceDelta,
   validateCronExpression
 };

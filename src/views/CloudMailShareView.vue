@@ -181,21 +181,22 @@ onMounted(() => {
 .public-share-kicker {
   margin: 0 0 4px;
   color: #2f6fed;
-  font-size: 13px;
-  font-weight: 700;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
 }
 
 .public-share-header h1 {
   margin: 0;
   color: #071226;
-  font-size: 28px;
-  line-height: 1.2;
+  font-size: var(--text-page-title);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
 }
 
 .public-share-account {
   margin: 6px 0 0;
   color: #66758f;
-  font-size: 14px;
+  font-size: var(--text-sm);
 }
 
 .public-share-refresh,
@@ -279,15 +280,15 @@ onMounted(() => {
 
 .public-share-mail-from {
   color: #1e293b;
-  font-size: 13px;
-  font-weight: 700;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
   white-space: nowrap;
 }
 
 .public-share-mail-date {
   flex: 0 0 auto;
   color: #7b8aa4;
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .public-share-mail-badges {
@@ -302,8 +303,8 @@ onMounted(() => {
   border-radius: 999px;
   background: #eef4ff;
   color: #2458c9;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
 }
 
 .public-share-folder-junk {
@@ -315,8 +316,8 @@ onMounted(() => {
   display: block;
   margin-top: 8px;
   color: #111827;
-  font-size: 14px;
-  line-height: 1.35;
+  font-size: var(--text-sm);
+  line-height: var(--leading-title);
   white-space: nowrap;
 }
 
@@ -324,7 +325,7 @@ onMounted(() => {
   display: -webkit-box;
   margin: 6px 0 0;
   color: #64748b;
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 1.45;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -340,7 +341,7 @@ onMounted(() => {
   min-height: 100%;
   place-items: center;
   color: #7b8aa4;
-  font-size: 15px;
+  font-size: var(--text-md);
 }
 
 .public-share-mail-detail {
@@ -359,8 +360,9 @@ onMounted(() => {
   min-width: 0;
   margin: 0;
   color: #071226;
-  font-size: 20px;
-  line-height: 1.35;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-title);
   word-break: break-word;
 }
 
@@ -369,7 +371,7 @@ onMounted(() => {
   gap: 6px;
   margin-top: 12px;
   color: #64748b;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .public-share-meta strong {
@@ -402,7 +404,7 @@ onMounted(() => {
   }
 
   .public-share-header h1 {
-    font-size: 24px;
+    font-size: var(--text-xl);
   }
 
   .public-share-inbox {

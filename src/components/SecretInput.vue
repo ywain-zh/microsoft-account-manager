@@ -32,6 +32,7 @@
           :disabled="disabled || !hasValue"
           :title="visible ? '隐藏内容' : '显示内容'"
           :aria-label="visible ? '隐藏内容' : '显示内容'"
+          :aria-pressed="visible"
           @mousedown.prevent
           @click.stop="visible = !visible"
         >
@@ -40,7 +41,9 @@
         </button>
       </template>
     </n-input>
-    <span v-if="isMasked" class="secret-input-mask" aria-hidden="true">{{ maskText }}</span>
+    <span v-if="isMasked" class="secret-input-mask" aria-hidden="true">
+      <span v-for="segment in maskSegments" :key="segment" class="secret-input-mask-segment" />
+    </span>
   </div>
 </template>
 
@@ -85,6 +88,7 @@ const textValue = computed(() => props.value ?? '');
 const hasValue = computed(() => textValue.value.length > 0);
 const hasPrefix = computed(() => Boolean(slots.prefix));
 const isMasked = computed(() => hasValue.value && !visible.value);
+const maskSegments = [1, 2, 3, 4, 5, 6, 7, 8];
 
 function handleValueUpdate(value: string): void {
   emit('update:value', value);
@@ -131,41 +135,91 @@ const EyeOffGlyph = () =>
 }
 
 .secret-input :deep(.n-input__input-el) {
-  font-family: "SFMono-Regular", "Cascadia Mono", Consolas, monospace;
+  font-family: var(--font-mono);
   letter-spacing: 0;
 }
 
 .secret-input.is-secret-hidden :deep(.n-input__input-el) {
   color: transparent !important;
-  caret-color: #2563eb;
+  caret-color: transparent;
+  text-shadow: none;
+  -webkit-text-fill-color: transparent;
+}
+
+.secret-input.is-secret-hidden :deep(.n-input__input-el::selection) {
+  background: transparent;
+  color: transparent;
 }
 
 .secret-input-mask {
   position: absolute;
   top: 50%;
-  right: 42px;
+  right: auto;
   left: 12px;
+  display: flex;
+  width: min(260px, calc(100% - 54px));
+  align-items: center;
+  gap: 7px;
   overflow: hidden;
-  color: #334155;
-  font-family: "SFMono-Regular", "Cascadia Mono", Consolas, monospace;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0;
-  line-height: 1;
   pointer-events: none;
-  text-overflow: clip;
   transform: translateY(-50%);
   white-space: nowrap;
 }
 
 .secret-input.has-prefix .secret-input-mask {
   left: 40px;
+  width: min(232px, calc(100% - 82px));
+}
+
+.secret-input-mask-segment {
+  display: block;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 8px;
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, rgba(100, 116, 139, 0.88), rgba(51, 65, 85, 0.88));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    0 0 0 1px rgba(15, 23, 42, 0.08);
+}
+
+.secret-input-mask-segment:nth-child(1) {
+  width: 32px;
+}
+
+.secret-input-mask-segment:nth-child(2) {
+  width: 18px;
+}
+
+.secret-input-mask-segment:nth-child(3) {
+  width: 28px;
+}
+
+.secret-input-mask-segment:nth-child(4) {
+  width: 22px;
+}
+
+.secret-input-mask-segment:nth-child(5) {
+  width: 34px;
+}
+
+.secret-input-mask-segment:nth-child(6) {
+  width: 16px;
+}
+
+.secret-input-mask-segment:nth-child(7) {
+  width: 26px;
+}
+
+.secret-input-mask-segment:nth-child(8) {
+  width: 20px;
 }
 
 .secret-input-toggle {
   display: inline-flex;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   align-items: center;
   justify-content: center;
   padding: 0;
@@ -181,9 +235,13 @@ const EyeOffGlyph = () =>
 
 .secret-input-toggle:hover:not(:disabled),
 .secret-input-toggle:focus-visible {
-  background: #f1f5f9;
-  color: #475569;
+  background: #eff6ff;
+  color: #2563eb;
   outline: none;
+}
+
+.secret-input-toggle:focus-visible {
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.22);
 }
 
 .secret-input-toggle:disabled {

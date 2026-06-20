@@ -551,9 +551,9 @@ onBeforeUnmount(() => {
 .modal-header-left h2 {
   margin: 0;
   color: #1e293b;
-  font-size: 18px;
-  font-weight: 600;
-  line-height: 1.2;
+  font-size: var(--text-xl);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
   white-space: nowrap;
 }
 
@@ -569,9 +569,9 @@ onBeforeUnmount(() => {
   min-width: 0;
   max-width: min(38vw, 360px);
   color: #64748b;
-  font-size: 14px;
+  font-size: var(--text-sm);
   line-height: 1.4;
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-family: var(--font-mono);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -593,7 +593,7 @@ onBeforeUnmount(() => {
   border-radius: 6px;
   background: transparent;
   color: #64748b;
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1;
 }
 
@@ -640,7 +640,7 @@ onBeforeUnmount(() => {
   border-radius: 6px;
   background: transparent;
   color: #94a3b8;
-  font-size: 24px;
+  font-size: var(--text-page-title);
   line-height: 1;
   flex: none;
 }
@@ -761,8 +761,8 @@ onBeforeUnmount(() => {
   min-width: 0;
   margin: 0;
   color: #334155;
-  font-size: 14px;
-  font-weight: 500;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
   line-height: 1.4;
   white-space: nowrap;
   overflow: hidden;
@@ -772,13 +772,13 @@ onBeforeUnmount(() => {
 .inbox-mail-item-unread .mail-sender,
 .inbox-mail-item.active .mail-sender {
   color: #0f172a;
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 
 .mail-date {
   margin: 0;
   color: #94a3b8;
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.4;
   white-space: nowrap;
   text-align: right;
@@ -801,8 +801,8 @@ onBeforeUnmount(() => {
   min-height: 22px;
   padding: 0 8px;
   border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
   letter-spacing: 0;
   white-space: nowrap;
 }
@@ -846,9 +846,9 @@ onBeforeUnmount(() => {
   min-width: 0;
   margin: 0;
   color: #1e293b;
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 1.5;
-  font-weight: 500;
+  font-weight: var(--weight-medium);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -863,7 +863,7 @@ onBeforeUnmount(() => {
   display: -webkit-box;
   margin: 0;
   color: #64748b;
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.55;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -910,16 +910,16 @@ onBeforeUnmount(() => {
 .mail-detail-subject {
   margin: 0;
   color: #1e293b;
-  font-size: 24px;
-  font-weight: 600;
-  line-height: 1.4;
+  font-size: var(--text-page-title);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-title);
 }
 
 .mail-meta-info {
   display: grid;
   gap: 2px;
   color: #475569;
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 2;
 }
 
@@ -927,7 +927,7 @@ onBeforeUnmount(() => {
   display: inline-block;
   width: 60px;
   color: #1e293b;
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 
 .translation-banner {
@@ -964,15 +964,15 @@ onBeforeUnmount(() => {
 
 .translation-title {
   color: #0f172a;
-  font-size: 14px;
-  font-weight: 700;
+  font-size: var(--text-base);
+  font-weight: var(--weight-bold);
   line-height: 1.4;
 }
 
 .translation-meta,
 .translation-error {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.5;
 }
 
@@ -1183,7 +1183,7 @@ onBeforeUnmount(() => {
   }
 
   .mail-detail-subject {
-    font-size: 20px;
+    font-size: var(--text-xl);
   }
 }
 </style>

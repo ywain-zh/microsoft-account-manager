@@ -1181,16 +1181,16 @@ onUnmounted(() => {
 .main-title {
   margin: 0;
   color: #1e293b;
-  font-size: 22px;
-  font-weight: 600;
-  line-height: 1.2;
+  font-size: var(--text-page-title);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
 }
 
 .page-desc {
   margin: 0;
   color: #94a3b8;
-  font-size: 14px;
-  line-height: 1.6;
+  font-size: var(--text-sm);
+  line-height: 1.45;
 }
 
 .mailbox-card-shell {
@@ -1254,8 +1254,8 @@ onUnmounted(() => {
 
 :deep(.microsoft-toolbar .toolbar-button) {
   border-radius: 6px !important;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
 }
 
 :deep(.microsoft-toolbar .toolbar-button-muted) {
@@ -1399,8 +1399,8 @@ onUnmounted(() => {
 
 :deep(.microsoft-account-table .n-data-table-th) {
   color: #475569 !important;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
   background: #f8fafc !important;
 }
 
@@ -1422,8 +1422,8 @@ onUnmounted(() => {
   max-width: 100%;
   overflow: hidden;
   color: #475569;
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1476,8 +1476,8 @@ onUnmounted(() => {
   border-radius: 999px;
   background: #eff6ff;
   color: #2563eb;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
   line-height: 1;
   place-items: center;
   vertical-align: middle;
@@ -1487,7 +1487,7 @@ onUnmounted(() => {
   min-width: 0;
   overflow: hidden;
   color: #64748b;
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1506,7 +1506,7 @@ onUnmounted(() => {
 
 :deep(.microsoft-account-table .alias-inherited-text) {
   color: #64748b;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 :deep(.microsoft-account-table .microsoft-password-cell) {
@@ -1522,8 +1522,8 @@ onUnmounted(() => {
 }
 
 :deep(.microsoft-account-table .microsoft-password-input .n-input__input-el) {
-  font-family: 'Fira Code', 'SFMono-Regular', Consolas, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
   letter-spacing: 0;
 }
 
@@ -1543,9 +1543,9 @@ onUnmounted(() => {
   padding: 0 !important;
   border-radius: 0 !important;
   background: transparent !important;
-  font-family: 'Fira Code', 'SFMono-Regular', Consolas, monospace;
-  font-size: 13px;
-  font-weight: 500;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
 }
 
 :deep(.microsoft-account-table .n-data-table-td:nth-child(6) .status-pill-success) {
@@ -1567,8 +1567,8 @@ onUnmounted(() => {
 :deep(.microsoft-account-table .table-action-button) {
   padding: 4px 8px;
   border-radius: 4px;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
 }
 
 :deep(.microsoft-account-table .table-action-button:disabled) {
@@ -1607,8 +1607,8 @@ onUnmounted(() => {
   background: #eff6ff;
   color: #2563eb;
   cursor: pointer;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
 }
 
 :deep(.microsoft-account-table .gpt-validity-control:hover) {
@@ -1679,7 +1679,7 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 12px;
   color: #334155;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .token-refresh-log-list {
@@ -1700,7 +1700,7 @@ onUnmounted(() => {
   border-radius: 6px;
   background: #f8fafc;
   color: #475569;
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .token-refresh-log-item strong,
@@ -1726,7 +1726,7 @@ onUnmounted(() => {
   padding: 20px 0;
   color: #94a3b8;
   text-align: center;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .alias-modal-body {
@@ -1740,16 +1740,16 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   color: #64748b;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .alias-primary-line strong {
   min-width: 0;
   overflow: hidden;
   color: #1e293b;
-  font-family: 'Fira Code', 'SFMono-Regular', Consolas, monospace;
-  font-size: 13px;
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1769,8 +1769,8 @@ onUnmounted(() => {
 
 .alias-list-title {
   color: #475569;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
 }
 
 .alias-empty {
@@ -1779,7 +1779,7 @@ onUnmounted(() => {
   border-radius: 6px;
   color: #94a3b8;
   text-align: center;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .alias-list {
@@ -1810,13 +1810,13 @@ onUnmounted(() => {
 
 .alias-list-item span {
   color: #334155;
-  font-family: 'Fira Code', 'SFMono-Regular', Consolas, monospace;
-  font-size: 13px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
 }
 
 .alias-list-item small {
   color: #94a3b8;
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .alias-delete-button {

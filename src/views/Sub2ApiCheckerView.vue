@@ -533,17 +533,18 @@ onBeforeUnmount(() => {
 }
 
 .page-title h1 {
-  font-size: 22px;
-  font-weight: 600;
   margin: 0;
   color: #1e293b;
+  font-size: var(--text-page-title);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
 }
 
 .tag-pill {
   padding: 2px 8px;
   border-radius: 12px;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
   border: 1px solid transparent;
 }
 
@@ -571,8 +572,8 @@ onBeforeUnmount(() => {
 }
 
 .model-picker-label {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
   color: #16a34a;
   white-space: nowrap;
 }
@@ -591,7 +592,8 @@ onBeforeUnmount(() => {
 
 .page-desc {
   color: #94a3b8;
-  font-size: 14px;
+  font-size: var(--text-sm);
+  line-height: 1.45;
   margin: 0;
 }
 
@@ -625,12 +627,12 @@ onBeforeUnmount(() => {
 .btn {
   padding: 8px 16px;
   border-radius: 6px;
-  font-size: 14px;
+  font-size: var(--text-sm);
   cursor: pointer;
   border: 1px solid transparent;
   transition: all 0.2s;
   background: #fff;
-  font-weight: 500;
+  font-weight: var(--weight-medium);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -728,18 +730,21 @@ onBeforeUnmount(() => {
 }
 
 .stat-title {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: #475569;
   margin-bottom: 4px;
-  font-weight: 500;
+  font-weight: var(--weight-medium);
   white-space: nowrap;
 }
 
 .stat-value {
-  font-size: 20px;
-  font-weight: 600;
   color: #1e293b;
-  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: var(--font-number);
+  font-size: var(--text-stat);
+  font-weight: var(--weight-heavy);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
+  line-height: 1.1;
 }
 
 .stat-value-button {
@@ -774,13 +779,13 @@ onBeforeUnmount(() => {
 }
 
 .log-title {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
   color: #1e293b;
 }
 
 .log-desc {
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: #94a3b8;
   margin-left: 12px;
 }
@@ -788,8 +793,8 @@ onBeforeUnmount(() => {
 .run-status {
   padding: 4px 10px;
   border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
   white-space: nowrap;
 }
 
@@ -809,9 +814,9 @@ onBeforeUnmount(() => {
   padding: 16px;
   height: 440px;
   overflow-y: auto;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 13px;
-  line-height: 1.6;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
   color: #e2e8f0;
 }
 
@@ -834,8 +839,8 @@ onBeforeUnmount(() => {
 .log-badge {
   padding: 2px 6px;
   border-radius: 4px;
-  font-size: 11px;
-  font-weight: bold;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
   flex-shrink: 0;
   width: 44px;
   text-align: center;
@@ -862,7 +867,7 @@ onBeforeUnmount(() => {
 }
 
 .config-modal-desc {
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: #2563eb;
   background: #eff6ff;
   border: 1px solid #bfdbfe;
@@ -895,7 +900,7 @@ onBeforeUnmount(() => {
 .group-sync-status {
   margin-top: 5px;
   min-height: 18px;
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 18px;
   color: #64748b;
 }
@@ -945,7 +950,7 @@ onBeforeUnmount(() => {
 }
 
 .abnormal-modal-summary {
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: #64748b;
 }
 
@@ -980,8 +985,8 @@ onBeforeUnmount(() => {
 }
 
 .abnormal-table th {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
   color: #475569;
   background: #f8fafc;
 }

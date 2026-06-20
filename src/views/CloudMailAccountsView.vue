@@ -1009,16 +1009,16 @@ onUnmounted(() => {
 .main-title {
   margin: 0;
   color: #1e293b;
-  font-size: 22px;
-  font-weight: 600;
-  line-height: 1.2;
+  font-size: var(--text-page-title);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
 }
 
 .page-desc {
   margin: 0;
   color: #94a3b8;
-  font-size: 14px;
-  line-height: 1.6;
+  font-size: var(--text-sm);
+  line-height: 1.45;
 }
 
 .mailbox-card-shell {
@@ -1058,15 +1058,15 @@ onUnmounted(() => {
   display: block;
   margin-bottom: 4px;
   color: #1e293b;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
 }
 
 .cloud-mail-service-alert-text {
   margin: 0;
   color: #475569;
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
 }
 
 .cloud-mail-empty-shell {
@@ -1083,8 +1083,8 @@ onUnmounted(() => {
   max-width: 520px;
   margin: 0;
   color: #94a3b8;
-  font-size: 13px;
-  line-height: 1.7;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
   text-align: center;
 }
 
@@ -1198,8 +1198,8 @@ onUnmounted(() => {
 :deep(.cloud-toolbar .toolbar-button),
 :deep(.cloud-mail-service-alert .toolbar-button) {
   border-radius: 6px !important;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
 }
 
 :deep(.cloud-toolbar .n-button__content),
@@ -1233,15 +1233,15 @@ onUnmounted(() => {
 
 :deep(.cloud-mail-summary-label) {
   color: #94a3b8;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
 }
 
 :deep(.cloud-mail-summary-value) {
   margin-top: 6px;
   color: #1e293b;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
 }
 
 :deep(.cloud-mail-account-table) {
@@ -1262,8 +1262,8 @@ onUnmounted(() => {
 
 :deep(.cloud-mail-account-table .n-data-table-th) {
   color: #475569 !important;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
   background: #f8fafc !important;
 }
 
@@ -1289,8 +1289,8 @@ onUnmounted(() => {
   min-width: 0;
   max-width: 100%;
   color: #475569;
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1330,8 +1330,8 @@ onUnmounted(() => {
   border-radius: 4px;
   background: #f1f5f9 !important;
   color: #475569 !important;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
   cursor: pointer;
 }
 
@@ -1358,8 +1358,8 @@ onUnmounted(() => {
   background: #eff6ff;
   color: #2563eb;
   cursor: pointer;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
 }
 
 :deep(.cloud-mail-account-table .gpt-validity-control:hover) {
@@ -1456,7 +1456,7 @@ onUnmounted(() => {
 .cloud-mail-share-email strong {
   min-width: 0;
   color: #0f172a;
-  font-size: 14px;
+  font-size: var(--text-base);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1465,8 +1465,8 @@ onUnmounted(() => {
 .cloud-mail-share-label {
   flex: 0 0 auto;
   color: #64748b;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
 }
 
 .cloud-mail-share-hint {

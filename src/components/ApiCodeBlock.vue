@@ -74,8 +74,8 @@ onBeforeUnmount(() => {
   padding: 0 12px;
   border-bottom: 1px solid #e5e7eb;
   color: #64748b;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
 }
 
 .api-code-copy {
@@ -112,9 +112,9 @@ onBeforeUnmount(() => {
   overflow: auto;
   padding: 18px 22px;
   color: #0f172a;
-  font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 13px;
-  line-height: 1.75;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
   white-space: pre-wrap;
   word-break: break-word;
 }

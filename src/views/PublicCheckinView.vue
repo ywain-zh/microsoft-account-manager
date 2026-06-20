@@ -69,11 +69,19 @@
             <template v-else>
               <tr v-for="account in pagedAccounts" :key="account.id">
                 <td>
-                  <div class="account-site-cell">{{ account.site.name }}</div>
+                  <a
+                    class="account-site-link"
+                    :href="account.site.url"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    :title="account.site.url"
+                  >
+                    {{ account.site.name }}
+                  </a>
                 </td>
                 <td>
                   <div class="account-balance-cell">
-                    <strong>{{ formatMoney(account.balance) }}</strong>
+                    <strong :title="formatMoney(account.balance)">{{ formatCompactMoney(account.balance) }}</strong>
                     <span :class="{ 'is-positive': Boolean(account.lastCheckinReward && account.lastCheckinReward > 0) }">
                       {{ formatSignedMoney(account.lastCheckinReward) }}
                     </span>
@@ -262,6 +270,7 @@ const {
   globalBusy,
   hasAccounts,
   formatMoney,
+  formatCompactMoney,
   formatTime,
   buildPayload,
   loadInitialData,
@@ -618,17 +627,20 @@ onMounted(() => {
 
 .stat-title {
   color: #64748b;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1.25;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
 }
 
 .stat-value {
   margin-top: 8px;
   color: #0f172a;
-  font-size: 31px;
-  font-weight: 800;
-  line-height: 1;
+  font-family: var(--font-number);
+  font-size: var(--text-stat);
+  font-weight: var(--weight-heavy);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
+  line-height: 1.1;
 }
 
 .stat-blue .stat-value {
@@ -767,10 +779,10 @@ onMounted(() => {
 .accounts-table th {
   padding: 12px 24px;
   color: #64748b;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
   line-height: 20px;
-  letter-spacing: 0.02em;
+  letter-spacing: 0;
   text-transform: uppercase;
   white-space: nowrap;
 }
@@ -807,8 +819,8 @@ onMounted(() => {
 .accounts-table td {
   padding: 16px 24px;
   color: #0f172a;
-  font-size: 14px;
-  line-height: 20px;
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
   vertical-align: middle;
 }
 
@@ -822,35 +834,62 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   color: #94a3b8;
-  font-size: 14px;
+  font-size: var(--text-sm);
 }
 
-.account-site-cell {
+.account-site-link {
+  display: inline-block;
+  max-width: 100%;
   overflow: hidden;
   color: #0f172a;
-  font-size: 14px;
-  font-weight: 700;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
   text-overflow: ellipsis;
+  text-decoration: none;
   white-space: nowrap;
+  transition: color 0.2s ease;
+}
+
+.account-site-link:hover,
+.account-site-link:focus-visible {
+  color: #4f46e5;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.account-site-link:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid rgba(79, 70, 229, 0.28);
+  outline-offset: 2px;
 }
 
 .account-balance-cell {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .account-balance-cell strong {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
   color: #374151;
-  font-size: 16px;
-  font-weight: 800;
+  font-family: var(--font-number);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-heavy);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
   line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .account-balance-cell span {
   color: #9ca3af;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
   line-height: 16px;
 }
 
@@ -867,7 +906,7 @@ onMounted(() => {
 
 .muted-small {
   color: #475569;
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 16px;
 }
 
@@ -875,7 +914,7 @@ onMounted(() => {
   max-width: 260px;
   overflow: hidden;
   color: #dc2626;
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -896,8 +935,8 @@ onMounted(() => {
   border: 0 !important;
   border-radius: 6px;
   box-shadow: none !important;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
@@ -983,8 +1022,8 @@ onMounted(() => {
 .designed-form :deep(.n-form-item-label) {
   padding-bottom: 6px;
   color: #374151;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
 }
 
 .designed-form :deep(.n-form-item-blank) {
@@ -1012,7 +1051,7 @@ onMounted(() => {
 
 .designed-form :deep(.n-form-item-feedback) {
   color: #6b7280;
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 16px;
 }
 
@@ -1022,7 +1061,7 @@ onMounted(() => {
   gap: 24px;
   padding-top: 2px;
   color: #374151;
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 
 .modal-footer {
@@ -1065,14 +1104,14 @@ onMounted(() => {
   padding: 12px 16px !important;
   background: rgba(249, 250, 251, 0.5);
   color: #64748b;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
 }
 
 .log-table :deep(.n-data-table-td) {
   padding: 14px 16px !important;
   color: #0f172a;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .log-pagination {
@@ -1083,7 +1122,7 @@ onMounted(() => {
   min-height: 48px;
   padding-top: 2px;
   color: #64748b;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 :global(.public-checkin-modal.n-card) {
@@ -1100,8 +1139,8 @@ onMounted(() => {
 
 :global(.public-checkin-modal .n-card-header__main) {
   color: #111827;
-  font-size: 16px;
-  font-weight: 700;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
 }
 
 :global(.public-checkin-modal .n-card__content) {
@@ -1117,7 +1156,7 @@ onMounted(() => {
 :global(.public-checkin-modal .n-card__footer .n-button) {
   height: 36px;
   border-radius: 6px;
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 
 .settings-form {

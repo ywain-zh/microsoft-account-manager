@@ -54,6 +54,23 @@ test('parses reward amounts from common CheckinHub messages', () => {
   assert.equal(parsePublicCheckinRewardAmount('今天已经签到过了'), undefined);
 });
 
+test('infers checkin reward from positive balance delta', () => {
+  assert.equal(publicCheckinTestHooks.inferPublicCheckinRewardFromBalanceDelta(18.00, 18.50), 0.5);
+  assert.equal(publicCheckinTestHooks.inferPublicCheckinRewardFromBalanceDelta(18.00, 18.00), null);
+  assert.equal(publicCheckinTestHooks.inferPublicCheckinRewardFromBalanceDelta(18.50, 18.00), null);
+  assert.equal(publicCheckinTestHooks.inferPublicCheckinRewardFromBalanceDelta(null, 18.50), null);
+  assert.equal(publicCheckinTestHooks.inferPublicCheckinRewardFromBalanceDelta(18.00, Number.NaN), null);
+  assert.equal(publicCheckinTestHooks.inferPublicCheckinRewardFromBalanceDelta(0.1, 0.3), 0.2);
+});
+
+test('parses public checkin balances with NewAPI quota units', () => {
+  assert.equal(publicCheckinTestHooks.parseBalancePayload({ success: true, data: { balance: 1000000001319, quota: 9000000 } }), 18);
+  assert.equal(publicCheckinTestHooks.parseBalancePayload({ success: true, data: { quota: 500000 } }), 1);
+  assert.equal(publicCheckinTestHooks.parseBalancePayload({ success: true, data: { balance: 18.5 } }), 18.5);
+  assert.equal(publicCheckinTestHooks.parseBalancePayload({ success: true, data: { balance: 1000000 } }), 2);
+  assert.equal(publicCheckinTestHooks.parseBalancePayload({ success: true, data: { balance: null, quota: null } }), undefined);
+});
+
 test('preserves upstream JSON message without HTTP prefix', () => {
   assert.throws(
     () => publicCheckinTestHooks.parseJsonResponsePayload({

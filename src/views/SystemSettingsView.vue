@@ -897,7 +897,7 @@ function getErrorMessage(error: unknown): string {
 }
 
 .settings-toolbar-label {
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .toolbar-priority-select {
@@ -916,8 +916,8 @@ function getErrorMessage(error: unknown): string {
   min-height: 22px;
   padding-bottom: 7px;
   color: #334155;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
 }
 
 .settings-form :deep(.n-input),
@@ -934,7 +934,7 @@ function getErrorMessage(error: unknown): string {
   min-width: 88px;
   height: 36px;
   border-radius: 6px;
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 
 .settings-card :deep(.n-button--primary-type) {
@@ -975,7 +975,8 @@ function getErrorMessage(error: unknown): string {
 
 .section-title h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--text-lg);
+  line-height: var(--leading-title);
 }
 
 .section-title span {
@@ -986,8 +987,8 @@ function getErrorMessage(error: unknown): string {
   border-radius: 999px;
   background: #f3f4f6;
   color: #475569;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
 }
 
 .form-grid {
@@ -1056,13 +1057,13 @@ function getErrorMessage(error: unknown): string {
   justify-content: space-between;
   gap: 12px;
   color: #0f172a;
-  font-weight: 700;
+  font-weight: var(--weight-bold);
 }
 
 .test-result p {
   margin: 8px 0 0;
   color: #64748b;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .test-result blockquote {
@@ -1070,8 +1071,8 @@ function getErrorMessage(error: unknown): string {
   padding-left: 12px;
   border-left: 3px solid #3b82f6;
   color: #1e293b;
-  font-size: 13px;
-  line-height: 1.7;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
 }
 
 .backup-section {
@@ -1102,14 +1103,14 @@ function getErrorMessage(error: unknown): string {
 
 .backup-meta-label {
   color: #64748b;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
 }
 
 .backup-status-grid code {
   overflow: hidden;
   color: #334155;
-  font-size: 12px;
+  font-size: var(--text-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1147,7 +1148,7 @@ function getErrorMessage(error: unknown): string {
   padding: 10px 12px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.22);
   color: #e2e8f0;
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .backup-log-head span {
@@ -1161,9 +1162,9 @@ function getErrorMessage(error: unknown): string {
   overflow: auto;
   padding: 14px;
   color: #dbeafe;
-  font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.7;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-relaxed);
   white-space: pre-wrap;
 }
 
