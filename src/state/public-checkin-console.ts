@@ -42,7 +42,7 @@ const loading = ref(false);
 const accountSaving = ref(false);
 const settingsSaving = ref(false);
 const busyAccountId = ref<number | null>(null);
-const busyAccountAction = ref<'toggle' | 'test' | 'models' | 'checkin' | 'balance' | 'delete' | 'auto-test' | null>(null);
+const busyAccountAction = ref<'test' | 'models' | 'checkin' | 'balance' | 'delete' | 'auto-test' | null>(null);
 const globalBusy = ref<'checkin' | 'balance' | null>(null);
 
 const hasAccounts = computed(() => accounts.value.length > 0);
@@ -284,29 +284,6 @@ async function deleteAccount(id: number): Promise<void> {
   }
 }
 
-async function toggleCheckin(account: PublicCheckinAccount): Promise<void> {
-  busyAccountId.value = account.id;
-  busyAccountAction.value = 'toggle';
-  try {
-    await saveAccount({
-      siteId: account.siteId,
-      label: account.label,
-      credentialType: account.credentialType,
-      credential: null,
-      checkinEnabled: !account.checkinEnabled,
-      useProxy: account.useProxy,
-      status: account.status
-    }, account.id);
-  } finally {
-    if (busyAccountId.value === account.id) {
-      busyAccountId.value = null;
-    }
-    if (busyAccountAction.value === 'toggle') {
-      busyAccountAction.value = null;
-    }
-  }
-}
-
 async function testAccount(accountId: number): Promise<void> {
   busyAccountId.value = accountId;
   busyAccountAction.value = 'test';
@@ -453,7 +430,6 @@ export function usePublicCheckinConsole() {
     loadLogs,
     saveAccount,
     deleteAccount,
-    toggleCheckin,
     testAccount,
     testAccountModels,
     runAccountCheckin,

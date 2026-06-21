@@ -88,12 +88,13 @@
                   </div>
                 </td>
                 <td>
-                  <n-switch
-                    :value="account.checkinEnabled"
-                    :loading="isAccountActionLoading(account.id, 'toggle')"
-                    :disabled="isAccountBusy(account.id)"
-                    @update:value="() => void toggleCheckin(account)"
-                  />
+                  <span
+                    class="auto-checkin-badge"
+                    :class="account.checkinEnabled ? 'is-on' : 'is-off'"
+                    title="如需修改自动签到，请进入编辑账号"
+                  >
+                    {{ account.checkinEnabled ? '开启' : '关闭' }}
+                  </span>
                 </td>
                 <td>
                   <div class="account-status-cell">
@@ -323,7 +324,6 @@ import {
   NModal,
   NPagination,
   NSelect,
-  NSwitch,
   NTag,
   NTimePicker,
   createDiscreteApi,
@@ -362,7 +362,6 @@ const {
   loadLogs,
   saveAccount,
   deleteAccount,
-  toggleCheckin,
   testAccount,
   testAccountModels,
   runAccountCheckin,
@@ -1026,6 +1025,28 @@ onMounted(() => {
 
 .account-balance-cell span.is-positive {
   color: #16a34a;
+}
+
+.auto-checkin-badge {
+  display: inline-flex;
+  min-width: 52px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  line-height: 1;
+}
+
+.auto-checkin-badge.is-on {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.auto-checkin-badge.is-off {
+  background: #f1f5f9;
+  color: #64748b;
 }
 
 .account-status-cell {
