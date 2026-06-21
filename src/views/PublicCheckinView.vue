@@ -222,7 +222,7 @@
       </template>
     </n-modal>
 
-    <n-modal v-model:show="logModalVisible" preset="card" class="public-checkin-modal log-modal" title="签到日志" style="width: min(1100px, 96vw); border-radius: 12px;">
+    <n-modal v-model:show="logModalVisible" preset="card" class="public-checkin-modal log-modal" title="签到日志" style="width: min(920px, 94vw); border-radius: 12px;">
       <div class="log-panel">
         <div class="log-filters">
           <n-select v-model:value="logFilters.accountId" clearable placeholder="全部账号" :options="accountOptions" />
@@ -235,8 +235,9 @@
           :columns="logColumns"
           :data="logs.items"
           :bordered="false"
-          :single-line="false"
+          :single-line="true"
           :pagination="false"
+          size="small"
           class="log-table"
         />
         <div class="log-pagination">
@@ -385,7 +386,7 @@ const modelProbeItems = ref<PublicCheckinModelProbeItem[]>([]);
 const accountPage = ref(1);
 const accountPageSize = 12;
 const logPage = ref(1);
-const logPageSize = 50;
+const logPageSize = 10;
 
 const accountForm = reactive({
   siteName: '',
@@ -443,18 +444,18 @@ const logColumns: DataTableColumns<PublicCheckinLog> = [
   {
     title: '账号',
     key: 'account',
-    minWidth: 190,
+    minWidth: 150,
     render(row) {
-      return h('div', [
-        h('strong', row.accountLabel),
-        h('div', { class: 'muted-small' }, row.siteName)
-      ]);
+      const label = row.accountLabel || row.siteName || '-';
+      const siteName = row.siteName || '';
+      const text = siteName && siteName !== label ? `${label} · ${siteName}` : label;
+      return h('span', { class: 'log-account-name', title: text }, text);
     }
   },
   {
     title: '触发',
     key: 'triggeredBy',
-    width: 90,
+    width: 76,
     render(row) {
       return row.triggeredBy === 'manual' ? '手动' : '定时';
     }
@@ -462,7 +463,7 @@ const logColumns: DataTableColumns<PublicCheckinLog> = [
   {
     title: '状态',
     key: 'status',
-    width: 90,
+    width: 76,
     render(row) {
       return h(NTag, { type: statusTagType(row.status), size: 'small', bordered: false }, { default: () => statusLabel(row.status) });
     }
@@ -470,7 +471,7 @@ const logColumns: DataTableColumns<PublicCheckinLog> = [
   {
     title: '奖励',
     key: 'reward',
-    width: 120,
+    width: 86,
     render(row) {
       return formatMoney(row.reward);
     }
@@ -478,7 +479,7 @@ const logColumns: DataTableColumns<PublicCheckinLog> = [
   {
     title: '说明',
     key: 'message',
-    minWidth: 260,
+    minWidth: 220,
     render(row) {
       return row.rewardNote || row.errorMessage || '-';
     }
@@ -486,7 +487,7 @@ const logColumns: DataTableColumns<PublicCheckinLog> = [
   {
     title: '执行时间',
     key: 'executedAt',
-    width: 180,
+    width: 160,
     render(row) {
       return formatTime(row.executedAt);
     }
@@ -1421,29 +1422,29 @@ onMounted(() => {
 .log-panel {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .log-filters {
   display: grid;
-  grid-template-columns: minmax(170px, 1.2fr) minmax(140px, 0.8fr) minmax(160px, 1fr) minmax(160px, 1fr) auto;
-  gap: 12px;
+  grid-template-columns: minmax(150px, 1.1fr) minmax(120px, 0.8fr) minmax(140px, 1fr) minmax(140px, 1fr) auto;
+  gap: 10px;
   align-items: center;
-  padding: 16px;
+  padding: 12px;
   border: 1px solid #f1f5f9;
-  border-radius: 10px;
+  border-radius: 8px;
   background: rgba(249, 250, 251, 0.8);
 }
 
 .log-filters :deep(.n-base-selection),
 .log-filters :deep(.n-input),
 .log-filters :deep(.n-button) {
-  --n-height: 36px !important;
+  --n-height: 34px !important;
   --n-border-radius: 6px !important;
 }
 
 .log-table :deep(.n-data-table-th) {
-  padding: 12px 16px !important;
+  padding: 10px 14px !important;
   background: rgba(249, 250, 251, 0.5);
   color: #64748b;
   font-size: var(--text-xs);
@@ -1451,9 +1452,19 @@ onMounted(() => {
 }
 
 .log-table :deep(.n-data-table-td) {
-  padding: 14px 16px !important;
+  padding: 11px 14px !important;
   color: #0f172a;
   font-size: var(--text-sm);
+}
+
+.log-account-name {
+  display: block;
+  max-width: 180px;
+  overflow: hidden;
+  color: #0f172a;
+  font-weight: var(--weight-bold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .log-pagination {
