@@ -9,7 +9,7 @@
   >
     <n-input
       :value="textValue"
-      type="text"
+      :type="visible ? 'text' : 'password'"
       :size="size"
       :placeholder="placeholder"
       :input-props="inputProps"
@@ -41,9 +41,6 @@
         </button>
       </template>
     </n-input>
-    <span v-if="isMasked" class="secret-input-mask" aria-hidden="true">
-      <span v-for="segment in maskSegments" :key="segment" class="secret-input-mask-segment" />
-    </span>
   </div>
 </template>
 
@@ -88,7 +85,6 @@ const textValue = computed(() => props.value ?? '');
 const hasValue = computed(() => textValue.value.length > 0);
 const hasPrefix = computed(() => Boolean(slots.prefix));
 const isMasked = computed(() => hasValue.value && !visible.value);
-const maskSegments = [1, 2, 3, 4, 5, 6, 7, 8];
 
 function handleValueUpdate(value: string): void {
   emit('update:value', value);
@@ -140,108 +136,46 @@ const EyeOffGlyph = () =>
 }
 
 .secret-input.is-secret-hidden :deep(.n-input__input-el) {
-  color: transparent !important;
-  caret-color: transparent;
-  text-shadow: none;
-  -webkit-text-fill-color: transparent;
+  color: #334155;
+  letter-spacing: 0.18em;
 }
 
-.secret-input.is-secret-hidden :deep(.n-input__input-el::selection) {
-  background: transparent;
-  color: transparent;
-}
-
-.secret-input-mask {
-  position: absolute;
-  top: 50%;
-  right: auto;
-  left: 12px;
-  display: flex;
-  width: min(260px, calc(100% - 54px));
-  align-items: center;
-  gap: 7px;
-  overflow: hidden;
-  pointer-events: none;
-  transform: translateY(-50%);
-  white-space: nowrap;
-}
-
-.secret-input.has-prefix .secret-input-mask {
-  left: 40px;
-  width: min(232px, calc(100% - 82px));
-}
-
-.secret-input-mask-segment {
-  display: block;
-  flex: 0 0 auto;
-  width: 24px;
-  height: 8px;
-  border-radius: 999px;
-  background:
-    linear-gradient(180deg, rgba(100, 116, 139, 0.88), rgba(51, 65, 85, 0.88));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.72),
-    0 0 0 1px rgba(15, 23, 42, 0.08);
-}
-
-.secret-input-mask-segment:nth-child(1) {
-  width: 32px;
-}
-
-.secret-input-mask-segment:nth-child(2) {
-  width: 18px;
-}
-
-.secret-input-mask-segment:nth-child(3) {
-  width: 28px;
-}
-
-.secret-input-mask-segment:nth-child(4) {
-  width: 22px;
-}
-
-.secret-input-mask-segment:nth-child(5) {
-  width: 34px;
-}
-
-.secret-input-mask-segment:nth-child(6) {
-  width: 16px;
-}
-
-.secret-input-mask-segment:nth-child(7) {
-  width: 26px;
-}
-
-.secret-input-mask-segment:nth-child(8) {
-  width: 20px;
+.secret-input.is-secret-visible :deep(.n-input__input-el) {
+  color: #0f172a;
+  letter-spacing: 0.01em;
 }
 
 .secret-input-toggle {
   display: inline-flex;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.72);
   color: #94a3b8;
   cursor: pointer;
   transition:
+    border-color 0.18s ease,
     color 0.18s ease,
-    background-color 0.18s ease;
+    background-color 0.18s ease,
+    box-shadow 0.18s ease;
 }
 
 .secret-input-toggle:hover:not(:disabled),
 .secret-input-toggle:focus-visible {
+  border-color: rgba(37, 99, 235, 0.18);
   background: #eff6ff;
   color: #2563eb;
   outline: none;
 }
 
 .secret-input-toggle:focus-visible {
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.22);
+  box-shadow:
+    0 0 0 2px rgba(37, 99, 235, 0.18),
+    0 6px 16px rgba(37, 99, 235, 0.12);
 }
 
 .secret-input-toggle:disabled {
