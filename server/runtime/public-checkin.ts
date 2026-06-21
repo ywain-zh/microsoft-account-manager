@@ -6,6 +6,7 @@ import { HTTPException } from 'hono/http-exception';
 import { fetch, ProxyAgent, type Dispatcher, type RequestInit as UndiciRequestInit } from 'undici';
 
 export type PublicCheckinPlatform = 'new-api' | 'one-api' | 'onehub' | 'anyrouter';
+type StoredPublicCheckinPlatform = Exclude<PublicCheckinPlatform, 'anyrouter'>;
 export type PublicCheckinCredentialType = 'password' | 'access_token' | 'cookie';
 export type PublicCheckinAccountStatus = 'active' | 'disabled' | 'error';
 export type PublicCheckinStatus = 'success' | 'failed' | 'skipped';
@@ -242,6 +243,10 @@ function inferPublicCheckinPlatform(input: {
   return input.platform || 'new-api';
 }
 
+function toStoredPublicCheckinPlatform(platform: PublicCheckinPlatform): StoredPublicCheckinPlatform {
+  return platform === 'anyrouter' ? 'new-api' : platform;
+}
+
 function normalizePlatform(value: unknown): PublicCheckinPlatform {
   const platform = asString(value).trim();
   if (platform === 'new-api' || platform === 'one-api' || platform === 'onehub' || platform === 'anyrouter') return platform;
@@ -352,7 +357,7 @@ function validateSiteInput(value: unknown): Pick<PublicCheckinSite, 'name' | 'ur
   return {
     name,
     url,
-    platform: inferPublicCheckinPlatform({ name, url, platform: requestedPlatform })
+    platform: toStoredPublicCheckinPlatform(inferPublicCheckinPlatform({ name, url, platform: requestedPlatform }))
   };
 }
 
@@ -441,12 +446,13 @@ async function createAdapterForAccount(
   db: D1Database,
   platform: PublicCheckinPlatform,
   siteUrl: string,
-  useProxy: boolean
+  useProxy: boolean,
+  siteName = ''
 ): Promise<PublicCheckinAdapter> {
   return createAdapter(platform, siteUrl, {
     useProxy,
     proxyUrl: useProxy ? await getSystemProxyUrl(db) : ''
-  });
+  }, siteName);
 }
 
 function siteFromRow(row: SiteRow): PublicCheckinSite {
@@ -982,8 +988,8 @@ class OneHubAdapter extends PublicCheckinAdapter {
   }
 }
 
-function createAdapter(platform: PublicCheckinPlatform, siteUrl: string, options: AdapterOptions): PublicCheckinAdapter {
-  if (inferPublicCheckinPlatform({ url: siteUrl, platform }) === 'anyrouter') return new AnyRouterAdapter(siteUrl, options);
+function createAdapter(platform: PublicCheckinPlatform, siteUrl: string, options: AdapterOptions, siteName = ''): PublicCheckinAdapter {
+  if (inferPublicCheckinPlatform({ name: siteName, url: siteUrl, platform }) === 'anyrouter') return new AnyRouterAdapter(siteUrl, options);
   if (platform === 'onehub') return new OneHubAdapter(siteUrl, options);
   return new PublicCheckinAdapter(siteUrl, options);
 }
@@ -1392,7 +1398,7 @@ async function resolveCredential(db: D1Database, accountId: number): Promise<Acc
   const credential = decryptAccountCredential(row.account);
   if (credential.type !== 'password') return { ...row, credential };
 
-  const adapter = await createAdapterForAccount(db, row.site.platform, row.site.url, row.account.use_proxy === 1);
+  const adapter = await createAdapterForAccount(db, row.site.platform, row.site.url, row.account.use_proxy === 1, row.site.name);
   const login = await adapter.login(credential.username || '', credential.password || '');
   if (!login.success || !login.accessToken) {
     throw new Error(login.errorMessage || '密码登录失败');
@@ -1412,7 +1418,7 @@ async function refreshBalanceForAccount(db: D1Database, accountId: number): Prom
     return { success: false, errorMessage };
   }
 
-  const adapter = await createAdapterForAccount(db, resolved.site.platform, resolved.site.url, resolved.account.use_proxy === 1);
+  const adapter = await createAdapterForAccount(db, resolved.site.platform, resolved.site.url, resolved.account.use_proxy === 1, resolved.site.name);
   const result: BalanceResult = await adapter.getBalance(resolved.credential).catch((error) => ({
     success: false,
     errorMessage: error instanceof Error ? error.message : '余额刷新失败'
@@ -1478,7 +1484,7 @@ async function executeCheckin(db: D1Database, accountId: number, triggeredBy: Pu
   }
 
   let credential = decryptAccountCredential(row.account);
-  const adapter = await createAdapterForAccount(db, row.site.platform, row.site.url, row.account.use_proxy === 1);
+  const adapter = await createAdapterForAccount(db, row.site.platform, row.site.url, row.account.use_proxy === 1, row.site.name);
   if (credential.type === 'password') {
     const login = await adapter.login(credential.username || '', credential.password || '');
     if (!login.success || !login.accessToken) {
@@ -1598,7 +1604,7 @@ async function testAccountConnection(db: D1Database, body: unknown): Promise<Bal
   if (!site) throw new HTTPException(404, { message: '站点不存在' });
 
   let credential = input.credential!;
-  const adapter = await createAdapterForAccount(db, site.platform, site.url, input.useProxy);
+  const adapter = await createAdapterForAccount(db, site.platform, site.url, input.useProxy, site.name);
   if (credential.type === 'password') {
     const login = await adapter.login(credential.username || '', credential.password || '');
     if (!login.success || !login.accessToken) {
@@ -2113,6 +2119,7 @@ export const publicCheckinTestHooks = {
   extractPlatformUserIdFromHeaders,
   normalizeCredentialInput,
   inferPublicCheckinPlatform,
+  toStoredPublicCheckinPlatform,
   getProxyUrl,
   mergeSetCookieValues,
   createAdapter,

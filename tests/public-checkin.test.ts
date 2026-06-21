@@ -220,8 +220,31 @@ test('infers Any Router platform from name or URL', () => {
   );
 });
 
+test('stores Any Router sites as NewAPI-compatible platform', () => {
+  assert.equal(publicCheckinTestHooks.toStoredPublicCheckinPlatform('anyrouter'), 'new-api');
+  assert.equal(publicCheckinTestHooks.toStoredPublicCheckinPlatform('new-api'), 'new-api');
+  assert.equal(publicCheckinTestHooks.toStoredPublicCheckinPlatform('one-api'), 'one-api');
+  assert.equal(publicCheckinTestHooks.toStoredPublicCheckinPlatform('onehub'), 'onehub');
+});
+
 test('Any Router cookie auth only sends Cookie and New-Api-User', () => {
   const adapter = publicCheckinTestHooks.createAdapter('anyrouter', 'https://anyrouter.top', {});
+  const headers = (adapter as unknown as {
+    buildAuthHeaders(credential: unknown): Record<string, string>;
+  }).buildAuthHeaders({
+    type: 'cookie',
+    cookie: 'session=abc; acw_sc__v2=shield',
+    platformUserId: 174837
+  });
+
+  assert.deepEqual(headers, {
+    Cookie: 'session=abc; acw_sc__v2=shield',
+    'New-Api-User': '174837'
+  });
+});
+
+test('Any Router adapter is still selected when stored platform is NewAPI', () => {
+  const adapter = publicCheckinTestHooks.createAdapter('new-api', 'https://example.com', {}, 'Any Router');
   const headers = (adapter as unknown as {
     buildAuthHeaders(credential: unknown): Record<string, string>;
   }).buildAuthHeaders({
