@@ -1,6 +1,11 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { createDiscreteApi } from 'naive-ui';
 import { api, UnauthorizedError } from '../api';
+import {
+  normalizeSub2ApiImportCandidates,
+  parseSub2ApiImportText,
+  type ParsedSub2ApiImportPreviewItem
+} from '../../shared/sub2api-import';
 import type {
   Sub2ApiConfig,
   Sub2ApiDeleteAccountsResponse,
@@ -9,6 +14,7 @@ import type {
   Sub2ApiDetectionSummary,
   Sub2ApiDetectedIssueItem,
   Sub2ApiGroupItem,
+  Sub2ApiImportApiKeyResponse,
   Sub2ApiLogLevel
 } from '../types';
 
@@ -21,7 +27,8 @@ const ABNORMAL_ACCOUNTS_PAGE_SIZE = 10;
 function createDefaultConfig(): Sub2ApiConfig {
   return {
     baseUrl: '',
-    adminApiKey: ''
+    adminApiKey: '',
+    targetGroupName: ''
   };
 }
 
@@ -57,9 +64,11 @@ const modelLoading = ref(false);
 const groupLoading = ref(false);
 const showUnauthorizedAccountsModal = ref(false);
 const showAbnormalAccountsModal = ref(false);
+const importModalVisible = ref(false);
 const unauthorizedAccountsPage = ref(1);
 const abnormalAccountsPage = ref(1);
 const abnormalDeletingAccountIds = ref<number[]>([]);
+const importSubmitting = ref(false);
 const selectedModelId = ref(readStoredModelId());
 const modelItems = ref<string[]>([]);
 const groupItems = ref<Sub2ApiGroupItem[]>([]);
@@ -67,6 +76,8 @@ const groupSyncMessage = ref('尚未同步分组');
 const groupSyncedAt = ref<string | null>(null);
 const groupSyncError = ref(false);
 const selectedGroupName = ref<string | null>(null);
+const importRawText = ref('');
+const importResult = ref<Sub2ApiImportApiKeyResponse | null>(null);
 
 const storedConfig = reactive<Sub2ApiConfig>(createDefaultConfig());
 const configForm = reactive<Sub2ApiConfig>(createDefaultConfig());
@@ -78,6 +89,14 @@ const abnormalCandidates = ref<Sub2ApiDetectedIssueItem[]>([]);
 
 const hasConfiguredSub2Api = computed(() => {
   return Boolean(storedConfig.baseUrl && storedConfig.adminApiKey);
+});
+
+const hasSelectedTargetGroup = computed(() => {
+  return Boolean(getCurrentTargetGroupName());
+});
+
+const hasSavedTargetGroup = computed(() => {
+  return Boolean(getSavedTargetGroupName());
 });
 
 const hasUnauthorizedCandidates = computed(() => {
@@ -136,8 +155,22 @@ const selectedSub2ApiGroupName = computed<string | null>({
     return selectedGroupName.value;
   },
   set(value) {
-    selectedGroupName.value = value?.trim() || null;
+    const normalized = value?.trim() || null;
+    selectedGroupName.value = normalized;
+    configForm.targetGroupName = normalized ?? '';
   }
+});
+
+const importPreviewItems = computed<ParsedSub2ApiImportPreviewItem[]>(() => {
+  return parseSub2ApiImportText(importRawText.value);
+});
+
+const validImportPreviewItems = computed(() => {
+  return importPreviewItems.value.filter((item) => item.status === 'valid');
+});
+
+const invalidImportPreviewItems = computed(() => {
+  return importPreviewItems.value.filter((item) => item.status === 'invalid');
 });
 
 const groupOptions = computed(() => {
@@ -231,6 +264,20 @@ function formatStatusTime(value: string): string {
 function assignConfig(target: Sub2ApiConfig, source: Sub2ApiConfig): void {
   target.baseUrl = source.baseUrl;
   target.adminApiKey = source.adminApiKey;
+  target.targetGroupName = source.targetGroupName?.trim() ?? '';
+}
+
+function getCurrentTargetGroupName(): string {
+  return (
+    selectedSub2ApiGroupName.value
+    ?? configForm.targetGroupName
+    ?? storedConfig.targetGroupName
+    ?? ''
+  ).trim();
+}
+
+function getSavedTargetGroupName(): string {
+  return (storedConfig.targetGroupName ?? '').trim();
 }
 
 function assignSummary(target: Sub2ApiDetectionSummary, source: Partial<Sub2ApiDetectionSummary>): void {
@@ -263,34 +310,6 @@ function resetProgress(): void {
 
 function clearLogs(): void {
   logs.value = [];
-}
-
-function exportUnauthorizedAccounts(): void {
-  if (unauthorizedCandidates.value.length === 0) {
-    message.warning('当前没有可导出的 401 账号');
-    return;
-  }
-
-  const exportedAt = new Date().toISOString();
-  const payload = {
-    exportedAt,
-    total: unauthorizedCandidates.value.length,
-    items: unauthorizedCandidates.value.map((item) => ({
-      accountId: item.accountId,
-      accountEmail: item.accountEmail,
-      accountName: item.accountName,
-      reason: item.reason
-    }))
-  };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  const safeTime = exportedAt.replace(/[:.]/g, '-');
-  link.href = url;
-  link.download = `sub2api-401-accounts-${safeTime}.json`;
-  link.click();
-  URL.revokeObjectURL(url);
-  message.success(`已导出 ${payload.total} 个 401 账号`);
 }
 
 function resetDetectedIssues(): void {
@@ -547,6 +566,7 @@ async function loadConfig(): Promise<void> {
     const configResponse = await api.getSub2ApiConfig();
     assignConfig(storedConfig, configResponse.item);
     assignConfig(configForm, configResponse.item);
+    selectedSub2ApiGroupName.value = configResponse.item.targetGroupName?.trim() || null;
     configLoaded.value = true;
   } catch (error) {
     handleApiError(error);
@@ -633,7 +653,8 @@ async function syncSub2ApiGroups(options: { silent?: boolean } = {}): Promise<vo
 async function saveConfig(): Promise<boolean> {
   const payload: Sub2ApiConfig = {
     baseUrl: configForm.baseUrl.trim(),
-    adminApiKey: configForm.adminApiKey.trim()
+    adminApiKey: configForm.adminApiKey.trim(),
+    targetGroupName: (selectedSub2ApiGroupName.value ?? '').trim()
   };
 
   if (!payload.baseUrl || !payload.adminApiKey) {
@@ -646,6 +667,7 @@ async function saveConfig(): Promise<boolean> {
     const response = await api.updateSub2ApiConfig(payload);
     assignConfig(storedConfig, response.item);
     assignConfig(configForm, response.item);
+    selectedSub2ApiGroupName.value = response.item.targetGroupName?.trim() || null;
     message.success('Sub2API 配置已保存');
     return true;
   } catch (error) {
@@ -653,6 +675,91 @@ async function saveConfig(): Promise<boolean> {
     return false;
   } finally {
     configSaving.value = false;
+  }
+}
+
+function resetImportState(): void {
+  importRawText.value = '';
+  importResult.value = null;
+  importSubmitting.value = false;
+}
+
+function ensureSub2ApiImportReady(): boolean {
+  if (!hasConfiguredSub2Api.value) {
+    message.warning('请先保存有效的 Sub2API 地址和管理员 API Key');
+    return false;
+  }
+
+  const currentTargetGroupName = getCurrentTargetGroupName();
+  const savedTargetGroupName = getSavedTargetGroupName();
+
+  if (!currentTargetGroupName) {
+    message.warning('请先在配置信息里同步并选择目标分组');
+    return false;
+  }
+
+  if (!savedTargetGroupName || savedTargetGroupName !== currentTargetGroupName) {
+    message.warning('目标分组已选择，请先点击“保存配置”后再导入');
+    return false;
+  }
+
+  return true;
+}
+
+function openImportModal(): void {
+  if (!ensureSub2ApiImportReady()) {
+    return;
+  }
+
+  resetImportState();
+  importModalVisible.value = true;
+}
+
+function closeImportModal(): void {
+  importModalVisible.value = false;
+}
+
+async function submitImport(options: { dryRun?: boolean } = {}): Promise<Sub2ApiImportApiKeyResponse | null> {
+  if (!ensureSub2ApiImportReady()) {
+    return null;
+  }
+
+  const normalizedItems = normalizeSub2ApiImportCandidates(validImportPreviewItems.value);
+  const items = normalizedItems
+    .filter((item) => item.status === 'valid')
+    .map((item) => ({
+      name: item.name,
+      baseUrl: item.baseUrl,
+      apiKey: item.apiKey
+    }));
+
+  if (items.length === 0) {
+    message.warning('没有可导入的有效账号，请先检查解析结果');
+    return null;
+  }
+
+  importSubmitting.value = true;
+  try {
+    const response = await api.importSub2ApiApiKeys({
+      items,
+      dryRun: options.dryRun === true
+    });
+    importResult.value = response;
+    if (!options.dryRun) {
+      if (response.created > 0) {
+        message.success(`导入完成：新增 ${response.created} 个，跳过 ${response.skipped} 个，失败 ${response.failed} 个`);
+      } else if (response.skipped > 0 && response.failed === 0) {
+        message.warning(`没有新增账号，已跳过 ${response.skipped} 个重复项`);
+      } else {
+        message.warning(`导入完成：新增 ${response.created} 个，跳过 ${response.skipped} 个，失败 ${response.failed} 个`);
+      }
+    }
+    return response;
+  } catch (error) {
+    handleApiError(error);
+    return null;
+  } finally {
+    importSubmitting.value = false;
   }
 }
 
@@ -911,6 +1018,7 @@ export function useSub2ApiConsole() {
     groupLoading,
     showUnauthorizedAccountsModal,
     showAbnormalAccountsModal,
+    importModalVisible,
     unauthorizedAccountsPage,
     abnormalAccountsPage,
     abnormalAccountsPageSize: ABNORMAL_ACCOUNTS_PAGE_SIZE,
@@ -935,7 +1043,15 @@ export function useSub2ApiConsole() {
     groupSyncStatusText,
     groupSyncError,
     groupSyncedAt,
+    importRawText,
+    importSubmitting,
+    importPreviewItems,
+    validImportPreviewItems,
+    invalidImportPreviewItems,
+    importResult,
     hasConfiguredSub2Api,
+    hasSelectedTargetGroup,
+    hasSavedTargetGroup,
     hasUnauthorizedCandidates,
     hasAbnormalCandidates,
     loadConfig,
@@ -944,13 +1060,15 @@ export function useSub2ApiConsole() {
     syncSub2ApiGroups,
     saveConfig,
     clearLogs,
-    exportUnauthorizedAccounts,
     openUnauthorizedAccountsModal,
     closeUnauthorizedAccountsModal,
     setUnauthorizedAccountsPage,
     openAbnormalAccountsModal,
     closeAbnormalAccountsModal,
     setAbnormalAccountsPage,
+    openImportModal,
+    closeImportModal,
+    submitImport,
     startDetection,
     clearUnauthorizedAccounts,
     deleteAbnormalAccount,

@@ -9,6 +9,7 @@ import type {
   PublicCheckinCredential,
   PublicCheckinCredentialType,
   PublicCheckinLogResponse,
+  PublicCheckinModelProbeResponse,
   PublicCheckinRunResult,
   PublicCheckinSettings,
   PublicCheckinStats,
@@ -41,6 +42,7 @@ const loading = ref(false);
 const accountSaving = ref(false);
 const settingsSaving = ref(false);
 const busyAccountId = ref<number | null>(null);
+const busyAccountAction = ref<'toggle' | 'test' | 'models' | 'checkin' | 'balance' | 'delete' | 'auto-test' | null>(null);
 const globalBusy = ref<'checkin' | 'balance' | null>(null);
 
 const hasAccounts = computed(() => accounts.value.length > 0);
@@ -142,6 +144,7 @@ function buildPayload(input: {
   siteName: string;
   siteUrl: string;
   key: string;
+  apiKey: string;
   platformUserId: string;
   checkinEnabled: boolean;
   useProxy: boolean;
@@ -168,6 +171,7 @@ function buildPayload(input: {
     label: siteName,
     credentialType: parsed?.credentialType || input.currentCredentialType || 'access_token',
     credential: parsed?.credential || null,
+    apiKey: input.apiKey.trim() || null,
     checkinEnabled: input.checkinEnabled,
     useProxy: input.useProxy
   };
@@ -244,6 +248,7 @@ async function saveAccount(payload: PublicCheckinAccountPayload, id?: number): P
 
 async function autoTestCreatedAccount(accountId: number): Promise<void> {
   busyAccountId.value = accountId;
+  busyAccountAction.value = 'auto-test';
   try {
     const result = await api.testPublicCheckinAccount(accountId);
     (result.success ? message.success : message.error)(balanceNotice(result, '自动检测'));
@@ -258,11 +263,15 @@ async function autoTestCreatedAccount(accountId: number): Promise<void> {
     if (busyAccountId.value === accountId) {
       busyAccountId.value = null;
     }
+    if (busyAccountAction.value === 'auto-test') {
+      busyAccountAction.value = null;
+    }
   }
 }
 
 async function deleteAccount(id: number): Promise<void> {
   busyAccountId.value = id;
+  busyAccountAction.value = 'delete';
   try {
     await api.deletePublicCheckinAccount(id);
     message.success('账号已删除');
@@ -271,23 +280,36 @@ async function deleteAccount(id: number): Promise<void> {
     handleApiError(error);
   } finally {
     busyAccountId.value = null;
+    busyAccountAction.value = null;
   }
 }
 
 async function toggleCheckin(account: PublicCheckinAccount): Promise<void> {
-  await saveAccount({
-    siteId: account.siteId,
-    label: account.label,
-    credentialType: account.credentialType,
-    credential: null,
-    checkinEnabled: !account.checkinEnabled,
-    useProxy: account.useProxy,
-    status: account.status
-  }, account.id);
+  busyAccountId.value = account.id;
+  busyAccountAction.value = 'toggle';
+  try {
+    await saveAccount({
+      siteId: account.siteId,
+      label: account.label,
+      credentialType: account.credentialType,
+      credential: null,
+      checkinEnabled: !account.checkinEnabled,
+      useProxy: account.useProxy,
+      status: account.status
+    }, account.id);
+  } finally {
+    if (busyAccountId.value === account.id) {
+      busyAccountId.value = null;
+    }
+    if (busyAccountAction.value === 'toggle') {
+      busyAccountAction.value = null;
+    }
+  }
 }
 
 async function testAccount(accountId: number): Promise<void> {
   busyAccountId.value = accountId;
+  busyAccountAction.value = 'test';
   try {
     const result = await api.testPublicCheckinAccount(accountId);
     (result.success ? message.success : message.error)(balanceNotice(result, '连接检测'));
@@ -296,11 +318,24 @@ async function testAccount(accountId: number): Promise<void> {
     handleApiError(error);
   } finally {
     busyAccountId.value = null;
+    busyAccountAction.value = null;
+  }
+}
+
+async function testAccountModels(accountId: number): Promise<PublicCheckinModelProbeResponse> {
+  busyAccountId.value = accountId;
+  busyAccountAction.value = 'models';
+  try {
+    return await api.testPublicCheckinModels(accountId);
+  } finally {
+    busyAccountId.value = null;
+    busyAccountAction.value = null;
   }
 }
 
 async function runAccountCheckin(accountId: number): Promise<void> {
   busyAccountId.value = accountId;
+  busyAccountAction.value = 'checkin';
   try {
     const result = await api.runPublicCheckinAccount(accountId);
     (result.success && result.status !== 'failed' ? message.success : message.error)(checkinNotice(result));
@@ -309,11 +344,13 @@ async function runAccountCheckin(accountId: number): Promise<void> {
     handleApiError(error);
   } finally {
     busyAccountId.value = null;
+    busyAccountAction.value = null;
   }
 }
 
 async function refreshAccountBalance(accountId: number): Promise<void> {
   busyAccountId.value = accountId;
+  busyAccountAction.value = 'balance';
   try {
     const result = await api.refreshPublicCheckinBalance(accountId);
     (result.success ? message.success : message.error)(balanceNotice(result, '余额刷新'));
@@ -322,6 +359,7 @@ async function refreshAccountBalance(accountId: number): Promise<void> {
     handleApiError(error);
   } finally {
     busyAccountId.value = null;
+    busyAccountAction.value = null;
   }
 }
 
@@ -404,6 +442,7 @@ export function usePublicCheckinConsole() {
     accountSaving,
     settingsSaving,
     busyAccountId,
+    busyAccountAction,
     globalBusy,
     hasAccounts,
     formatMoney,
@@ -416,6 +455,7 @@ export function usePublicCheckinConsole() {
     deleteAccount,
     toggleCheckin,
     testAccount,
+    testAccountModels,
     runAccountCheckin,
     refreshAccountBalance,
     runAllCheckin,

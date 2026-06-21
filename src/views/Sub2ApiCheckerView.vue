@@ -49,6 +49,20 @@
         </button>
 
         <button
+          class="btn btn-import"
+          type="button"
+          :disabled="runLoading || !hasConfiguredSub2Api"
+          @click="openImportModal"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3v12"></path>
+            <path d="m7 10 5 5 5-5"></path>
+            <path d="M5 21h14"></path>
+          </svg>
+          导入 API-SUB2API
+        </button>
+
+        <button
           class="btn btn-danger-ghost"
           type="button"
           :disabled="runLoading || deleteLoading || !hasUnauthorizedCandidates"
@@ -59,15 +73,6 @@
             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
           </svg>
           {{ deleteLoading ? '清理中...' : `一键清除 401 账号 (${unauthorizedCandidates.length})` }}
-        </button>
-
-        <button
-          class="btn btn-default"
-          type="button"
-          :disabled="runLoading || !hasUnauthorizedCandidates"
-          @click="exportUnauthorizedAccounts"
-        >
-          导出 401 账号
         </button>
 
         <button class="btn btn-default" type="button" :disabled="logs.length === 0" @click="clearLogs">
@@ -184,6 +189,91 @@
         <div class="config-modal-footer">
           <n-button @click="showConfigModal = false">取消</n-button>
           <n-button type="primary" :loading="configSaving" @click="handleSaveConfigAndClose">保存配置</n-button>
+        </div>
+      </template>
+    </n-modal>
+
+    <n-modal
+      v-model:show="importModalVisible"
+      preset="card"
+      title="导入 API-SUB2API"
+      style="width: min(1040px, 94vw); border-radius: 12px;"
+    >
+      <div class="import-modal-body">
+        <div class="import-target-bar">
+          <span class="import-target-label">目标分组</span>
+          <span class="import-target-name">{{ selectedSub2ApiGroupName || '未选择' }}</span>
+          <span class="import-target-count">
+            可导入 {{ validImportPreviewItems.length }} 条
+            <template v-if="invalidImportPreviewItems.length > 0">，需检查 {{ invalidImportPreviewItems.length }} 条</template>
+          </span>
+        </div>
+
+        <div class="import-workspace">
+          <div class="import-panel">
+            <div class="import-panel-title">粘贴内容</div>
+            <n-input
+              v-model:value="importRawText"
+              type="textarea"
+              :autosize="{ minRows: 12, maxRows: 18 }"
+              placeholder="可粘贴 baseurl/api_key、JSON、.env、curl Header 或混合文本"
+            />
+          </div>
+
+          <div class="import-panel">
+            <div class="import-panel-title">解析预览</div>
+            <div v-if="importPreviewItems.length === 0" class="import-empty">
+              粘贴后会自动识别 Base URL 和 API Key。
+            </div>
+            <div v-else class="import-preview-list">
+              <div
+                v-for="item in importPreviewItems"
+                :key="`${item.index}-${item.baseUrl}-${item.maskedApiKey}`"
+                class="import-preview-item"
+                :class="item.status === 'valid' ? 'is-valid' : 'is-invalid'"
+              >
+                <div class="import-preview-main">
+                  <div class="import-preview-name">{{ item.name || item.baseUrl || `第 ${item.index} 条` }}</div>
+                  <div class="import-preview-url">{{ item.baseUrl || '-' }}</div>
+                  <div class="import-preview-key">{{ item.maskedApiKey || '-' }}</div>
+                </div>
+                <div class="import-preview-status">
+                  {{ item.message }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="importResult" class="import-result">
+          <div class="import-result-summary">
+            导入结果：新增 {{ importResult.created }} 个，跳过 {{ importResult.skipped }} 个，失败 {{ importResult.failed }} 个
+          </div>
+          <div class="import-result-list">
+            <div
+              v-for="item in importResult.items"
+              :key="`${item.status}-${item.baseUrl}-${item.message}`"
+              class="import-result-item"
+              :class="`is-${item.status}`"
+            >
+              <span class="import-result-status">{{ resolveImportStatusLabel(item.status) }}</span>
+              <span class="import-result-url">{{ item.baseUrl }}</span>
+              <span class="import-result-message">{{ item.message }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <div class="import-modal-footer">
+          <n-button @click="closeImportModal">关闭</n-button>
+          <n-button
+            type="primary"
+            :loading="importSubmitting"
+            :disabled="validImportPreviewItems.length === 0"
+            @click="handleSubmitImport"
+          >
+            确认导入
+          </n-button>
         </div>
       </template>
     </n-modal>
@@ -330,6 +420,13 @@ const {
   groupOptions,
   groupSyncStatusText,
   groupSyncError,
+  importModalVisible,
+  importRawText,
+  importSubmitting,
+  importPreviewItems,
+  validImportPreviewItems,
+  invalidImportPreviewItems,
+  importResult,
   hasConfiguredSub2Api,
   hasUnauthorizedCandidates,
   hasAbnormalCandidates,
@@ -340,13 +437,15 @@ const {
   syncSub2ApiGroups,
   saveConfig,
   clearLogs,
-  exportUnauthorizedAccounts,
   openUnauthorizedAccountsModal,
   closeUnauthorizedAccountsModal,
   setUnauthorizedAccountsPage,
   openAbnormalAccountsModal,
   closeAbnormalAccountsModal,
   setAbnormalAccountsPage,
+  openImportModal,
+  closeImportModal,
+  submitImport,
   startDetection,
   clearUnauthorizedAccounts,
   deleteAbnormalAccount,
@@ -468,6 +567,22 @@ function resolveLevelBadgeTone(level: Sub2ApiLogLevel): 'ok' | 'warn' | 'info' {
 
 function resolveIssueLabel(item: Pick<Sub2ApiDetectedIssueItem, 'accountId' | 'accountName' | 'accountEmail'>): string {
   return item.accountEmail?.trim() || item.accountName?.trim() || `账号 ID ${item.accountId}`;
+}
+
+function resolveImportStatusLabel(status: 'created' | 'skipped' | 'failed'): string {
+  if (status === 'created') {
+    return '新增';
+  }
+
+  if (status === 'skipped') {
+    return '跳过';
+  }
+
+  return '失败';
+}
+
+async function handleSubmitImport(): Promise<void> {
+  await submitImport();
 }
 
 async function handleSaveConfig(): Promise<void> {
@@ -665,6 +780,18 @@ onBeforeUnmount(() => {
 
 .btn-success:hover:not(:disabled) {
   background: #059669;
+}
+
+.btn-import {
+  color: #0f766e;
+  border-color: #99f6e4;
+  background: linear-gradient(180deg, #f0fdfa 0%, #ccfbf1 100%);
+}
+
+.btn-import:hover:not(:disabled) {
+  color: #0f5f59;
+  border-color: #2dd4bf;
+  box-shadow: 0 6px 18px rgba(20, 184, 166, 0.16);
 }
 
 .btn-danger-ghost {
@@ -935,6 +1062,207 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 
+.import-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.import-target-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid #ccfbf1;
+  border-radius: 8px;
+  background: #f0fdfa;
+}
+
+.import-target-label {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  color: #0f766e;
+}
+
+.import-target-name {
+  color: #0f172a;
+  font-weight: var(--weight-semibold);
+  word-break: break-all;
+}
+
+.import-target-count {
+  margin-left: auto;
+  color: #475569;
+  font-size: var(--text-sm);
+}
+
+.import-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.95fr);
+  gap: 14px;
+}
+
+.import-panel {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.import-panel-title {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  color: #334155;
+}
+
+.import-empty {
+  min-height: 284px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #94a3b8;
+  text-align: center;
+}
+
+.import-preview-list {
+  max-height: 360px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 2px;
+}
+
+.import-preview-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.import-preview-item.is-valid {
+  border-color: #bbf7d0;
+  background: #fbfffd;
+}
+
+.import-preview-item.is-invalid {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.import-preview-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.import-preview-name {
+  color: #0f172a;
+  font-weight: var(--weight-semibold);
+  word-break: break-all;
+}
+
+.import-preview-url,
+.import-preview-key {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: #64748b;
+  word-break: break-all;
+}
+
+.import-preview-status {
+  white-space: nowrap;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  color: #0f766e;
+  background: #ccfbf1;
+}
+
+.import-preview-item.is-invalid .import-preview-status {
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.import-result {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.import-result-summary {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  color: #334155;
+}
+
+.import-result-list {
+  max-height: 220px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.import-result-item {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) minmax(160px, 0.8fr);
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #334155;
+}
+
+.import-result-status {
+  font-weight: var(--weight-bold);
+  font-size: var(--text-xs);
+}
+
+.import-result-item.is-created .import-result-status {
+  color: #16a34a;
+}
+
+.import-result-item.is-skipped .import-result-status {
+  color: #b45309;
+}
+
+.import-result-item.is-failed .import-result-status {
+  color: #dc2626;
+}
+
+.import-result-url,
+.import-result-message {
+  min-width: 0;
+  word-break: break-all;
+}
+
+.import-result-url {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.import-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .form-autofill-guard {
   position: absolute;
   width: 0;
@@ -1028,6 +1356,14 @@ onBeforeUnmount(() => {
 @media (max-width: 900px) {
   .stats-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .import-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .import-result-item {
+    grid-template-columns: 1fr;
   }
 
   .log-section-header {

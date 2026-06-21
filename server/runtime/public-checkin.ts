@@ -35,6 +35,7 @@ export interface PublicCheckinAccount {
   label: string;
   credentialType: PublicCheckinCredentialType;
   hasCredential: boolean;
+  hasApiKey: boolean;
   balance: number | null;
   balanceUpdatedAt: number | null;
   checkinEnabled: boolean;
@@ -64,6 +65,7 @@ type AccountRow = {
   label: string;
   credential_type: PublicCheckinCredentialType;
   credential_data: string;
+  api_key_data: string | null;
   balance: number | null;
   balance_updated_at: number | null;
   checkin_enabled: number;
@@ -80,6 +82,7 @@ type JoinedAccountRow = {
   label: string;
   credential_type: PublicCheckinCredentialType;
   credential_data: string;
+  api_key_data: string | null;
   balance: number | null;
   balance_updated_at: number | null;
   checkin_enabled: number;
@@ -113,6 +116,21 @@ interface BalanceResult {
   errorMessage?: string;
 }
 
+interface PublicCheckinModelProbeItem {
+  model: string;
+}
+
+interface PublicCheckinModelProbeResponse {
+  accountId: number;
+  siteName: string;
+  items: PublicCheckinModelProbeItem[];
+}
+
+interface PublicCheckinModelCacheEntry {
+  expiresAt: number;
+  response: PublicCheckinModelProbeResponse;
+}
+
 interface LoginResult {
   success: boolean;
   accessToken?: string;
@@ -131,12 +149,15 @@ const DEFAULT_SETTINGS: PublicCheckinSettings = {
   timezone: process.env.TZ || 'Asia/Shanghai'
 };
 const SYSTEM_PROXY_CONFIG_KEY = 'system_proxy_config';
+const DEFAULT_PUBLIC_CHECKIN_MODEL_CACHE_TTL_MS = 60_000;
 
 const runningTasks = new Set<string>();
 let checkinSchedule: SimpleCronTask | null = null;
 let balanceSchedule: SimpleCronTask | null = null;
 let schedulerDb: D1Database | null = null;
 let schedulerStarted = false;
+const publicCheckinModelCache = new Map<string, PublicCheckinModelCacheEntry>();
+const publicCheckinModelRequests = new Map<string, Promise<PublicCheckinModelProbeResponse>>();
 
 type NotificationsModule = typeof import('./notifications.js');
 let notificationsModulePromise: Promise<NotificationsModule> | null = null;
@@ -341,6 +362,7 @@ function validateAccountInput(value: unknown, requireCredential: boolean): {
   label: string;
   credentialType: PublicCheckinCredentialType;
   credential: PublicCheckinCredential | null;
+  apiKey: string | null;
   checkinEnabled: boolean;
   useProxy: boolean;
   status?: PublicCheckinAccountStatus;
@@ -357,6 +379,7 @@ function validateAccountInput(value: unknown, requireCredential: boolean): {
   if (requireCredential && !credential) {
     throw new HTTPException(400, { message: '新增账号必须提供凭证' });
   }
+  const apiKeyInput = asString(input.apiKey).trim();
 
   return {
     siteId,
@@ -364,10 +387,22 @@ function validateAccountInput(value: unknown, requireCredential: boolean): {
     label: asString(input.label).trim(),
     credentialType,
     credential,
+    apiKey: apiKeyInput ? normalizeApiKey(apiKeyInput) : null,
     checkinEnabled: asBoolean(input.checkinEnabled, true),
     useProxy: asBoolean(input.useProxy, false),
     status: input.status === undefined ? undefined : normalizeAccountStatus(input.status)
   };
+}
+
+function normalizeApiKey(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+  if (trimmed.length > 2048) {
+    throw new HTTPException(400, { message: 'API Key 长度不能超过 2048 个字符' });
+  }
+  return trimmed;
 }
 
 async function dbAll<T>(db: D1Database, query: string, values: unknown[] = []): Promise<T[]> {
@@ -433,6 +468,7 @@ function joinedToAccountWithSite(row: JoinedAccountRow): AccountWithSite {
       label: row.label,
       credential_type: row.credential_type,
       credential_data: row.credential_data,
+      api_key_data: row.api_key_data,
       balance: row.balance == null ? null : Number(row.balance),
       balance_updated_at: row.balance_updated_at == null ? null : Number(row.balance_updated_at),
       checkin_enabled: Number(row.checkin_enabled),
@@ -461,6 +497,7 @@ function toSafeAccount(account: AccountRow, site: SiteRow, lastCheckinReward: nu
     label: account.label,
     credentialType: account.credential_type,
     hasCredential: Boolean(account.credential_data),
+    hasApiKey: Boolean(account.api_key_data),
     balance: account.balance == null ? null : Number(account.balance),
     balanceUpdatedAt: account.balance_updated_at == null ? null : Number(account.balance_updated_at),
     checkinEnabled: Number(account.checkin_enabled) === 1,
@@ -544,6 +581,14 @@ function decryptCredentialText(ciphertext: string): string {
 
 function decryptAccountCredential(account: Pick<AccountRow, 'credential_data'>): PublicCheckinCredential {
   return normalizeCredentialInput(JSON.parse(decryptCredentialText(account.credential_data)) as PublicCheckinCredential);
+}
+
+function decryptAccountApiKey(account: Pick<AccountRow, 'api_key_data'>): string {
+  if (!account.api_key_data) {
+    return '';
+  }
+
+  return normalizeApiKey(decryptCredentialText(account.api_key_data));
 }
 
 export function parsePublicCheckinRewardAmount(value: unknown): number | undefined {
@@ -949,7 +994,16 @@ function getProxyUrl(configuredProxyUrl = ''): string {
   if (!trimmed) {
     throw new Error('已启用本地代理，但系统设置里未配置代理地址');
   }
-  return trimmed;
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error('本地代理地址格式不正确');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('当前仅支持 HTTP/HTTPS 本地代理');
+  }
+  return parsed.toString();
 }
 
 function parseJsonResponsePayload<T>(response: RawResponse): T {
@@ -984,6 +1038,7 @@ async function getAccountWithSite(db: D1Database, accountId: number): Promise<Ac
       a.label AS label,
       a.credential_type AS credential_type,
       a.credential_data AS credential_data,
+      a.api_key_data AS api_key_data,
       a.balance AS balance,
       a.balance_updated_at AS balance_updated_at,
       a.checkin_enabled AS checkin_enabled,
@@ -1045,6 +1100,7 @@ async function listAccounts(db: D1Database): Promise<PublicCheckinAccount[]> {
       a.label AS label,
       a.credential_type AS credential_type,
       a.credential_data AS credential_data,
+      a.api_key_data AS api_key_data,
       a.balance AS balance,
       a.balance_updated_at AS balance_updated_at,
       a.checkin_enabled AS checkin_enabled,
@@ -1089,14 +1145,15 @@ async function createAccount(db: D1Database, body: unknown): Promise<PublicCheck
   const now = unixNow();
   const result = await dbRun(db, `
     INSERT INTO public_checkin_accounts (
-      site_id, label, credential_type, credential_data, checkin_enabled, use_proxy, status, created_at, updated_at
+      site_id, label, credential_type, credential_data, api_key_data, checkin_enabled, use_proxy, status, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     siteId,
     label,
     input.credentialType,
     encryptCredential(JSON.stringify(input.credential)),
+    input.apiKey ? encryptCredential(input.apiKey) : null,
     input.checkinEnabled ? 1 : 0,
     input.useProxy ? 1 : 0,
     input.status || 'active',
@@ -1119,13 +1176,14 @@ async function updateAccount(db: D1Database, accountId: number, body: unknown): 
   if (input.credential) {
     await dbRun(db, `
       UPDATE public_checkin_accounts
-      SET site_id = ?, label = ?, credential_type = ?, credential_data = ?, checkin_enabled = ?, use_proxy = ?, status = ?, updated_at = ?
+      SET site_id = ?, label = ?, credential_type = ?, credential_data = ?, api_key_data = COALESCE(?, api_key_data), checkin_enabled = ?, use_proxy = ?, status = ?, updated_at = ?
       WHERE id = ?
     `, [
       siteId,
       label,
       input.credentialType,
       encryptCredential(JSON.stringify(input.credential)),
+      input.apiKey ? encryptCredential(input.apiKey) : null,
       input.checkinEnabled ? 1 : 0,
       input.useProxy ? 1 : 0,
       input.status || current.account.status,
@@ -1135,12 +1193,13 @@ async function updateAccount(db: D1Database, accountId: number, body: unknown): 
   } else {
     await dbRun(db, `
       UPDATE public_checkin_accounts
-      SET site_id = ?, label = ?, credential_type = ?, checkin_enabled = ?, use_proxy = ?, status = ?, updated_at = ?
+      SET site_id = ?, label = ?, credential_type = ?, api_key_data = COALESCE(?, api_key_data), checkin_enabled = ?, use_proxy = ?, status = ?, updated_at = ?
       WHERE id = ?
     `, [
       siteId,
       label,
       input.credentialType,
+      input.apiKey ? encryptCredential(input.apiKey) : null,
       input.checkinEnabled ? 1 : 0,
       input.useProxy ? 1 : 0,
       input.status || current.account.status,
@@ -1168,6 +1227,163 @@ async function updateCredential(db: D1Database, accountId: number, credential: P
     SET credential_type = ?, credential_data = ?, updated_at = ?
     WHERE id = ?
   `, [type || credential.type, encryptCredential(JSON.stringify(credential)), unixNow(), accountId]);
+}
+
+function buildOpenAiCompatibleUrl(baseUrl: string, requestPath: string): string {
+  const normalized = normalizeUrl(baseUrl);
+  const suffix = requestPath.startsWith('/') ? requestPath : `/${requestPath}`;
+  return `${normalized}${suffix}`;
+}
+
+function extractModelIds(payload: unknown): string[] {
+  const record = asRecord(payload);
+  const rawItems = Array.isArray(record.data) ? record.data : Array.isArray(payload) ? payload : [];
+  const ids = rawItems
+    .map((item) => {
+      if (typeof item === 'string') {
+        return item.trim();
+      }
+      return asString(asRecord(item).id).trim();
+    })
+    .filter(Boolean);
+  return Array.from(new Set(ids));
+}
+
+const publicCheckinModelNameCollator = new Intl.Collator('en', {
+  numeric: true,
+  sensitivity: 'base'
+});
+
+function rankPublicCheckinModelVendor(model: string): number {
+  const normalized = model.trim().toLowerCase();
+  if (normalized.startsWith('gpt-')) return 0;
+  if (normalized.startsWith('claude-')) return 1;
+  if (normalized.startsWith('gemini-')) return 2;
+  if (normalized.startsWith('deepseek-')) return 3;
+  return 4;
+}
+
+function sortPublicCheckinModelIds(models: string[]): string[] {
+  return [...models].sort((left, right) => {
+    const rankDiff = rankPublicCheckinModelVendor(left) - rankPublicCheckinModelVendor(right);
+    if (rankDiff !== 0) {
+      return rankDiff;
+    }
+    return publicCheckinModelNameCollator.compare(left, right);
+  });
+}
+
+async function requestOpenAiCompatibleJson(
+  siteUrl: string,
+  apiKey: string,
+  requestPath: string,
+  init: RequestInit,
+  useProxy: boolean,
+  proxyUrl: string
+): Promise<unknown> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const requestInit: UndiciRequestInit = {
+      method: init.method,
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        ...(init.headers as Record<string, string> | undefined)
+      },
+      body: init.body === null ? undefined : (init.body as UndiciRequestInit['body']),
+      dispatcher: useProxy ? getProxyDispatcher(proxyUrl) : undefined,
+      signal: controller.signal
+    };
+
+    const response = await fetch(buildOpenAiCompatibleUrl(siteUrl, requestPath), {
+      ...requestInit
+    });
+    return parseJsonResponsePayload<unknown>(await toRawResponse(response));
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('请求超时');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function getPublicCheckinModelCacheTtlMs(): number {
+  const raw = Number(process.env.PUBLIC_CHECKIN_MODEL_CACHE_TTL_MS || DEFAULT_PUBLIC_CHECKIN_MODEL_CACHE_TTL_MS);
+  return Number.isFinite(raw) && raw >= 0 ? raw : DEFAULT_PUBLIC_CHECKIN_MODEL_CACHE_TTL_MS;
+}
+
+function buildPublicCheckinModelCacheKey(input: {
+  accountId: number;
+  siteUrl: string;
+  apiKey: string;
+  useProxy: boolean;
+  proxyUrl: string;
+}): string {
+  return JSON.stringify({
+    accountId: input.accountId,
+    siteUrl: normalizeUrl(input.siteUrl),
+    apiKey: input.apiKey,
+    useProxy: input.useProxy,
+    proxyUrl: input.useProxy ? getProxyUrl(input.proxyUrl) : ''
+  });
+}
+
+function clonePublicCheckinModelProbeResponse(
+  response: PublicCheckinModelProbeResponse
+): PublicCheckinModelProbeResponse {
+  return {
+    accountId: response.accountId,
+    siteName: response.siteName,
+    items: response.items.map((item) => ({ model: item.model }))
+  };
+}
+
+function getCachedPublicCheckinModelProbeResponse(
+  cacheKey: string,
+  now = Date.now()
+): PublicCheckinModelProbeResponse | null {
+  const cached = publicCheckinModelCache.get(cacheKey);
+  if (!cached) {
+    return null;
+  }
+  if (cached.expiresAt <= now) {
+    publicCheckinModelCache.delete(cacheKey);
+    return null;
+  }
+  return clonePublicCheckinModelProbeResponse(cached.response);
+}
+
+function setCachedPublicCheckinModelProbeResponse(
+  cacheKey: string,
+  response: PublicCheckinModelProbeResponse
+): void {
+  const ttlMs = getPublicCheckinModelCacheTtlMs();
+  if (ttlMs <= 0) {
+    return;
+  }
+  publicCheckinModelCache.set(cacheKey, {
+    expiresAt: Date.now() + ttlMs,
+    response: clonePublicCheckinModelProbeResponse(response)
+  });
+}
+
+async function requireModelApiKey(db: D1Database, accountId: number): Promise<{ row: AccountWithSite; apiKey: string; proxyUrl: string }> {
+  const row = await getAccountWithSite(db, accountId);
+  if (!row) {
+    throw new HTTPException(404, { message: '账号不存在' });
+  }
+
+  const apiKey = decryptAccountApiKey(row.account);
+  if (!apiKey) {
+    throw new HTTPException(400, { message: '请先在编辑账号中配置 API Key' });
+  }
+
+  const proxyUrl = row.account.use_proxy === 1 ? await getSystemProxyUrl(db) : '';
+  return { row, apiKey, proxyUrl };
 }
 
 async function resolveCredential(db: D1Database, accountId: number): Promise<AccountWithSite & { credential: PublicCheckinCredential }> {
@@ -1397,6 +1613,58 @@ async function testAccountConnection(db: D1Database, body: unknown): Promise<Bal
     success: false,
     errorMessage: `${result.errorMessage || '连接检测失败'}${describeCookieDiagnostics(credential, input.useProxy)}`
   };
+}
+
+async function testAccountModels(db: D1Database, accountId: number): Promise<PublicCheckinModelProbeResponse> {
+  const { row, apiKey, proxyUrl } = await requireModelApiKey(db, accountId);
+  const cacheKey = buildPublicCheckinModelCacheKey({
+    accountId,
+    siteUrl: row.site.url,
+    apiKey,
+    useProxy: row.account.use_proxy === 1,
+    proxyUrl
+  });
+  const cached = getCachedPublicCheckinModelProbeResponse(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const runningRequest = publicCheckinModelRequests.get(cacheKey);
+  if (runningRequest) {
+    return clonePublicCheckinModelProbeResponse(await runningRequest);
+  }
+
+  const request = (async (): Promise<PublicCheckinModelProbeResponse> => {
+    const payload = await requestOpenAiCompatibleJson(
+      row.site.url,
+      apiKey,
+      '/v1/models',
+      { method: 'GET' },
+      row.account.use_proxy === 1,
+      proxyUrl
+    );
+
+    const models = extractModelIds(payload);
+    if (models.length === 0) {
+      throw new HTTPException(502, { message: '该公益站未返回可用模型列表' });
+    }
+    const sortedModels = sortPublicCheckinModelIds(models);
+
+    const response: PublicCheckinModelProbeResponse = {
+      accountId,
+      siteName: row.site.name,
+      items: sortedModels.map((model) => ({ model }))
+    };
+    setCachedPublicCheckinModelProbeResponse(cacheKey, response);
+    return response;
+  })();
+
+  publicCheckinModelRequests.set(cacheKey, request);
+  try {
+    return clonePublicCheckinModelProbeResponse(await request);
+  } finally {
+    publicCheckinModelRequests.delete(cacheKey);
+  }
 }
 
 function describeCookieDiagnostics(credential: PublicCheckinCredential, useProxy: boolean): string {
@@ -1631,7 +1899,8 @@ export function registerPublicCheckinRoutes(app: Hono<any>): void {
     if (!row) throw new HTTPException(404, { message: '账号不存在' });
     return c.json({
       credentialType: row.account.credential_type,
-      credential: decryptAccountCredential(row.account)
+      credential: decryptAccountCredential(row.account),
+      apiKey: decryptAccountApiKey(row.account)
     });
   });
   app.put('/api/public-checkin/accounts/:id', async (c) => c.json(await updateAccount(c.env.DB, routeId(c.req.param('id')), await readBody(c))));
@@ -1640,6 +1909,7 @@ export function registerPublicCheckinRoutes(app: Hono<any>): void {
     return c.body(null, 204);
   });
   app.post('/api/public-checkin/accounts/:id/test', async (c) => c.json(await refreshBalanceForAccount(c.env.DB, routeId(c.req.param('id')))));
+  app.post('/api/public-checkin/accounts/:id/models/test', async (c) => c.json(await testAccountModels(c.env.DB, routeId(c.req.param('id')))));
 
   app.get('/api/public-checkin/sites', async (c) => c.json(await listSites(c.env.DB)));
   app.post('/api/public-checkin/sites', async (c) => c.json(await createSite(c.env.DB, await readBody(c)), 201));
@@ -1843,10 +2113,14 @@ export const publicCheckinTestHooks = {
   extractPlatformUserIdFromHeaders,
   normalizeCredentialInput,
   inferPublicCheckinPlatform,
+  getProxyUrl,
   mergeSetCookieValues,
   createAdapter,
   encryptCredential,
   decryptCredentialText,
+  decryptAccountApiKey,
+  extractModelIds,
+  sortPublicCheckinModelIds,
   solveAcwScV2,
   parseJsonResponsePayload,
   parseBalancePayload,

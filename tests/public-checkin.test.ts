@@ -48,6 +48,16 @@ test('encrypts and decrypts credentials with AES-256-GCM', () => {
   assert.equal(publicCheckinTestHooks.decryptCredentialText(encrypted), plaintext);
 });
 
+test('decrypts stored model api key with the same encryption helper', () => {
+  const encrypted = publicCheckinTestHooks.encryptCredential('sk-model-test');
+
+  assert.equal(
+    publicCheckinTestHooks.decryptAccountApiKey({ api_key_data: encrypted }),
+    'sk-model-test'
+  );
+  assert.equal(publicCheckinTestHooks.decryptAccountApiKey({ api_key_data: null }), '');
+});
+
 test('parses reward amounts from common CheckinHub messages', () => {
   assert.equal(parsePublicCheckinRewardAmount('签到成功，获得 1,024 点额度'), 1024);
   assert.equal(parsePublicCheckinRewardAmount('reward +3.5'), 3.5);
@@ -69,6 +79,70 @@ test('parses public checkin balances with NewAPI quota units', () => {
   assert.equal(publicCheckinTestHooks.parseBalancePayload({ success: true, data: { balance: 18.5 } }), 18.5);
   assert.equal(publicCheckinTestHooks.parseBalancePayload({ success: true, data: { balance: 1000000 } }), 2);
   assert.equal(publicCheckinTestHooks.parseBalancePayload({ success: true, data: { balance: null, quota: null } }), undefined);
+});
+
+test('extracts OpenAI compatible model ids from mixed payloads', () => {
+  assert.deepEqual(
+    publicCheckinTestHooks.extractModelIds({
+      data: [{ id: 'gpt-5.4' }, { id: 'gpt-5.4-mini' }, { id: 'gpt-5.4' }, 'claude-haiku']
+    }),
+    ['gpt-5.4', 'gpt-5.4-mini', 'claude-haiku']
+  );
+});
+
+test('sorts public checkin models by vendor priority then natural order', () => {
+  assert.deepEqual(
+    publicCheckinTestHooks.sortPublicCheckinModelIds([
+      'o4-mini',
+      'claude-sonnet-4-20250514',
+      'gemini-2.5-pro',
+      'gpt-5.5-pro',
+      'deepseek-chat',
+      'gpt-4.1',
+      'claude-opus-4-8',
+      'Gemini-2.0-flash',
+      'DeepSeek-reasoner',
+      'gpt-4',
+      'codex-mini'
+    ]),
+    [
+      'gpt-4',
+      'gpt-4.1',
+      'gpt-5.5-pro',
+      'claude-opus-4-8',
+      'claude-sonnet-4-20250514',
+      'Gemini-2.0-flash',
+      'gemini-2.5-pro',
+      'deepseek-chat',
+      'DeepSeek-reasoner',
+      'codex-mini',
+      'o4-mini'
+    ]
+  );
+});
+
+test('keeps non-gpt OpenAI models in the fallback group', () => {
+  assert.deepEqual(
+    publicCheckinTestHooks.sortPublicCheckinModelIds([
+      'o3-deep-research',
+      'claude-3.5-sonnet',
+      'gpt-5-mini',
+      'codex-1',
+      'gemini-1.5-pro'
+    ]),
+    [
+      'gpt-5-mini',
+      'claude-3.5-sonnet',
+      'gemini-1.5-pro',
+      'codex-1',
+      'o3-deep-research'
+    ]
+  );
+});
+
+test('normalizes system proxy urls before request usage', () => {
+  assert.equal(publicCheckinTestHooks.getProxyUrl('http:/127.0.0.1:7897'), 'http://127.0.0.1:7897/');
+  assert.equal(publicCheckinTestHooks.getProxyUrl('https://127.0.0.1:7897'), 'https://127.0.0.1:7897/');
 });
 
 test('preserves upstream JSON message without HTTP prefix', () => {

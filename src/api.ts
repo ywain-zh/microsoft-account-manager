@@ -28,6 +28,7 @@ import type {
   PublicCheckinBalanceResult,
   PublicCheckinBatchResult,
   PublicCheckinLogResponse,
+  PublicCheckinModelProbeResponse,
   PublicCheckinSettings,
   PublicCheckinSite,
   PublicCheckinStats,
@@ -36,6 +37,8 @@ import type {
   Sub2ApiDeleteAccountsResponse,
   Sub2ApiGptValidityResponse,
   Sub2ApiGroupsResponse,
+  Sub2ApiImportApiKeyRequest,
+  Sub2ApiImportApiKeyResponse,
   SystemBackupJobResponse,
   SystemProxyConfig,
   SystemProxyTestResult,
@@ -445,6 +448,12 @@ export const api = {
     return request<PublicCheckinAccountCredentialResponse>(`/api/public-checkin/accounts/${id}/credential`);
   },
 
+  testPublicCheckinModels(id: number): Promise<PublicCheckinModelProbeResponse> {
+    return request<PublicCheckinModelProbeResponse>(`/api/public-checkin/accounts/${id}/models/test`, {
+      method: 'POST'
+    });
+  },
+
   testPublicCheckinAccount(id: number): Promise<PublicCheckinBalanceResult> {
     return request<PublicCheckinBalanceResult>(`/api/public-checkin/accounts/${id}/test`, {
       method: 'POST'
@@ -551,6 +560,13 @@ export const api = {
 
   listSub2ApiGroups(): Promise<Sub2ApiGroupsResponse> {
     return request<Sub2ApiGroupsResponse>('/api/sub2api/groups');
+  },
+
+  importSub2ApiApiKeys(payload: Sub2ApiImportApiKeyRequest): Promise<Sub2ApiImportApiKeyResponse> {
+    return request<Sub2ApiImportApiKeyResponse>('/api/sub2api/accounts/import-apikey', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
   },
 
   getTranslationConfig(): Promise<{ item: TranslationConfig }> {

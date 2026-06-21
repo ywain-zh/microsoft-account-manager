@@ -90,7 +90,8 @@
                 <td>
                   <n-switch
                     :value="account.checkinEnabled"
-                    :loading="busyAccountId === account.id"
+                    :loading="isAccountActionLoading(account.id, 'toggle')"
+                    :disabled="isAccountBusy(account.id)"
                     @update:value="() => void toggleCheckin(account)"
                   />
                 </td>
@@ -106,11 +107,48 @@
                 </td>
                 <td>
                   <div class="account-actions">
-                    <n-button class="row-btn row-btn-blue" size="small" :loading="busyAccountId === account.id" @click="testAccount(account.id)">检测</n-button>
-                    <n-button class="row-btn row-btn-green" size="small" :loading="busyAccountId === account.id" @click="runAccountCheckin(account.id)">签到</n-button>
-                    <n-button class="row-btn row-btn-gray" size="small" :loading="busyAccountId === account.id" @click="refreshAccountBalance(account.id)">余额</n-button>
-                    <n-button class="row-btn row-btn-gray" size="small" @click="openEditModal(account)">编辑</n-button>
-                    <n-button class="row-btn row-btn-red" size="small" @click="confirmDelete(account)">删除</n-button>
+                    <n-button
+                      class="row-btn row-btn-blue"
+                      :class="{ 'is-loading-pretty': isAccountActionLoading(account.id, 'test') }"
+                      size="small"
+                      :loading="isAccountActionLoading(account.id, 'test')"
+                      :disabled="isAccountBusy(account.id)"
+                      @click="testAccount(account.id)"
+                    >
+                      <span class="row-btn-label">检测</span>
+                    </n-button>
+                    <n-button
+                      class="row-btn row-btn-violet"
+                      :class="{ 'is-loading-pretty': isAccountActionLoading(account.id, 'models') }"
+                      size="small"
+                      :loading="isAccountActionLoading(account.id, 'models')"
+                      :disabled="isAccountBusy(account.id)"
+                      @click="openModelsModal(account)"
+                    >
+                      <span class="row-btn-label">模型</span>
+                    </n-button>
+                    <n-button
+                      class="row-btn row-btn-green"
+                      :class="{ 'is-loading-pretty': isAccountActionLoading(account.id, 'checkin') }"
+                      size="small"
+                      :loading="isAccountActionLoading(account.id, 'checkin')"
+                      :disabled="isAccountBusy(account.id)"
+                      @click="runAccountCheckin(account.id)"
+                    >
+                      <span class="row-btn-label">签到</span>
+                    </n-button>
+                    <n-button
+                      class="row-btn row-btn-gray"
+                      :class="{ 'is-loading-pretty': isAccountActionLoading(account.id, 'balance') }"
+                      size="small"
+                      :loading="isAccountActionLoading(account.id, 'balance')"
+                      :disabled="isAccountBusy(account.id)"
+                      @click="refreshAccountBalance(account.id)"
+                    >
+                      <span class="row-btn-label">余额</span>
+                    </n-button>
+                    <n-button class="row-btn row-btn-gray" size="small" :disabled="isAccountBusy(account.id)" @click="openEditModal(account)">编辑</n-button>
+                    <n-button class="row-btn row-btn-red" size="small" :disabled="isAccountBusy(account.id)" @click="confirmDelete(account)">删除</n-button>
                   </div>
                 </td>
               </tr>
@@ -154,6 +192,17 @@
             placeholder="可从浏览器 Network 请求头 New-Api-User 中复制"
             :input-props="{ inputmode: 'numeric', autocomplete: 'off' }"
           />
+        </n-form-item>
+
+        <n-form-item :label="editingAccount ? '模型检测 API Key（留空则不修改）' : '模型检测 API Key'">
+          <SecretInput
+            v-model:value="accountForm.apiKey"
+            placeholder="仅用于模型检测，填写站点的 API Key"
+            :input-props="{ autocomplete: 'off' }"
+          />
+          <template #feedback>
+            该 Key 仅用于“模型”按钮的模型列表和测速，不影响签到、余额和连接检测。
+          </template>
         </n-form-item>
 
         <div class="switch-row">
@@ -224,6 +273,37 @@
         </div>
       </template>
     </n-modal>
+
+    <n-modal v-model:show="modelsModalVisible" preset="card" class="public-checkin-modal models-modal" :title="modelsModalTitle" style="width: min(680px, 94vw); border-radius: 12px;">
+      <div class="models-modal-body">
+        <div class="models-summary">
+          <span>共 {{ modelProbeItems.length }} 个模型</span>
+          <span v-if="modelsLoading" class="models-summary-loading">正在读取...</span>
+        </div>
+
+        <div v-if="modelsLoading && modelProbeItems.length === 0" class="models-loading-list">
+          <div v-for="index in 6" :key="index" class="model-skeleton-row"></div>
+        </div>
+
+        <div v-else-if="modelProbeItems.length === 0" class="table-empty">暂无模型数据</div>
+
+        <div v-else class="models-list">
+          <div v-for="item in modelProbeItems" :key="item.model" class="model-row is-ok">
+            <div class="model-row-main">
+              <span class="model-row-indicator"></span>
+              <span class="model-row-name">{{ item.model }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <div class="modal-footer">
+          <div class="modal-footer-actions">
+            <n-button @click="modelsModalVisible = false">关闭</n-button>
+          </div>
+        </div>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -252,6 +332,7 @@ import { usePublicCheckinConsole } from '../state/public-checkin-console';
 import type {
   PublicCheckinAccount,
   PublicCheckinLog,
+  PublicCheckinModelProbeItem,
   PublicCheckinStatus,
   PublicCheckinSettings
 } from '../types';
@@ -267,6 +348,7 @@ const {
   accountSaving,
   settingsSaving,
   busyAccountId,
+  busyAccountAction,
   globalBusy,
   hasAccounts,
   formatMoney,
@@ -279,6 +361,7 @@ const {
   deleteAccount,
   toggleCheckin,
   testAccount,
+  testAccountModels,
   runAccountCheckin,
   refreshAccountBalance,
   runAllCheckin,
@@ -291,8 +374,12 @@ const {
 const accountModalVisible = ref(false);
 const logModalVisible = ref(false);
 const settingsModalVisible = ref(false);
+const modelsModalVisible = ref(false);
 const connectionTesting = ref(false);
 const editingAccount = ref<PublicCheckinAccount | null>(null);
+const modelsLoading = ref(false);
+const modelsModalSiteName = ref('');
+const modelProbeItems = ref<PublicCheckinModelProbeItem[]>([]);
 const accountPage = ref(1);
 const accountPageSize = 12;
 const logPage = ref(1);
@@ -302,6 +389,7 @@ const accountForm = reactive({
   siteName: '',
   siteUrl: '',
   key: '',
+  apiKey: '',
   platformUserId: '',
   checkinEnabled: true,
   useProxy: true
@@ -346,6 +434,8 @@ const pagedAccounts = computed(() => {
   return accounts.value.slice(start, start + accountPageSize);
 });
 const logPageCount = computed(() => Math.max(1, Math.ceil(logs.total / logPageSize)));
+type PublicCheckinBusyAction = NonNullable<typeof busyAccountAction.value>;
+const modelsModalTitle = computed(() => modelsModalSiteName.value ? `模型管理 · ${modelsModalSiteName.value}` : '模型管理');
 
 const logColumns: DataTableColumns<PublicCheckinLog> = [
   {
@@ -433,10 +523,19 @@ function formatSignedMoney(value: number | null | undefined): string {
   return `${value < 0 ? '-' : '+'}${absolute}`;
 }
 
+function isAccountBusy(accountId: number): boolean {
+  return busyAccountId.value === accountId;
+}
+
+function isAccountActionLoading(accountId: number, action: PublicCheckinBusyAction): boolean {
+  return busyAccountId.value === accountId && busyAccountAction.value === action;
+}
+
 function resetAccountForm(): void {
   accountForm.siteName = '';
   accountForm.siteUrl = '';
   accountForm.key = '';
+  accountForm.apiKey = '';
   accountForm.platformUserId = '';
   accountForm.checkinEnabled = true;
   accountForm.useProxy = true;
@@ -455,6 +554,7 @@ async function openEditModal(row: PublicCheckinAccount): Promise<void> {
   accountForm.checkinEnabled = row.checkinEnabled;
   accountForm.useProxy = row.useProxy;
   accountForm.key = '';
+  accountForm.apiKey = '';
   accountForm.platformUserId = '';
   accountModalVisible.value = true;
   try {
@@ -467,6 +567,7 @@ async function openEditModal(row: PublicCheckinAccount): Promise<void> {
         password: credential.credential.password || ''
       });
     }
+    accountForm.apiKey = credential.apiKey || '';
     accountForm.platformUserId = credential.credential.platformUserId ? String(credential.credential.platformUserId) : '';
   } catch (error) {
     handleApiError(error);
@@ -484,6 +585,29 @@ async function submitAccount(): Promise<void> {
     if (ok) accountModalVisible.value = false;
   } catch (error) {
     message.error(error instanceof Error ? error.message : '保存失败');
+  }
+}
+
+async function openModelsModal(account: PublicCheckinAccount): Promise<void> {
+  if (!account.hasApiKey) {
+    message.warning(`请先在“${account.site.name}”账号的编辑弹窗里配置 API Key`);
+    return;
+  }
+
+  modelsModalSiteName.value = account.site.name;
+  modelProbeItems.value = [];
+  modelsModalVisible.value = true;
+  modelsLoading.value = true;
+
+  try {
+    const result = await testAccountModels(account.id);
+    modelsModalSiteName.value = result.siteName;
+    modelProbeItems.value = result.items;
+  } catch (error) {
+    modelsModalVisible.value = false;
+    handleApiError(error);
+  } finally {
+    modelsLoading.value = false;
   }
 }
 
@@ -765,7 +889,7 @@ onMounted(() => {
 
 .accounts-table {
   width: 100%;
-  min-width: 1060px;
+  min-width: 1000px;
   table-layout: fixed;
   border-collapse: collapse;
   text-align: left;
@@ -788,23 +912,27 @@ onMounted(() => {
 }
 
 .accounts-table .col-site {
-  width: 180px;
+  width: 168px;
 }
 
 .accounts-table .col-balance {
-  width: 140px;
+  width: 132px;
 }
 
 .accounts-table .col-switch {
-  width: 140px;
+  width: 126px;
+}
+
+.accounts-table .col-status {
+  width: 248px;
 }
 
 .accounts-table .col-actions {
-  width: 300px;
+  width: 372px;
 }
 
 .accounts-table th:last-child {
-  text-align: right;
+  text-align: left;
 }
 
 .accounts-table tbody tr {
@@ -825,7 +953,7 @@ onMounted(() => {
 }
 
 .accounts-table td:last-child {
-  text-align: right;
+  text-align: left;
 }
 
 .table-empty {
@@ -923,21 +1051,89 @@ onMounted(() => {
 .account-actions {
   display: inline-flex;
   flex-wrap: nowrap;
-  justify-content: flex-end;
-  gap: 8px;
+  justify-content: flex-start;
+  gap: 6px;
   white-space: nowrap;
 }
 
 .account-actions :deep(.row-btn) {
+  position: relative;
   height: 32px;
   min-width: 48px;
-  padding: 0 10px !important;
+  padding: 0 8px !important;
   border: 0 !important;
   border-radius: 6px;
   box-shadow: none !important;
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
-  transition: background-color 0.2s ease, color 0.2s ease;
+  transition: background-color 0.22s ease, color 0.22s ease, transform 0.18s ease, box-shadow 0.22s ease;
+}
+
+.account-actions :deep(.row-btn:not(.n-button--disabled):hover) {
+  transform: translateY(-1px);
+}
+
+.account-actions :deep(.row-btn:not(.n-button--disabled):focus-visible) {
+  outline: 2px solid rgba(79, 70, 229, 0.18);
+  outline-offset: 2px;
+}
+
+.account-actions :deep(.row-btn .n-button__content) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.account-actions :deep(.row-btn .row-btn-label) {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.account-actions :deep(.row-btn.is-loading-pretty .row-btn-label) {
+  opacity: 0;
+  transform: translateY(3px);
+}
+
+.account-actions :deep(.row-btn.is-loading-pretty .n-button__icon) {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 !important;
+}
+
+.account-actions :deep(.row-btn.is-loading-pretty .n-base-loading) {
+  width: 26px;
+  height: 10px;
+}
+
+.account-actions :deep(.row-btn.is-loading-pretty .n-base-loading__container) {
+  display: flex;
+  width: 26px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.account-actions :deep(.row-btn.is-loading-pretty .n-base-loading__container > span) {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.28;
+  transform: scale(0.72);
+  animation: row-btn-pulse 0.95s ease-in-out infinite;
+}
+
+.account-actions :deep(.row-btn.is-loading-pretty .n-base-loading__container > span:nth-child(2)) {
+  animation-delay: 0.12s;
+}
+
+.account-actions :deep(.row-btn.is-loading-pretty .n-base-loading__container > span:nth-child(3)) {
+  animation-delay: 0.24s;
+}
+
+.account-actions :deep(.row-btn.n-button--disabled) {
+  opacity: 0.7;
 }
 
 .account-actions :deep(.row-btn-blue) {
@@ -948,6 +1144,7 @@ onMounted(() => {
 .account-actions :deep(.row-btn-blue:hover) {
   background: #e0e7ff !important;
   color: #3730a3 !important;
+  box-shadow: 0 8px 18px rgba(79, 70, 229, 0.12);
 }
 
 .account-actions :deep(.row-btn-green) {
@@ -957,6 +1154,18 @@ onMounted(() => {
 
 .account-actions :deep(.row-btn-green:hover) {
   background: #059669 !important;
+  box-shadow: 0 8px 18px rgba(16, 185, 129, 0.16);
+}
+
+.account-actions :deep(.row-btn-violet) {
+  background: #f3e8ff !important;
+  color: #7c3aed !important;
+}
+
+.account-actions :deep(.row-btn-violet:hover) {
+  background: #ede9fe !important;
+  color: #6d28d9 !important;
+  box-shadow: 0 8px 18px rgba(124, 58, 237, 0.14);
 }
 
 .account-actions :deep(.row-btn-gray) {
@@ -967,6 +1176,7 @@ onMounted(() => {
 .account-actions :deep(.row-btn-gray:hover) {
   background: #e5e7eb !important;
   color: #111827 !important;
+  box-shadow: 0 8px 18px rgba(148, 163, 184, 0.12);
 }
 
 .account-actions :deep(.row-btn-red) {
@@ -977,6 +1187,39 @@ onMounted(() => {
 .account-actions :deep(.row-btn-red:hover) {
   background: #fee2e2 !important;
   color: #b91c1c !important;
+  box-shadow: 0 8px 18px rgba(239, 68, 68, 0.12);
+}
+
+@keyframes row-btn-pulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.28;
+    transform: scale(0.72);
+  }
+
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-actions :deep(.row-btn),
+  .account-actions :deep(.row-btn .row-btn-label),
+  .account-actions :deep(.row-btn.is-loading-pretty .n-base-loading__container > span) {
+    transition: none;
+    animation: none;
+  }
+
+  .account-actions :deep(.row-btn.is-loading-pretty .row-btn-label) {
+    opacity: 0;
+    transform: none;
+  }
+
+  .account-actions :deep(.row-btn:not(.n-button--disabled):hover) {
+    transform: none;
+  }
 }
 
 .accounts-pagination {
@@ -1000,6 +1243,103 @@ onMounted(() => {
   background: #4f46e5 !important;
   color: #ffffff !important;
   border-color: #4f46e5 !important;
+}
+
+.models-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.models-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #64748b;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.models-summary-loading {
+  color: #7c3aed;
+}
+
+.models-loading-list,
+.models-list {
+  display: flex;
+  max-height: min(56vh, 520px);
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+}
+
+.model-skeleton-row {
+  height: 50px;
+  border-radius: 10px;
+  background:
+    linear-gradient(90deg, rgba(226, 232, 240, 0.7) 25%, rgba(241, 245, 249, 0.96) 50%, rgba(226, 232, 240, 0.7) 75%);
+  background-size: 200% 100%;
+  animation: models-skeleton-shimmer 1.2s linear infinite;
+}
+
+.model-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 14px 16px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.18s ease;
+}
+
+.model-row:hover {
+  transform: translateY(-1px);
+}
+
+.model-row.is-ok {
+  border-color: #dcfce7;
+  box-shadow: 0 10px 18px rgba(16, 185, 129, 0.08);
+}
+
+.model-row-main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.model-row-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.model-row.is-ok .model-row-indicator {
+  color: #10b981;
+}
+
+.model-row-name {
+  overflow: hidden;
+  color: #0f172a;
+  font-family: var(--font-number);
+  font-size: 15px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes models-skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+
+  100% {
+    background-position: -200% 0;
+  }
 }
 
 .account-form {

@@ -156,6 +156,34 @@ export interface CloudMailPublicShareInboxResponse {
 export interface Sub2ApiConfig {
   baseUrl: string;
   adminApiKey: string;
+  targetGroupName?: string;
+}
+
+export interface Sub2ApiImportApiKeyItemInput {
+  baseUrl: string;
+  apiKey: string;
+  name?: string;
+}
+
+export interface Sub2ApiImportApiKeyRequest {
+  rawText?: string;
+  items?: Sub2ApiImportApiKeyItemInput[];
+  dryRun?: boolean;
+}
+
+export interface Sub2ApiImportApiKeyResultItem {
+  name: string;
+  baseUrl: string;
+  status: 'created' | 'skipped' | 'failed';
+  message: string;
+}
+
+export interface Sub2ApiImportApiKeyResponse {
+  success: boolean;
+  created: number;
+  skipped: number;
+  failed: number;
+  items: Sub2ApiImportApiKeyResultItem[];
 }
 
 export type PublicCheckinPlatform = 'new-api' | 'one-api' | 'onehub' | 'anyrouter';
@@ -188,6 +216,7 @@ export interface PublicCheckinAccount {
   label: string;
   credentialType: PublicCheckinCredentialType;
   hasCredential: boolean;
+  hasApiKey: boolean;
   balance: number | null;
   balanceUpdatedAt: number | null;
   checkinEnabled: boolean;
@@ -208,6 +237,7 @@ export interface PublicCheckinAccountPayload {
   label: string;
   credentialType: PublicCheckinCredentialType;
   credential?: PublicCheckinCredential | null;
+  apiKey?: string | null;
   checkinEnabled: boolean;
   useProxy: boolean;
   status?: PublicCheckinAccountStatus;
@@ -264,6 +294,17 @@ export interface PublicCheckinRunResult {
 export interface PublicCheckinAccountCredentialResponse {
   credentialType: PublicCheckinCredentialType;
   credential: PublicCheckinCredential;
+  apiKey?: string;
+}
+
+export interface PublicCheckinModelProbeItem {
+  model: string;
+}
+
+export interface PublicCheckinModelProbeResponse {
+  accountId: number;
+  siteName: string;
+  items: PublicCheckinModelProbeItem[];
 }
 
 export interface PublicCheckinBatchResult {

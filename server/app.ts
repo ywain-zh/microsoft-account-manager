@@ -16,6 +16,12 @@ import {
 } from './runtime/system-backup.js';
 import { registerNotificationRoutes } from './runtime/notifications.js';
 import { registerPublicCheckinRoutes } from './runtime/public-checkin.js';
+import {
+  normalizeImportApiKey,
+  normalizeImportBaseUrl,
+  normalizeSub2ApiImportCandidates,
+  parseSub2ApiImportText
+} from '../shared/sub2api-import.js';
 
 type Bindings = {
   DB: D1Database;
@@ -238,6 +244,7 @@ interface CloudMailRemoteEnvelope<T> {
 interface Sub2ApiConfig {
   baseUrl: string;
   adminApiKey: string;
+  targetGroupName?: string;
 }
 
 type TranslationProvider = 'openai' | 'deeplx';
@@ -301,11 +308,43 @@ interface Sub2ApiAccountItem {
   status: string;
   errorMessage: string | null;
   planType: Sub2ApiPlanType;
+  platform?: string;
+  type?: string;
+  baseUrl?: string | null;
+  apiKey?: string | null;
+  groupIds?: number[];
 }
 
 interface Sub2ApiGroupItem {
   id: number | null;
   name: string;
+}
+
+interface Sub2ApiImportApiKeyItemInput {
+  baseUrl?: unknown;
+  apiKey?: unknown;
+  name?: unknown;
+}
+
+interface Sub2ApiImportApiKeyRequest {
+  rawText?: unknown;
+  items?: unknown;
+  dryRun?: unknown;
+}
+
+interface Sub2ApiImportApiKeyResultItem {
+  name: string;
+  baseUrl: string;
+  status: 'created' | 'skipped' | 'failed';
+  message: string;
+}
+
+interface Sub2ApiImportApiKeyResponse {
+  success: boolean;
+  created: number;
+  skipped: number;
+  failed: number;
+  items: Sub2ApiImportApiKeyResultItem[];
 }
 
 interface Sub2ApiDetectionSummary {
@@ -540,7 +579,8 @@ const SUB2API_PAGE_SIZE = 100;
 
 const DEFAULT_SUB2API_CONFIG: Sub2ApiConfig = {
   baseUrl: '',
-  adminApiKey: ''
+  adminApiKey: '',
+  targetGroupName: ''
 };
 
 const TRANSLATION_CONFIG_KEY = 'translation_config';
@@ -1679,6 +1719,15 @@ app.post('/api/sub2api/accounts/gpt-valid-check', async (c) => {
   return c.json(result);
 });
 
+app.post('/api/sub2api/accounts/import-apikey', async (c) => {
+  const config = await getSub2ApiConfig(c.env.DB);
+  ensureSub2ApiConfigured(config);
+
+  const body = await readJson<Sub2ApiImportApiKeyRequest>(c);
+  const result = await importSub2ApiApiKeyAccounts(config, body);
+  return c.json(result);
+});
+
 app.get('/api/translation/config', async (c) => {
   const item = await getTranslationConfig(c.env.DB);
   return c.json({ item });
@@ -2669,8 +2718,13 @@ function normalizeCloudMailDomains(value: unknown): string[] {
 function normalizeSub2ApiConfig(input: Partial<Sub2ApiConfig>): Sub2ApiConfig {
   return {
     baseUrl: normalizeSub2ApiBaseUrl(input.baseUrl),
-    adminApiKey: asText(input.adminApiKey).trim()
+    adminApiKey: asText(input.adminApiKey).trim(),
+    targetGroupName: normalizeSub2ApiTargetGroupName(input.targetGroupName)
   };
+}
+
+function normalizeSub2ApiTargetGroupName(value: unknown): string {
+  return asText(value).trim();
 }
 
 function normalizeTranslationConfig(input: Partial<TranslationConfig>): TranslationConfig {
@@ -3847,6 +3901,198 @@ function normalizeSub2ApiGroup(value: unknown): Sub2ApiGroupItem | null {
   };
 }
 
+async function importSub2ApiApiKeyAccounts(
+  config: Sub2ApiConfig,
+  request: Sub2ApiImportApiKeyRequest
+): Promise<Sub2ApiImportApiKeyResponse> {
+  const candidates = normalizeSub2ApiImportRequest(request);
+  const targetGroup = await resolveSub2ApiTargetGroup(config);
+  const existingAccounts = await listAllSub2ApiAccounts(config);
+  const dryRun = request.dryRun === true;
+  const items: Sub2ApiImportApiKeyResultItem[] = [];
+
+  for (const candidate of candidates) {
+    const duplicate = findDuplicateSub2ApiImportAccount(existingAccounts, candidate, targetGroup.id);
+    if (duplicate) {
+      items.push({
+        name: candidate.name,
+        baseUrl: candidate.baseUrl,
+        status: 'skipped',
+        message: duplicate.message
+      });
+      continue;
+    }
+
+    if (dryRun) {
+      items.push({
+        name: candidate.name,
+        baseUrl: candidate.baseUrl,
+        status: 'created',
+        message: '预检查通过'
+      });
+      continue;
+    }
+
+    try {
+      await createSub2ApiOpenAiApiKeyAccount(config, {
+        ...candidate,
+        groupId: targetGroup.id
+      });
+      items.push({
+        name: candidate.name,
+        baseUrl: candidate.baseUrl,
+        status: 'created',
+        message: '创建成功'
+      });
+
+      existingAccounts.push({
+        id: -items.length,
+        name: candidate.name,
+        email: null,
+        status: '',
+        errorMessage: null,
+        planType: '',
+        platform: 'openai',
+        type: 'apikey',
+        baseUrl: candidate.baseUrl,
+        apiKey: candidate.apiKey,
+        groupIds: [targetGroup.id]
+      });
+    } catch (error) {
+      items.push({
+        name: candidate.name,
+        baseUrl: candidate.baseUrl,
+        status: 'failed',
+        message: getErrorMessage(error)
+      });
+    }
+  }
+
+  const created = items.filter((item) => item.status === 'created').length;
+  const skipped = items.filter((item) => item.status === 'skipped').length;
+  const failed = items.filter((item) => item.status === 'failed').length;
+
+  return {
+    success: failed === 0,
+    created,
+    skipped,
+    failed,
+    items
+  };
+}
+
+function normalizeSub2ApiImportRequest(request: Sub2ApiImportApiKeyRequest): Array<{
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+}> {
+  const rawItems = Array.isArray(request.items)
+    ? normalizeSub2ApiImportCandidates(request.items as Sub2ApiImportApiKeyItemInput[])
+    : parseSub2ApiImportText(asText(request.rawText));
+
+  const items = rawItems
+    .filter((item) => item.status === 'valid')
+    .map((item) => ({
+      name: item.name || item.baseUrl,
+      baseUrl: normalizeImportBaseUrl(item.baseUrl),
+      apiKey: normalizeImportApiKey(item.apiKey)
+    }))
+    .filter((item) => item.baseUrl && item.apiKey);
+
+  const normalized = normalizeSub2ApiImportCandidates(items)
+    .filter((item) => item.status === 'valid')
+    .map((item) => ({
+      name: item.name || item.baseUrl,
+      baseUrl: item.baseUrl,
+      apiKey: item.apiKey
+    }));
+
+  if (normalized.length === 0) {
+    throw new HTTPException(400, { message: '未解析到可导入的 Base URL 和 API Key' });
+  }
+
+  return normalized;
+}
+
+async function resolveSub2ApiTargetGroup(config: Sub2ApiConfig): Promise<{ id: number; name: string }> {
+  const targetGroupName = normalizeSub2ApiTargetGroupName(config.targetGroupName);
+  if (!targetGroupName) {
+    throw new HTTPException(400, { message: '请先在 Sub2API 配置信息里同步并选择目标分组' });
+  }
+
+  const groups = await listSub2ApiGroups(config);
+  const target = groups.find((item) => item.name.toLowerCase() === targetGroupName.toLowerCase());
+  if (!target) {
+    throw new HTTPException(400, { message: `目标分组「${targetGroupName}」不存在，请重新同步分组并保存配置` });
+  }
+
+  if (!target.id) {
+    throw new HTTPException(400, { message: `目标分组「${target.name}」缺少远端 ID，请重新同步分组` });
+  }
+
+  return {
+    id: target.id,
+    name: target.name
+  };
+}
+
+function findDuplicateSub2ApiImportAccount(
+  accounts: Sub2ApiAccountItem[],
+  candidate: { name: string; baseUrl: string; apiKey: string },
+  targetGroupId: number
+): { message: string } | null {
+  for (const account of accounts) {
+    const platform = asText(account.platform).trim().toLowerCase();
+    const type = asText(account.type).trim().toLowerCase();
+    if (platform && platform !== 'openai') {
+      continue;
+    }
+    if (type && type !== 'apikey') {
+      continue;
+    }
+
+    const accountBaseUrl = normalizeImportBaseUrl(account.baseUrl);
+    if (!accountBaseUrl || accountBaseUrl !== candidate.baseUrl) {
+      continue;
+    }
+
+    const accountApiKey = normalizeImportApiKey(account.apiKey);
+    if (accountApiKey && accountApiKey === candidate.apiKey) {
+      return { message: `已存在并跳过：账号 ${account.name} 与当前 Base URL + API Key 相同` };
+    }
+
+    if (!accountApiKey && account.name === candidate.name && account.groupIds?.includes(targetGroupId)) {
+      return { message: `已存在并跳过：远端未返回明文 Key，已按同分组、同名、同 Base URL 判重` };
+    }
+  }
+
+  return null;
+}
+
+async function createSub2ApiOpenAiApiKeyAccount(
+  config: Sub2ApiConfig,
+  item: { name: string; baseUrl: string; apiKey: string; groupId: number }
+): Promise<void> {
+  await requestSub2Api<unknown>(config, '/api/v1/admin/accounts', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: item.name,
+      notes: 'Imported from API-SUB2API',
+      platform: 'openai',
+      type: 'apikey',
+      credentials: {
+        base_url: item.baseUrl,
+        api_key: item.apiKey
+      },
+      group_ids: [item.groupId],
+      proxy_id: null,
+      concurrency: 10,
+      priority: 1,
+      rate_multiplier: 1
+    })
+  });
+}
+
 function normalizeSystemProxyConfig(input: Partial<SystemProxyConfig>): SystemProxyConfig {
   return {
     proxyUrl: asText(input.proxyUrl).trim()
@@ -4533,6 +4779,8 @@ function normalizeSub2ApiAccount(value: unknown): Sub2ApiAccountItem | null {
   }
 
   const credentials = toRecord(record.credentials);
+  const platform = asText(record.platform).trim().toLowerCase();
+  const type = asText(record.type ?? record.account_type ?? record.accountType).trim().toLowerCase();
   return {
     id,
     name:
@@ -4540,8 +4788,71 @@ function normalizeSub2ApiAccount(value: unknown): Sub2ApiAccountItem | null {
     email: extractSub2ApiRecordEmail(record),
     status: asText(record.status).trim(),
     errorMessage: toNullableText(record.error_message ?? record.errorMessage ?? record.message),
-    planType: normalizeSub2ApiPlanType(credentials?.chatgpt_plan_type ?? credentials?.plan_type)
+    planType: normalizeSub2ApiPlanType(credentials?.chatgpt_plan_type ?? credentials?.plan_type),
+    platform,
+    type,
+    baseUrl: firstNonEmptyText(
+      credentials?.base_url,
+      credentials?.baseUrl,
+      record.base_url,
+      record.baseUrl,
+      record.api_base_url,
+      record.apiBaseUrl
+    ) || null,
+    apiKey: firstNonEmptyText(
+      credentials?.api_key,
+      credentials?.apiKey,
+      record.api_key,
+      record.apiKey,
+      record.key
+    ) || null,
+    groupIds: extractSub2ApiGroupIds(record)
   };
+}
+
+function extractSub2ApiGroupIds(record: Record<string, unknown>): number[] {
+  const values = [
+    record.group_ids,
+    record.groupIds,
+    record.groups,
+    record.account_groups,
+    record.accountGroups
+  ];
+  const ids = new Set<number>();
+
+  for (const value of values) {
+    collectSub2ApiGroupIds(value, ids, 0);
+  }
+
+  return Array.from(ids);
+}
+
+function collectSub2ApiGroupIds(value: unknown, ids: Set<number>, depth: number): void {
+  if (depth > 3 || value === null || value === undefined) {
+    return;
+  }
+
+  if (typeof value === 'number' || typeof value === 'string') {
+    const id = Number.parseInt(asText(value).trim(), 10);
+    if (Number.isSafeInteger(id) && id > 0) {
+      ids.add(id);
+    }
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectSub2ApiGroupIds(item, ids, depth + 1);
+    }
+    return;
+  }
+
+  const record = toRecord(value);
+  if (!record) {
+    return;
+  }
+
+  collectSub2ApiGroupIds(record.id ?? record.group_id ?? record.groupId, ids, depth + 1);
 }
 
 function normalizeExportEmail(value: unknown): string {
