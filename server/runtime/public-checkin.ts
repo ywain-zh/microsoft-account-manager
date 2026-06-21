@@ -1279,6 +1279,19 @@ function sortPublicCheckinModelIds(models: string[]): string[] {
   });
 }
 
+function buildPublicCheckinModelProbeResponse(
+  accountId: number,
+  siteName: string,
+  payload: unknown
+): PublicCheckinModelProbeResponse {
+  const sortedModels = sortPublicCheckinModelIds(extractModelIds(payload));
+  return {
+    accountId,
+    siteName,
+    items: sortedModels.map((model) => ({ model }))
+  };
+}
+
 async function requestOpenAiCompatibleJson(
   siteUrl: string,
   apiKey: string,
@@ -1650,18 +1663,14 @@ async function testAccountModels(db: D1Database, accountId: number): Promise<Pub
       proxyUrl
     );
 
-    const models = extractModelIds(payload);
-    if (models.length === 0) {
-      throw new HTTPException(502, { message: '该公益站未返回可用模型列表' });
-    }
-    const sortedModels = sortPublicCheckinModelIds(models);
-
-    const response: PublicCheckinModelProbeResponse = {
+    const response = buildPublicCheckinModelProbeResponse(
       accountId,
-      siteName: row.site.name,
-      items: sortedModels.map((model) => ({ model }))
-    };
-    setCachedPublicCheckinModelProbeResponse(cacheKey, response);
+      row.site.name,
+      payload
+    );
+    if (response.items.length > 0) {
+      setCachedPublicCheckinModelProbeResponse(cacheKey, response);
+    }
     return response;
   })();
 
@@ -2128,6 +2137,7 @@ export const publicCheckinTestHooks = {
   decryptAccountApiKey,
   extractModelIds,
   sortPublicCheckinModelIds,
+  buildPublicCheckinModelProbeResponse,
   solveAcwScV2,
   parseJsonResponsePayload,
   parseBalancePayload,

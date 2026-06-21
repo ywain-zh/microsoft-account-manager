@@ -285,7 +285,9 @@
           <div v-for="index in 6" :key="index" class="model-skeleton-row"></div>
         </div>
 
-        <div v-else-if="modelProbeItems.length === 0" class="table-empty">暂无模型数据</div>
+        <div v-else-if="modelProbeItems.length === 0" class="table-empty">
+          未读取到可用模型。该站点暂时没有返回模型列表，请确认 API Key 有模型权限，或稍后再试。
+        </div>
 
         <div v-else class="models-list">
           <div v-for="item in modelProbeItems" :key="item.model" class="model-row is-ok">

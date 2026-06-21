@@ -90,6 +90,38 @@ test('extracts OpenAI compatible model ids from mixed payloads', () => {
   );
 });
 
+test('builds an empty public checkin model response without throwing', () => {
+  assert.deepEqual(
+    publicCheckinTestHooks.buildPublicCheckinModelProbeResponse(7, 'Empty Models', { data: [] }),
+    {
+      accountId: 7,
+      siteName: 'Empty Models',
+      items: []
+    }
+  );
+  assert.deepEqual(
+    publicCheckinTestHooks.buildPublicCheckinModelProbeResponse(8, 'Unknown Shape', { ok: true }),
+    {
+      accountId: 8,
+      siteName: 'Unknown Shape',
+      items: []
+    }
+  );
+});
+
+test('builds sorted public checkin model response items', () => {
+  assert.deepEqual(
+    publicCheckinTestHooks.buildPublicCheckinModelProbeResponse(9, 'Mixed Models', {
+      data: [{ id: 'claude-3.5-sonnet' }, { id: 'gpt-4.1' }, { id: 'gpt-4' }]
+    }),
+    {
+      accountId: 9,
+      siteName: 'Mixed Models',
+      items: [{ model: 'gpt-4' }, { model: 'gpt-4.1' }, { model: 'claude-3.5-sonnet' }]
+    }
+  );
+});
+
 test('sorts public checkin models by vendor priority then natural order', () => {
   assert.deepEqual(
     publicCheckinTestHooks.sortPublicCheckinModelIds([
