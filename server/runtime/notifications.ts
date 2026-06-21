@@ -183,10 +183,19 @@ function normalizeStoredNotificationConfig(input: unknown): StoredNotificationCo
 }
 
 function toPublicNotificationConfig(config: StoredNotificationConfig): NotificationConfig {
+  let botToken = '';
+  if (config.telegram.botTokenEncrypted) {
+    try {
+      botToken = decryptSecret(config.telegram.botTokenEncrypted);
+    } catch {
+      botToken = '';
+    }
+  }
+
   return {
     telegram: {
       enabled: config.telegram.enabled,
-      botToken: '',
+      botToken,
       botTokenConfigured: Boolean(config.telegram.botTokenEncrypted),
       clearBotToken: false,
       chatId: config.telegram.chatId,

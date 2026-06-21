@@ -815,7 +815,7 @@ function normalizeForm(): TranslationConfig {
 
 function assignNotificationConfig(config: NotificationConfig): void {
   notificationForm.telegram.enabled = Boolean(config.telegram.enabled);
-  notificationForm.telegram.botToken = '';
+  notificationForm.telegram.botToken = config.telegram.botToken || '';
   notificationForm.telegram.botTokenConfigured = Boolean(config.telegram.botTokenConfigured);
   notificationForm.telegram.clearBotToken = false;
   notificationForm.telegram.chatId = config.telegram.chatId || '';

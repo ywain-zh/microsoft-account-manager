@@ -65,13 +65,14 @@ async function createDb(): Promise<D1Database> {
   return new MemoryD1Database() as unknown as D1Database;
 }
 
-test('saves Telegram notification config without exposing bot token', async () => {
+test('saves and returns Telegram notification config with hidden-by-default token value', async () => {
   const db = await createDb();
   try {
+    const botToken = '123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef';
     const saved = await updateNotificationConfig(db, {
       telegram: {
         enabled: true,
-        botToken: '123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef',
+        botToken,
         chatId: '10086',
         useSystemProxy: true
       }
@@ -79,7 +80,11 @@ test('saves Telegram notification config without exposing bot token', async () =
 
     assert.equal(saved.telegram.enabled, true);
     assert.equal(saved.telegram.botTokenConfigured, true);
-    assert.equal(saved.telegram.botToken, '');
+    assert.equal(saved.telegram.botToken, botToken);
+
+    const loaded = await getNotificationConfig(db);
+    assert.equal(loaded.telegram.botTokenConfigured, true);
+    assert.equal(loaded.telegram.botToken, botToken);
 
     const preserved = await updateNotificationConfig(db, {
       telegram: {
@@ -91,6 +96,7 @@ test('saves Telegram notification config without exposing bot token', async () =
     });
 
     assert.equal(preserved.telegram.botTokenConfigured, true);
+    assert.equal(preserved.telegram.botToken, botToken);
     assert.equal(preserved.telegram.chatId, '-1001234567890');
     assert.equal(preserved.telegram.useSystemProxy, false);
 
@@ -104,6 +110,7 @@ test('saves Telegram notification config without exposing bot token', async () =
     });
 
     assert.equal(cleared.telegram.botTokenConfigured, false);
+    assert.equal(cleared.telegram.botToken, '');
   } finally {
     db.close();
   }
