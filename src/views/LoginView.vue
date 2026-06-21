@@ -46,8 +46,7 @@
                 v-model:value="form.password"
                 autocomplete="current-password"
                 class="modern-input"
-                type="password"
-                show-password-on="click"
+                type="text"
                 placeholder="密码"
               >
                 <template #prefix>

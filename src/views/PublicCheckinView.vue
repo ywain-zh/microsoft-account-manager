@@ -164,12 +164,25 @@
 
     <n-modal v-model:show="accountModalVisible" preset="card" class="public-checkin-modal account-modal" :title="editingAccount ? '编辑账号' : '添加账号'" style="width: min(720px, 94vw); border-radius: 12px;">
       <n-form label-placement="top" class="account-form designed-form" autocomplete="off">
+        <div class="form-autofill-guard" aria-hidden="true">
+          <input type="text" tabindex="-1" autocomplete="username" name="public-checkin-autofill-username" />
+          <input type="password" tabindex="-1" autocomplete="new-password" name="public-checkin-autofill-password" />
+        </div>
+
         <div class="form-grid">
           <n-form-item label="站点名称">
-            <n-input v-model:value="accountForm.siteName" placeholder="例如：公益站 A" />
+            <n-input
+              v-model:value="accountForm.siteName"
+              placeholder="例如：公益站 A"
+              :input-props="accountSiteNameInputProps"
+            />
           </n-form-item>
           <n-form-item label="站点 URL">
-            <n-input v-model:value="accountForm.siteUrl" placeholder="https://new-api.example.com" />
+            <n-input
+              v-model:value="accountForm.siteUrl"
+              placeholder="https://new-api.example.com"
+              :input-props="accountSiteUrlInputProps"
+            />
           </n-form-item>
         </div>
 
@@ -178,6 +191,7 @@
             v-model:value="accountForm.key"
             type="textarea"
             :autosize="{ minRows: 5, maxRows: 8 }"
+            :input-props="accountKeyInputProps"
             placeholder='Cookie: session=...; acw_tc=...
 或 access_token
 或 {"username":"username","password":"password"}'
@@ -191,7 +205,7 @@
           <SecretInput
             v-model:value="accountForm.platformUserId"
             placeholder="可从浏览器 Network 请求头 New-Api-User 中复制"
-            :input-props="{ inputmode: 'numeric', autocomplete: 'off' }"
+            :input-props="accountPlatformUserIdInputProps"
           />
         </n-form-item>
 
@@ -199,7 +213,7 @@
           <SecretInput
             v-model:value="accountForm.apiKey"
             placeholder="仅用于模型检测，填写站点的 API Key"
-            :input-props="{ autocomplete: 'off' }"
+            :input-props="accountApiKeyInputProps"
           />
           <template #feedback>
             该 Key 仅用于“模型”按钮的模型列表和测速，不影响签到、余额和连接检测。
@@ -386,6 +400,37 @@ const accountPage = ref(1);
 const accountPageSize = 12;
 const logPage = ref(1);
 const logPageSize = 10;
+
+const accountSiteNameInputProps = {
+  autocomplete: 'off',
+  name: 'public-checkin-site-name',
+  spellcheck: false
+};
+
+const accountSiteUrlInputProps = {
+  autocomplete: 'off',
+  name: 'public-checkin-site-url',
+  spellcheck: false
+};
+
+const accountKeyInputProps = {
+  autocomplete: 'new-password',
+  name: 'public-checkin-credential-key',
+  spellcheck: false
+};
+
+const accountPlatformUserIdInputProps = {
+  autocomplete: 'off',
+  inputmode: 'numeric',
+  name: 'public-checkin-platform-user-id',
+  spellcheck: false
+};
+
+const accountApiKeyInputProps = {
+  autocomplete: 'new-password',
+  name: 'public-checkin-model-api-key',
+  spellcheck: false
+};
 
 const accountForm = reactive({
   siteName: '',
