@@ -73,6 +73,29 @@ test('infers checkin reward from positive balance delta', () => {
   assert.equal(publicCheckinTestHooks.inferPublicCheckinRewardFromBalanceDelta(0.1, 0.3), 0.2);
 });
 
+test('carries successful checkin balance details for notifications', () => {
+  assert.deepEqual(
+    publicCheckinTestHooks.buildCheckinResultForNotification(
+      {
+        success: true,
+        rewardNote: '签到成功'
+      },
+      'success',
+      12.65,
+      32.84,
+      45.49
+    ),
+    {
+      success: true,
+      reward: 12.65,
+      rewardNote: '签到成功',
+      status: 'success',
+      balanceBefore: 32.84,
+      balanceAfter: 45.49
+    }
+  );
+});
+
 test('parses public checkin balances with NewAPI quota units', () => {
   assert.equal(publicCheckinTestHooks.parseBalancePayload({ success: true, data: { balance: 1000000001319, quota: 9000000 } }), 18);
   assert.equal(publicCheckinTestHooks.parseBalancePayload({ success: true, data: { quota: 500000 } }), 1);

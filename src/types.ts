@@ -289,6 +289,8 @@ export interface PublicCheckinRunResult {
   reward?: number | null;
   rewardNote?: string | null;
   errorMessage?: string | null;
+  balanceBefore?: number | null;
+  balanceAfter?: number | null;
 }
 
 export interface PublicCheckinAccountCredentialResponse {

@@ -31,6 +31,10 @@ class MemoryStatement {
       const value = this.database.settings.get(String(this.values[0]));
       return value == null ? null : { value } as T;
     }
+    if (/SELECT value FROM public_checkin_settings/i.test(this.query)) {
+      const value = this.database.publicCheckinSettings.get(String(this.values[0]));
+      return value == null ? null : { value } as T;
+    }
     throw new Error(`Unsupported first query: ${this.query}`);
   }
 
@@ -49,6 +53,7 @@ class MemoryStatement {
 
 class MemoryD1Database {
   readonly settings = new Map<string, string>();
+  readonly publicCheckinSettings = new Map<string, string>();
 
   prepare(query: string): MemoryStatement {
     return new MemoryStatement(this, query);
@@ -209,6 +214,7 @@ test('builds public checkin summary message with failures and reward total', () 
   ], new Date('2026-06-19T00:00:00Z'));
 
   assert.match(message, /公益站每日签到汇总/);
+  assert.match(message, /时间：2026\/6\/19 08:00:00/);
   assert.match(message, /总数：3/);
   assert.match(message, /成功：1/);
   assert.match(message, /失败：1/);
@@ -216,6 +222,144 @@ test('builds public checkin summary message with failures and reward total', () 
   assert.match(message, /奖励合计：2.50/);
   assert.match(message, /站点 B：access token 无效/);
   assert.match(message, /站点 C：已有签到任务在进行中/);
+  assert.match(message, /<blockquote expandable>/);
+  assert.match(message, /1\. 站点 A：总额度 -，今日新增 \+2\.50/);
+  assert.match(message, /<\/blockquote>/);
+});
+
+test('builds collapsed public checkin success details with balances and HTML escaping', () => {
+  const message = notificationTestHooks.buildPublicCheckinSummaryMessage([
+    {
+      accountId: 1,
+      siteName: '站点 <A> & Co',
+      result: {
+        success: true,
+        status: 'success',
+        reward: 12.65,
+        balanceBefore: 32.84,
+        balanceAfter: 45.49
+      }
+    },
+    {
+      accountId: 2,
+      siteName: '站点 B',
+      result: {
+        success: true,
+        status: 'success',
+        reward: null,
+        balanceBefore: 10,
+        balanceAfter: 11.25
+      }
+    },
+    {
+      accountId: 3,
+      siteName: '站点 C',
+      result: {
+        success: true,
+        status: 'success',
+        reward: null,
+        balanceBefore: null,
+        balanceAfter: null
+      }
+    }
+  ], new Date('2026-06-19T00:00:00Z'));
+
+  assert.match(message, /成功明细：\n<blockquote expandable>/);
+  assert.match(message, /1\. 站点 &lt;A&gt; &amp; Co：总额度 45\.49，今日新增 \+12\.65/);
+  assert.match(message, /2\. 站点 B：总额度 11\.25，今日新增 \+1\.25/);
+  assert.match(message, /3\. 站点 C：总额度 -，今日新增 -/);
+});
+
+test('keeps abnormal public checkin details visible outside collapsed success block', () => {
+  const message = notificationTestHooks.buildPublicCheckinSummaryMessage([
+    {
+      accountId: 1,
+      siteName: '站点 A',
+      result: {
+        success: true,
+        status: 'success',
+        reward: 1,
+        balanceAfter: 2
+      }
+    },
+    {
+      accountId: 2,
+      siteName: '坏站 <B>',
+      result: {
+        success: false,
+        status: 'failed',
+        errorMessage: 'token <失效>'
+      }
+    }
+  ], new Date('2026-06-19T00:00:00Z'));
+  const abnormalIndex = message.indexOf('异常明细：');
+  const collapsedIndex = message.indexOf('<blockquote expandable>');
+
+  assert.ok(abnormalIndex >= 0);
+  assert.ok(collapsedIndex > abnormalIndex);
+  assert.match(message, /坏站 &lt;B&gt;：token &lt;失效&gt;/);
+});
+
+test('builds Telegram send payload with HTML parse mode', () => {
+  assert.deepEqual(
+    notificationTestHooks.buildTelegramSendMessageBody({
+      chatId: '-100123',
+      text: '<b>hello</b>'
+    }),
+    {
+      chat_id: '-100123',
+      text: '<b>hello</b>',
+      parse_mode: 'HTML',
+      disable_web_page_preview: true
+    }
+  );
+});
+
+test('limits overlong public checkin summary messages', () => {
+  const items = Array.from({ length: 500 }, (_, index) => ({
+    accountId: index + 1,
+    siteName: `站点 ${index + 1}`,
+    result: {
+      success: true,
+      status: 'success' as const,
+      reward: 1,
+      balanceAfter: 100 + index
+    }
+  }));
+  const message = notificationTestHooks.buildPublicCheckinSummaryMessage(items);
+
+  assert.ok(message.length <= 3900);
+  assert.match(message, /还有 \d+ 条成功未展示。/);
+  assert.match(message, /<\/blockquote>$/);
+});
+
+test('uses configured public checkin timezone for notification timestamps', async () => {
+  const db = await createDb();
+  try {
+    (db as unknown as MemoryD1Database).publicCheckinSettings.set('timezone', 'Asia/Shanghai');
+    const timezone = await notificationTestHooks.getPublicCheckinNotificationTimezone(db);
+    const message = notificationTestHooks.buildPublicCheckinSummaryMessage(
+      [],
+      new Date('2026-06-19T00:00:00Z'),
+      timezone
+    );
+
+    assert.equal(timezone, 'Asia/Shanghai');
+    assert.match(message, /时间：2026\/6\/19 08:00:00/);
+  } finally {
+    db.close();
+  }
+});
+
+test('formats public checkin error notification with configured timezone', () => {
+  const message = notificationTestHooks.buildPublicCheckinErrorMessage(
+    new Error('boom'),
+    new Date('2026-06-19T00:00:00Z'),
+    'Asia/Shanghai'
+  );
+
+  assert.match(message, /公益站定时签到异常/);
+  assert.match(message, /时间：2026\/6\/19 08:00:00/);
 });
 
 test('limits Telegram message length', () => {

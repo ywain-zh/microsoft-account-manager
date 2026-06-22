@@ -35,6 +35,8 @@ export interface PublicCheckinNotificationItem {
     reward?: number | null;
     rewardNote?: string | null;
     errorMessage?: string | null;
+    balanceBefore?: number | null;
+    balanceAfter?: number | null;
   };
 }
 
@@ -53,6 +55,7 @@ const NOTIFICATION_CONFIG_KEY = 'notification_config';
 const SYSTEM_PROXY_CONFIG_KEY = 'system_proxy_config';
 const TELEGRAM_API_BASE = 'https://api.telegram.org';
 const TELEGRAM_MESSAGE_LIMIT = 3900;
+const DEFAULT_PUBLIC_CHECKIN_TIMEZONE = 'Asia/Shanghai';
 
 const DEFAULT_STORED_NOTIFICATION_CONFIG: StoredNotificationConfig = {
   telegram: {
@@ -318,6 +321,15 @@ function parseTelegramError(text: string): string {
   return text.trim().slice(0, 200) || 'Telegram API 返回错误';
 }
 
+function buildTelegramSendMessageBody(input: { chatId: string; text: string }): Record<string, unknown> {
+  return {
+    chat_id: input.chatId,
+    text: limitTelegramText(input.text),
+    parse_mode: 'HTML',
+    disable_web_page_preview: true
+  };
+}
+
 async function deliverTelegramMessage(input: {
   botToken: string;
   chatId: string;
@@ -336,11 +348,7 @@ async function deliverTelegramMessage(input: {
         'Content-Type': 'application/json',
         'User-Agent': 'Wangyue-Notification/1.0'
       },
-      body: JSON.stringify({
-        chat_id: input.chatId,
-        text: limitTelegramText(input.text),
-        disable_web_page_preview: true
-      })
+      body: JSON.stringify(buildTelegramSendMessageBody({ chatId: input.chatId, text: input.text }))
     } satisfies UndiciRequestInit);
     const text = await response.text();
     if (!response.ok) {
@@ -425,8 +433,42 @@ function formatReward(value: number): string {
   return value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function formatDateTime(date: Date): string {
-  return date.toLocaleString('zh-CN', { hour12: false });
+function escapeTelegramHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function isValidTimeZone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeNotificationTimeZone(value: unknown): string {
+  const timezone = asString(value).trim();
+  if (timezone && isValidTimeZone(timezone)) return timezone;
+  return isValidTimeZone(DEFAULT_PUBLIC_CHECKIN_TIMEZONE) ? DEFAULT_PUBLIC_CHECKIN_TIMEZONE : 'Asia/Shanghai';
+}
+
+async function getPublicCheckinNotificationTimezone(db: D1Database): Promise<string> {
+  const row = await dbFirst<{ value: string }>(
+    db,
+    'SELECT value FROM public_checkin_settings WHERE key = ? LIMIT 1',
+    ['timezone']
+  ).catch(() => null);
+  return normalizeNotificationTimeZone(row?.value);
+}
+
+function formatDateTime(date: Date, timezone = DEFAULT_PUBLIC_CHECKIN_TIMEZONE): string {
+  return date.toLocaleString('zh-CN', {
+    hour12: false,
+    timeZone: normalizeNotificationTimeZone(timezone)
+  });
 }
 
 function truncateLine(value: string, maxLength = 180): string {
@@ -435,13 +477,74 @@ function truncateLine(value: string, maxLength = 180): string {
   return `${text.slice(0, maxLength - 3)}...`;
 }
 
+function escapedNotificationLabel(item: PublicCheckinNotificationItem): string {
+  return escapeTelegramHtml(truncateLine(notificationAccountLabel(item), 80));
+}
+
+function formatOptionalAmount(value: unknown, options: { signed?: boolean } = {}): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '-';
+  const formatted = formatReward(value);
+  return options.signed && value >= 0 ? `+${formatted}` : formatted;
+}
+
+function inferPublicCheckinNotificationIncrement(item: PublicCheckinNotificationItem): number | null {
+  const reward = item.result?.reward;
+  if (typeof reward === 'number' && Number.isFinite(reward)) return reward;
+
+  const before = item.result?.balanceBefore;
+  const after = item.result?.balanceAfter;
+  if (
+    typeof before === 'number'
+    && Number.isFinite(before)
+    && typeof after === 'number'
+    && Number.isFinite(after)
+  ) {
+    const delta = Number((after - before).toFixed(6));
+    return delta > 0 ? delta : null;
+  }
+
+  return null;
+}
+
+function formatPublicCheckinSuccessDetailLine(item: PublicCheckinNotificationItem, index: number): string {
+  const total = formatOptionalAmount(item.result?.balanceAfter);
+  const increment = formatOptionalAmount(inferPublicCheckinNotificationIncrement(item), { signed: true });
+  return `${index + 1}. ${escapedNotificationLabel(item)}：总额度 ${total}，今日新增 ${increment}`;
+}
+
+function appendExpandableSuccessDetails(lines: string[], successItems: PublicCheckinNotificationItem[]): void {
+  if (successItems.length === 0) return;
+
+  lines.push('', '成功明细：', '<blockquote expandable>');
+  let hiddenCount = 0;
+  for (let index = 0; index < successItems.length; index += 1) {
+    const line = formatPublicCheckinSuccessDetailLine(successItems[index], index);
+    const remaining = successItems.length - index - 1;
+    const hiddenLine = remaining > 0 ? `还有 ${remaining} 条成功未展示。` : '';
+    const candidate = [...lines, line, ...(hiddenLine ? [hiddenLine] : []), '</blockquote>'].join('\n');
+    if (candidate.length > TELEGRAM_MESSAGE_LIMIT) {
+      hiddenCount = successItems.length - index;
+      break;
+    }
+    lines.push(line);
+  }
+  if (hiddenCount > 0) {
+    lines.push(`还有 ${hiddenCount} 条成功未展示。`);
+  }
+  lines.push('</blockquote>');
+}
+
 function limitTelegramText(value: string, maxLength = TELEGRAM_MESSAGE_LIMIT): string {
   if (value.length <= maxLength) return value;
   const suffix = '\n...内容过长，已截断';
   return `${value.slice(0, Math.max(0, maxLength - suffix.length))}${suffix}`;
 }
 
-export function buildPublicCheckinSummaryMessage(items: PublicCheckinNotificationItem[], now = new Date()): string {
+export function buildPublicCheckinSummaryMessage(
+  items: PublicCheckinNotificationItem[],
+  now = new Date(),
+  timezone = DEFAULT_PUBLIC_CHECKIN_TIMEZONE
+): string {
   const successItems = items.filter((item) => item.result?.status === 'success' && item.result.success !== false);
   const failedItems = items.filter((item) => item.result?.status === 'failed' || item.result?.success === false);
   const skippedItems = items.filter((item) => item.result?.status === 'skipped');
@@ -452,7 +555,7 @@ export function buildPublicCheckinSummaryMessage(items: PublicCheckinNotificatio
 
   const lines = [
     '公益站每日签到汇总',
-    `时间：${formatDateTime(now)}`,
+    `时间：${formatDateTime(now, timezone)}`,
     `总数：${items.length}`,
     `成功：${successItems.length}`,
     `失败：${failedItems.length}`,
@@ -465,22 +568,28 @@ export function buildPublicCheckinSummaryMessage(items: PublicCheckinNotificatio
     lines.push('', '异常明细：');
     abnormalItems.slice(0, 10).forEach((item, index) => {
       const reason = item.result?.errorMessage || item.result?.rewardNote || '未知原因';
-      lines.push(`${index + 1}. ${notificationAccountLabel(item)}：${truncateLine(reason)}`);
+      lines.push(`${index + 1}. ${escapedNotificationLabel(item)}：${escapeTelegramHtml(truncateLine(reason))}`);
     });
     if (abnormalItems.length > 10) {
       lines.push(`还有 ${abnormalItems.length - 10} 条异常未展示。`);
     }
   }
 
+  appendExpandableSuccessDetails(lines, successItems);
+
   return limitTelegramText(lines.join('\n'));
 }
 
-export function buildPublicCheckinErrorMessage(error: unknown, now = new Date()): string {
+export function buildPublicCheckinErrorMessage(
+  error: unknown,
+  now = new Date(),
+  timezone = DEFAULT_PUBLIC_CHECKIN_TIMEZONE
+): string {
   const message = error instanceof Error ? error.message : asString(error).trim() || '未知异常';
   return limitTelegramText([
     '公益站定时签到异常',
-    `时间：${formatDateTime(now)}`,
-    `错误：${truncateLine(message, 1200)}`
+    `时间：${formatDateTime(now, timezone)}`,
+    `错误：${escapeTelegramHtml(truncateLine(message, 1200))}`
   ].join('\n'));
 }
 
@@ -488,14 +597,16 @@ export async function sendPublicCheckinSchedulerSummaryNotification(
   db: D1Database,
   items: PublicCheckinNotificationItem[]
 ): Promise<void> {
-  const result = await sendConfiguredTelegramMessage(db, buildPublicCheckinSummaryMessage(items));
+  const timezone = await getPublicCheckinNotificationTimezone(db);
+  const result = await sendConfiguredTelegramMessage(db, buildPublicCheckinSummaryMessage(items, new Date(), timezone));
   if (!result.ok && result.message !== 'Telegram 通知未启用') {
     throw new Error(result.message);
   }
 }
 
 export async function sendPublicCheckinSchedulerErrorNotification(db: D1Database, error: unknown): Promise<void> {
-  const result = await sendConfiguredTelegramMessage(db, buildPublicCheckinErrorMessage(error));
+  const timezone = await getPublicCheckinNotificationTimezone(db);
+  const result = await sendConfiguredTelegramMessage(db, buildPublicCheckinErrorMessage(error, new Date(), timezone));
   if (!result.ok && result.message !== 'Telegram 通知未启用') {
     throw new Error(result.message);
   }
@@ -522,6 +633,9 @@ export const notificationTestHooks = {
   validateTelegramBotToken,
   validateStoredNotificationConfig,
   mergeNotificationConfig,
+  buildTelegramSendMessageBody,
+  escapeTelegramHtml,
+  getPublicCheckinNotificationTimezone,
   buildPublicCheckinSummaryMessage,
   buildPublicCheckinErrorMessage,
   limitTelegramText

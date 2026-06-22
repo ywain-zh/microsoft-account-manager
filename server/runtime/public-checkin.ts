@@ -109,6 +109,8 @@ interface CheckinResult {
   reward?: number | null;
   rewardNote?: string | null;
   errorMessage?: string | null;
+  balanceBefore?: number | null;
+  balanceAfter?: number | null;
 }
 
 interface BalanceResult {
@@ -622,6 +624,22 @@ function inferPublicCheckinRewardFromBalanceDelta(previousBalance: unknown, late
   const delta = after - before;
   if (!Number.isFinite(delta) || delta <= 0) return null;
   return Math.round(delta * 1_000_000) / 1_000_000;
+}
+
+function buildCheckinResultForNotification(
+  result: CheckinResult,
+  status: PublicCheckinStatus,
+  reward: number | null,
+  balanceBefore?: number | null,
+  balanceAfter?: number | null
+): CheckinResult & { status: PublicCheckinStatus } {
+  return {
+    ...result,
+    status,
+    reward,
+    balanceBefore,
+    balanceAfter
+  };
 }
 
 function parseFiniteNumber(value: unknown): number | undefined {
@@ -1513,13 +1531,18 @@ async function executeCheckin(db: D1Database, accountId: number, triggeredBy: Pu
   const result = await adapter.checkin(credential);
   const status: PublicCheckinStatus = result.success ? 'success' : 'failed';
   let reward = result.reward ?? null;
+  const balanceBefore = row.account.balance == null ? null : Number(row.account.balance);
+  let balanceAfter: number | null = null;
 
   if (result.success) {
     await setAccountError(db, accountId, null, 'active');
     try {
       const balanceResult = await refreshBalanceForAccount(db, accountId);
+      if (balanceResult.success && typeof balanceResult.balance === 'number' && Number.isFinite(balanceResult.balance)) {
+        balanceAfter = balanceResult.balance;
+      }
       if (reward == null && balanceResult.success) {
-        reward = inferPublicCheckinRewardFromBalanceDelta(row.account.balance, balanceResult.balance);
+        reward = inferPublicCheckinRewardFromBalanceDelta(balanceBefore, balanceResult.balance);
       }
     } catch {}
     await insertCheckinLog(db, {
@@ -1542,7 +1565,9 @@ async function executeCheckin(db: D1Database, accountId: number, triggeredBy: Pu
     await setAccountError(db, accountId, result.errorMessage || '签到失败', 'error');
   }
 
-  return { ...result, status, reward };
+  return result.success
+    ? buildCheckinResultForNotification(result, status, reward, balanceBefore, balanceAfter)
+    : buildCheckinResultForNotification(result, status, reward);
 }
 
 async function withAccountMutex<T>(key: string, locked: () => Promise<T>, task: () => Promise<T>): Promise<T> {
@@ -2142,5 +2167,6 @@ export const publicCheckinTestHooks = {
   parseJsonResponsePayload,
   parseBalancePayload,
   inferPublicCheckinRewardFromBalanceDelta,
+  buildCheckinResultForNotification,
   validateCronExpression
 };
