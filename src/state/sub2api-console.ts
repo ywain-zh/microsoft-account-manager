@@ -580,6 +580,9 @@ async function loadInitialData(force = false): Promise<void> {
 
   initialLoadPromise = (async () => {
     await loadConfig();
+    if (hasConfiguredSub2Api.value) {
+      await syncSub2ApiGroups({ silent: true });
+    }
     initialDataLoaded.value = true;
   })();
 
@@ -632,8 +635,17 @@ async function syncSub2ApiGroups(options: { silent?: boolean } = {}): Promise<vo
       ? `已同步 ${items.length} 个分组 · ${formatStatusTime(syncedAt)}`
       : `同步完成，未读取到分组 · ${formatStatusTime(syncedAt)}`;
 
-    if (!selectedSub2ApiGroupName.value && items.length > 0) {
+    const currentGroupName = selectedSub2ApiGroupName.value;
+    const currentGroupExists = currentGroupName
+      ? items.some((item) => item.name.toLowerCase() === currentGroupName.toLowerCase())
+      : false;
+
+    if (items.length > 0 && (!currentGroupName || !currentGroupExists)) {
       selectedSub2ApiGroupName.value = items[0].name;
+    }
+
+    if (items.length === 0) {
+      selectedSub2ApiGroupName.value = null;
     }
 
     if (!options.silent) {
@@ -691,15 +703,9 @@ function ensureSub2ApiImportReady(): boolean {
   }
 
   const currentTargetGroupName = getCurrentTargetGroupName();
-  const savedTargetGroupName = getSavedTargetGroupName();
 
   if (!currentTargetGroupName) {
-    message.warning('请先在配置信息里同步并选择目标分组');
-    return false;
-  }
-
-  if (!savedTargetGroupName || savedTargetGroupName !== currentTargetGroupName) {
-    message.warning('目标分组已选择，请先点击“保存配置”后再导入');
+    message.warning('请先同步并选择目标分组');
     return false;
   }
 
@@ -742,6 +748,7 @@ async function submitImport(options: { dryRun?: boolean } = {}): Promise<Sub2Api
   try {
     const response = await api.importSub2ApiApiKeys({
       items,
+      targetGroupName: getCurrentTargetGroupName(),
       dryRun: options.dryRun === true
     });
     importResult.value = response;
@@ -775,6 +782,12 @@ async function startDetection(): Promise<void> {
     return;
   }
 
+  const targetGroupName = getCurrentTargetGroupName();
+  if (!targetGroupName) {
+    message.warning('请先同步并选择要检测的分组');
+    return;
+  }
+
   if (runLoading.value) {
     return;
   }
@@ -789,7 +802,10 @@ async function startDetection(): Promise<void> {
   currentAbortController = abortController;
 
   try {
-    const response = await api.startSub2ApiCheck({ modelId: modelId.value }, abortController.signal);
+    const response = await api.startSub2ApiCheck({
+      modelId: modelId.value,
+      targetGroupName
+    }, abortController.signal);
     await consumeEventStream(response);
     message.success('Sub2API 账号检测完成');
   } catch (error) {

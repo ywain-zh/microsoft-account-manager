@@ -168,6 +168,7 @@ export interface Sub2ApiImportApiKeyItemInput {
 export interface Sub2ApiImportApiKeyRequest {
   rawText?: string;
   items?: Sub2ApiImportApiKeyItemInput[];
+  targetGroupName?: string;
   dryRun?: boolean;
 }
 

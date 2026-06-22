@@ -6,83 +6,120 @@
       content-style="padding: 24px; display: flex; flex-direction: column; gap: 20px;"
     >
       <div class="toolbar">
-        <span class="tag-pill blue">鉴权: x-api-key</span>
-        <div class="model-picker">
-          <span class="model-picker-label">模型</span>
-          <n-select
-            v-model:value="modelId"
-            class="model-picker-select"
-            filterable
-            tag
-            size="small"
-            :options="modelOptions"
-            :disabled="runLoading"
-            placeholder="选择或输入模型"
-          />
-          <n-button
-            size="small"
-            :loading="modelLoading"
-            :disabled="runLoading || !hasConfiguredSub2Api"
-            @click="refreshModels"
-          >
-            获取模型
-          </n-button>
+        <div class="toolbar-filters">
+          <div class="control-field group-control">
+            <span class="control-label">分组</span>
+            <n-select
+              v-model:value="selectedSub2ApiGroupName"
+              class="group-picker-select"
+              :options="groupOptions"
+              :loading="groupLoading"
+              filterable
+              clearable
+              size="small"
+              :disabled="runLoading || !hasConfiguredSub2Api"
+              placeholder="选择分组"
+            />
+            <n-button
+              size="small"
+              :loading="groupLoading"
+              :disabled="runLoading || configSaving || !hasConfiguredSub2Api"
+              @click="syncSub2ApiGroups()"
+            >
+              同步
+            </n-button>
+            <span class="control-status" :class="{ 'is-error': groupSyncError }">
+              {{ groupSyncStatusText }}
+            </span>
+          </div>
+
+          <div class="control-field model-control">
+            <span class="control-label">模型</span>
+            <n-select
+              v-model:value="modelId"
+              class="model-picker-select"
+              filterable
+              tag
+              size="small"
+              :options="modelOptions"
+              :disabled="runLoading"
+              placeholder="模型"
+            />
+            <n-button
+              size="small"
+              :loading="modelLoading"
+              :disabled="runLoading || !hasConfiguredSub2Api"
+              @click="refreshModels"
+            >
+              获取
+            </n-button>
+          </div>
         </div>
-        <button class="btn btn-default" type="button" @click="openConfigModal">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="3"></circle>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-          </svg>
-          配置信息
-        </button>
 
-        <button
-          class="btn btn-success"
-          type="button"
-          :disabled="runLoading || !hasConfiguredSub2Api"
-          @click="startDetection"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <polygon points="5 3 19 12 5 21 5 3"></polygon>
-          </svg>
-          {{ runLoading ? '检测中...' : '开始检测' }}
-        </button>
+        <div class="toolbar-actions">
+          <button class="btn btn-default" type="button" @click="openConfigModal">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M12 2v3"></path>
+              <path d="M12 19v3"></path>
+              <path d="m4.93 4.93 2.12 2.12"></path>
+              <path d="m16.95 16.95 2.12 2.12"></path>
+              <path d="M2 12h3"></path>
+              <path d="M19 12h3"></path>
+              <path d="m4.93 19.07 2.12-2.12"></path>
+              <path d="m16.95 7.05 2.12-2.12"></path>
+            </svg>
+            连接配置
+          </button>
 
-        <button
-          class="btn btn-import"
-          type="button"
-          :disabled="runLoading || !hasConfiguredSub2Api"
-          @click="openImportModal"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M12 3v12"></path>
-            <path d="m7 10 5 5 5-5"></path>
-            <path d="M5 21h14"></path>
-          </svg>
-          导入 API-SUB2API
-        </button>
+          <button
+            class="btn btn-success"
+            type="button"
+            :disabled="runLoading || !hasConfiguredSub2Api || !hasSelectedTargetGroup"
+            @click="startDetection"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+            {{ runLoading ? '检测中...' : '开始检测' }}
+          </button>
 
-        <button
-          class="btn btn-danger-ghost"
-          type="button"
-          :disabled="runLoading || deleteLoading || !hasUnauthorizedCandidates"
-          @click="clearUnauthorizedAccounts"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <polyline points="3 6 5 6 21 6"></polyline>
-            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-          </svg>
-          {{ deleteLoading ? '清理中...' : `一键清除 401 账号 (${unauthorizedCandidates.length})` }}
-        </button>
+          <button
+            class="btn btn-import"
+            type="button"
+            :disabled="runLoading || !hasConfiguredSub2Api || !hasSelectedTargetGroup"
+            @click="openImportModal"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 3v12"></path>
+              <path d="m7 10 5 5 5-5"></path>
+              <path d="M5 21h14"></path>
+            </svg>
+            导入 API
+          </button>
 
-        <button class="btn btn-default" type="button" :disabled="logs.length === 0" @click="clearLogs">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <polyline points="1 4 1 10 7 10"></polyline>
-            <polyline points="23 20 23 14 17 14"></polyline>
-            <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path>
-          </svg>
-          清空日志
-        </button>
+          <button
+            class="btn btn-danger-ghost"
+            type="button"
+            :disabled="runLoading || deleteLoading || !hasUnauthorizedCandidates"
+            @click="clearUnauthorizedAccounts"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+            {{ deleteLoading ? '清理中...' : `清理 401 (${unauthorizedCandidates.length})` }}
+          </button>
+
+          <button class="btn btn-quiet" type="button" :disabled="logs.length === 0" @click="clearLogs">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="1 4 1 10 7 10"></polyline>
+              <polyline points="23 20 23 14 17 14"></polyline>
+              <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path>
+            </svg>
+            清空日志
+          </button>
+        </div>
       </div>
 
       <div class="stats-grid">
@@ -135,7 +172,7 @@
 
     <n-modal v-model:show="showConfigModal" preset="card" title="连接配置" style="width: min(520px, 94vw); border-radius: 10px;">
       <div class="config-modal-desc">
-        所有检测请求都由本项目后端发起，页面不会直接暴露 Sub2API 管理员 Key。
+        检测请求由本项目后端发起，页面不会直接暴露管理员 Key。
       </div>
       <n-form label-placement="top" autocomplete="off" class="config-modal-form">
         <div class="form-autofill-guard" aria-hidden="true">
@@ -154,36 +191,11 @@
         <n-form-item label="管理员 API Key">
           <SecretInput
             v-model:value="configForm.adminApiKey"
-            placeholder="请输入 x-api-key"
+            placeholder="请输入管理员 API Key"
             :input-props="apiKeyInputProps"
             @keyup.enter="handleSaveConfig"
           />
         </n-form-item>
-
-        <div class="config-grid">
-          <n-form-item label="目标分组" class="config-grid-main">
-            <div class="group-sync-field">
-              <n-select
-                v-model:value="selectedSub2ApiGroupName"
-                :options="groupOptions"
-                :loading="groupLoading"
-                filterable
-                clearable
-                placeholder="选择 Sub2API 分组"
-              />
-              <n-button
-                :loading="groupLoading"
-                :disabled="configSaving || !hasConfiguredSub2Api"
-                @click="syncSub2ApiGroups()"
-              >
-                同步
-              </n-button>
-            </div>
-            <div class="group-sync-status" :class="{ 'is-error': groupSyncError }">
-              {{ groupSyncStatusText }}
-            </div>
-          </n-form-item>
-        </div>
       </n-form>
       <template #footer>
         <div class="config-modal-footer">
@@ -428,6 +440,7 @@ const {
   invalidImportPreviewItems,
   importResult,
   hasConfiguredSub2Api,
+  hasSelectedTargetGroup,
   hasUnauthorizedCandidates,
   hasAbnormalCandidates,
   showUnauthorizedAccountsModal,
@@ -586,12 +599,16 @@ async function handleSubmitImport(): Promise<void> {
 }
 
 async function handleSaveConfig(): Promise<void> {
-  await saveConfig();
+  const configSaved = await saveConfig();
+  if (configSaved) {
+    void syncSub2ApiGroups({ silent: true });
+  }
 }
 
 async function handleSaveConfigAndClose(): Promise<void> {
   const configSaved = await saveConfig();
   if (configSaved) {
+    void syncSub2ApiGroups({ silent: true });
     showConfigModal.value = false;
   }
 }
@@ -655,56 +672,6 @@ onBeforeUnmount(() => {
   line-height: var(--leading-tight);
 }
 
-.tag-pill {
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: var(--text-xs);
-  font-weight: var(--weight-medium);
-  border: 1px solid transparent;
-}
-
-.tag-pill.blue {
-  background-color: #ecf5ff;
-  color: #409eff;
-  border-color: #d9ebff;
-}
-
-.tag-pill.green {
-  background-color: #f0fdf4;
-  color: #16a34a;
-  border-color: #dcfce7;
-}
-
-.model-picker {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 34px;
-  padding: 3px 4px 3px 10px;
-  border: 1px solid #dcfce7;
-  border-radius: 8px;
-  background: #f0fdf4;
-}
-
-.model-picker-label {
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-  color: #16a34a;
-  white-space: nowrap;
-}
-
-.model-picker-select {
-  width: 180px;
-}
-
-:deep(.model-picker-select .n-base-selection) {
-  --n-border: 1px solid transparent !important;
-  --n-border-hover: 1px solid #bbf7d0 !important;
-  --n-border-focus: 1px solid #22c55e !important;
-  --n-box-shadow-focus: 0 0 0 2px rgba(34, 197, 94, 0.14) !important;
-  background: #fff;
-}
-
 .page-desc {
   color: #94a3b8;
   font-size: var(--text-sm);
@@ -720,18 +687,136 @@ onBeforeUnmount(() => {
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding-bottom: 20px;
-  border-bottom: 1px solid #f1f5f9;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px;
+  margin-bottom: 2px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
   flex-wrap: wrap;
 }
 
+.toolbar-filters,
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.toolbar-filters {
+  flex: 1 1 560px;
+  min-width: 0;
+}
+
+.toolbar-actions {
+  justify-content: flex-end;
+  flex: 1 1 460px;
+}
+
+.control-field {
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 38px;
+  padding: 4px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #eff6ff;
+}
+
+.group-control {
+  grid-template-columns: auto minmax(164px, 190px) auto minmax(124px, auto);
+}
+
+.model-control {
+  grid-template-columns: auto 132px auto;
+  border-color: #dcfce7;
+  background: #f0fdf4;
+}
+
+.control-label {
+  padding: 0 8px;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  color: #1d4ed8;
+  white-space: nowrap;
+}
+
+.model-control .control-label {
+  color: #15803d;
+}
+
+.control-status {
+  max-width: 180px;
+  padding: 0 8px;
+  color: #64748b;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.control-status.is-error {
+  color: #dc2626;
+}
+
+.group-picker-select {
+  width: 100%;
+}
+
+.model-picker-select {
+  width: 132px;
+}
+
+:deep(.group-picker-select .n-base-selection),
+:deep(.model-picker-select .n-base-selection) {
+  --n-border: 1px solid transparent !important;
+  --n-border-hover: 1px solid #bfdbfe !important;
+  --n-border-focus: 1px solid #2563eb !important;
+  --n-box-shadow-focus: 0 0 0 2px rgba(37, 99, 235, 0.13) !important;
+  background: #fff;
+}
+
+:deep(.model-picker-select .n-base-selection) {
+  --n-border-hover: 1px solid #bbf7d0 !important;
+  --n-border-focus: 1px solid #22c55e !important;
+  --n-box-shadow-focus: 0 0 0 2px rgba(34, 197, 94, 0.14) !important;
+}
+
+.toolbar + .stats-grid {
+  padding-top: 6px;
+}
+
 @media (max-width: 720px) {
-  .model-picker {
+  .toolbar {
+    align-items: stretch;
+  }
+
+  .toolbar-filters,
+  .toolbar-actions,
+  .control-field {
     width: 100%;
+  }
+
+  .group-control,
+  .model-control {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .control-status {
+    grid-column: 2 / -1;
+    max-width: none;
+    padding-top: 3px;
+  }
+
+  .toolbar-actions {
     justify-content: flex-start;
   }
 
+  .group-picker-select,
   .model-picker-select {
     flex: 1;
     min-width: 0;
@@ -740,17 +825,19 @@ onBeforeUnmount(() => {
 }
 
 .btn {
-  padding: 8px 16px;
-  border-radius: 6px;
+  min-height: 38px;
+  padding: 8px 14px;
+  border-radius: 8px;
   font-size: var(--text-sm);
   cursor: pointer;
   border: 1px solid transparent;
-  transition: all 0.2s;
+  transition: background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
   background: #fff;
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-semibold);
   display: flex;
   align-items: center;
   gap: 6px;
+  white-space: nowrap;
 }
 
 .btn svg {
@@ -766,20 +853,26 @@ onBeforeUnmount(() => {
 .btn-default {
   border-color: #e2e8f0;
   color: #1e293b;
+  background: #fff;
 }
 
 .btn-default:hover:not(:disabled) {
-  border-color: #409eff;
-  color: #409eff;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
 }
 
 .btn-success {
-  background: #10b981;
+  background: #059669;
+  border-color: #059669;
   color: #fff;
+  box-shadow: 0 10px 22px rgba(5, 150, 105, 0.22);
 }
 
 .btn-success:hover:not(:disabled) {
-  background: #059669;
+  background: #047857;
+  border-color: #047857;
+  box-shadow: 0 12px 24px rgba(5, 150, 105, 0.28);
 }
 
 .btn-import {
@@ -795,13 +888,26 @@ onBeforeUnmount(() => {
 }
 
 .btn-danger-ghost {
-  background: transparent;
-  color: #f56c6c;
-  border-color: #f56c6c;
+  background: #fff;
+  color: #dc2626;
+  border-color: #fecaca;
 }
 
 .btn-danger-ghost:hover:not(:disabled) {
-  background: #fef0f0;
+  background: #fef2f2;
+  border-color: #fca5a5;
+}
+
+.btn-quiet {
+  color: #475569;
+  border-color: #e2e8f0;
+  background: #fff;
+}
+
+.btn-quiet:hover:not(:disabled) {
+  color: #0f172a;
+  border-color: #cbd5e1;
+  background: #f8fafc;
 }
 
 .stats-grid {

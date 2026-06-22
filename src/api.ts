@@ -634,7 +634,7 @@ export const api = {
     });
   },
 
-  startSub2ApiCheck(payload: { modelId: string }, signal?: AbortSignal): Promise<Response> {
+  startSub2ApiCheck(payload: { modelId: string; targetGroupName: string }, signal?: AbortSignal): Promise<Response> {
     return requestStream('/api/sub2api/check', {
       method: 'POST',
       body: JSON.stringify(payload),

@@ -329,6 +329,7 @@ interface Sub2ApiImportApiKeyItemInput {
 interface Sub2ApiImportApiKeyRequest {
   rawText?: unknown;
   items?: unknown;
+  targetGroupName?: unknown;
   dryRun?: unknown;
 }
 
@@ -1827,8 +1828,9 @@ app.delete('/api/system-backup/jobs/:id', async (c) => {
 app.post('/api/sub2api/check', async (c) => {
   const config = await getSub2ApiConfig(c.env.DB);
   ensureSub2ApiConfigured(config);
-  const body = await readJson<{ modelId?: unknown }>(c);
+  const body = await readJson<{ modelId?: unknown; targetGroupName?: unknown }>(c);
   const modelId = normalizeSub2ApiModelId(body.modelId);
+  const targetGroup = await resolveSub2ApiTargetGroup(config, body.targetGroupName);
 
   let logCounter = 0;
   let aborted = false;
@@ -1884,8 +1886,9 @@ app.post('/api/sub2api/check', async (c) => {
             processedAccounts: 0
           } as Sub2ApiDetectionProgress);
 
-          emitLog('info', '开始拉取 Sub2API 账号列表');
-          const accounts = await listAllSub2ApiAccounts(config);
+          emitLog('info', `开始拉取 Sub2API 账号列表，目标分组「${targetGroup.name}」`);
+          const allAccounts = await listAllSub2ApiAccounts(config);
+          const accounts = filterSub2ApiAccountsByGroup(allAccounts, targetGroup.id);
           summary.totalAccounts = accounts.length;
           emitSummary(summary);
           emit('progress', {
@@ -1894,13 +1897,13 @@ app.post('/api/sub2api/check', async (c) => {
           } as Sub2ApiDetectionProgress);
 
           if (accounts.length === 0) {
-            emitLog('warning', '未拉取到任何账号，请检查 Sub2API 账号列表');
+            emitLog('warning', `目标分组「${targetGroup.name}」下未拉取到任何账号，请检查 Sub2API 账号列表`);
             emit('done', { summary: { ...summary } });
             closeStream();
             return;
           }
 
-          emitLog('info', `账号列表拉取完成，共 ${accounts.length} 个账号，开始逐个检测，模型 ${modelId}`);
+          emitLog('info', `账号列表拉取完成，分组「${targetGroup.name}」共 ${accounts.length} 个账号，开始逐个检测，模型 ${modelId}`);
 
           for (let index = 0; index < accounts.length; index += 1) {
             if (aborted) {
@@ -3906,7 +3909,7 @@ async function importSub2ApiApiKeyAccounts(
   request: Sub2ApiImportApiKeyRequest
 ): Promise<Sub2ApiImportApiKeyResponse> {
   const candidates = normalizeSub2ApiImportRequest(request);
-  const targetGroup = await resolveSub2ApiTargetGroup(config);
+  const targetGroup = await resolveSub2ApiTargetGroup(config, request.targetGroupName);
   const existingAccounts = await listAllSub2ApiAccounts(config);
   const dryRun = request.dryRun === true;
   const items: Sub2ApiImportApiKeyResultItem[] = [];
@@ -4014,16 +4017,21 @@ function normalizeSub2ApiImportRequest(request: Sub2ApiImportApiKeyRequest): Arr
   return normalized;
 }
 
-async function resolveSub2ApiTargetGroup(config: Sub2ApiConfig): Promise<{ id: number; name: string }> {
-  const targetGroupName = normalizeSub2ApiTargetGroupName(config.targetGroupName);
+async function resolveSub2ApiTargetGroup(
+  config: Sub2ApiConfig,
+  targetGroupNameInput?: unknown
+): Promise<{ id: number; name: string }> {
+  const targetGroupName = normalizeSub2ApiTargetGroupName(
+    targetGroupNameInput === undefined ? config.targetGroupName : targetGroupNameInput
+  );
   if (!targetGroupName) {
-    throw new HTTPException(400, { message: '请先在 Sub2API 配置信息里同步并选择目标分组' });
+    throw new HTTPException(400, { message: '请先同步并选择目标分组' });
   }
 
   const groups = await listSub2ApiGroups(config);
   const target = groups.find((item) => item.name.toLowerCase() === targetGroupName.toLowerCase());
   if (!target) {
-    throw new HTTPException(400, { message: `目标分组「${targetGroupName}」不存在，请重新同步分组并保存配置` });
+    throw new HTTPException(400, { message: `目标分组「${targetGroupName}」不存在，请重新同步分组` });
   }
 
   if (!target.id) {
@@ -4179,6 +4187,10 @@ async function listAllSub2ApiAccounts(config: Sub2ApiConfig): Promise<Sub2ApiAcc
   }
 
   return collected;
+}
+
+function filterSub2ApiAccountsByGroup(accounts: Sub2ApiAccountItem[], groupId: number): Sub2ApiAccountItem[] {
+  return accounts.filter((account) => Array.isArray(account.groupIds) && account.groupIds.includes(groupId));
 }
 
 async function searchRawSub2ApiAccounts(config: Sub2ApiConfig, email: string): Promise<unknown[]> {
