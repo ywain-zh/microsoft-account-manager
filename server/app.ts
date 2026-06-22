@@ -512,7 +512,7 @@ interface TokenExchangeResult {
 }
 
 const SESSION_COOKIE_NAME = 'am_session';
-const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24;
+const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const INGEST_TOKEN_HEADER = 'x-ingest-token';
 const MAIL_API_TOKEN_HEADER = 'x-mail-api-token';
 const INGEST_PATH = '/api/upload/ingest';
