@@ -29,7 +29,8 @@ const stats = reactive<PublicCheckinStats>({
 const settings = reactive<PublicCheckinSettings>({
   checkinCron: '0 8 * * *',
   checkinTime: '08:00',
-  timezone: 'Asia/Shanghai'
+  timezone: 'Asia/Shanghai',
+  announcementPollingIntervalMinutes: 30
 });
 const logs = reactive<PublicCheckinLogResponse>({
   items: [],
@@ -59,6 +60,7 @@ function assignSettings(input: PublicCheckinSettings): void {
   settings.checkinCron = input.checkinCron || '0 8 * * *';
   settings.checkinTime = input.checkinTime || cronToTime(input.checkinCron) || '08:00';
   settings.timezone = input.timezone || 'Asia/Shanghai';
+  settings.announcementPollingIntervalMinutes = input.announcementPollingIntervalMinutes || 30;
 }
 
 function cronToTime(value: string | undefined): string | null {
@@ -427,6 +429,7 @@ export function usePublicCheckinConsole() {
     formatTime,
     buildPayload,
     loadInitialData,
+    reloadSummary,
     loadLogs,
     saveAccount,
     deleteAccount,

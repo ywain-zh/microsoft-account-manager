@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Hono } from 'hono';
@@ -44,11 +44,27 @@ export interface PublicCheckinAccount {
   status: PublicCheckinAccountStatus;
   lastError: string | null;
   lastCheckinReward: number | null;
+  announcementUnreadCount: number;
   healthState: 'normal' | 'abnormal' | 'failed' | 'unknown';
   healthMessage: string | null;
   createdAt: number | null;
   updatedAt: number | null;
   site: PublicCheckinSite;
+}
+
+export type PublicCheckinAnnouncementLevel = 'info' | 'warning' | 'error';
+
+export interface PublicCheckinAnnouncement {
+  id: number;
+  siteId: number;
+  sourceKey: string;
+  title: string;
+  content: string;
+  level: PublicCheckinAnnouncementLevel;
+  sourceUrl: string | null;
+  firstSeenAt: number | null;
+  lastSeenAt: number | null;
+  readAt: number | null;
 }
 
 type SiteRow = {
@@ -144,19 +160,46 @@ interface PublicCheckinSettings {
   checkinCron: string;
   checkinTime: string;
   timezone: string;
+  announcementPollingIntervalMinutes: 15 | 30 | 60;
 }
+
+type PublicCheckinAnnouncementRow = {
+  id: number;
+  site_id: number;
+  source_key: string;
+  title: string;
+  content: string;
+  level: PublicCheckinAnnouncementLevel;
+  source_url: string | null;
+  first_seen_at: number | null;
+  last_seen_at: number | null;
+  read_at: number | null;
+};
+
+type NormalizedAnnouncementInput = {
+  sourceKey: string;
+  title: string;
+  content: string;
+  level: PublicCheckinAnnouncementLevel;
+  sourceUrl: string | null;
+};
 
 const DEFAULT_SETTINGS: PublicCheckinSettings = {
   checkinCron: process.env.CHECKIN_CRON || '0 8 * * *',
   checkinTime: '08:00',
-  timezone: process.env.TZ || 'Asia/Shanghai'
+  timezone: process.env.TZ || 'Asia/Shanghai',
+  announcementPollingIntervalMinutes: 30
 };
 const SYSTEM_PROXY_CONFIG_KEY = 'system_proxy_config';
 const DEFAULT_PUBLIC_CHECKIN_MODEL_CACHE_TTL_MS = 60_000;
+const ANNOUNCEMENT_POLLING_INTERVALS = [15, 30, 60] as const;
 
 const runningTasks = new Set<string>();
 let checkinSchedule: SimpleCronTask | null = null;
 let balanceSchedule: SimpleCronTask | null = null;
+let announcementPollTimer: ReturnType<typeof setTimeout> | null = null;
+let announcementPollingInFlight = false;
+let announcementPollingBootstrapped = false;
 let schedulerDb: D1Database | null = null;
 let schedulerStarted = false;
 const publicCheckinModelCache = new Map<string, PublicCheckinModelCacheEntry>();
@@ -164,6 +207,10 @@ const publicCheckinModelRequests = new Map<string, Promise<PublicCheckinModelPro
 
 type NotificationsModule = typeof import('./notifications.js');
 let notificationsModulePromise: Promise<NotificationsModule> | null = null;
+let adapterOverride: ((platform: PublicCheckinPlatform, siteUrl: string, options: AdapterOptions, siteName?: string) => PublicCheckinAdapter) | null = null;
+let announcementNotificationSenderOverride:
+  | ((db: D1Database, item: { siteName: string; title: string; content: string; sourceUrl?: string | null; discoveredAt?: number | null }) => Promise<void>)
+  | null = null;
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -211,6 +258,19 @@ async function sendSchedulerSummaryNotification(
 async function sendSchedulerErrorNotification(db: D1Database, error: unknown): Promise<void> {
   const notifications = await loadNotificationsModule();
   await notifications.sendPublicCheckinSchedulerErrorNotification(db, error);
+}
+
+async function sendAnnouncementNotification(
+  db: D1Database,
+  item: { siteName: string; title: string; content: string; sourceUrl?: string | null; discoveredAt?: number | null }
+): Promise<void> {
+  if (announcementNotificationSenderOverride) {
+    await announcementNotificationSenderOverride(db, item);
+    return;
+  }
+
+  const notifications = await loadNotificationsModule();
+  await notifications.sendPublicCheckinAnnouncementNotification(db, item);
 }
 
 function unixNow(): number {
@@ -451,10 +511,271 @@ async function createAdapterForAccount(
   useProxy: boolean,
   siteName = ''
 ): Promise<PublicCheckinAdapter> {
-  return createAdapter(platform, siteUrl, {
+  const factory = adapterOverride ?? createAdapter;
+  return factory(platform, siteUrl, {
     useProxy,
     proxyUrl: useProxy ? await getSystemProxyUrl(db) : ''
   }, siteName);
+}
+
+function announcementFromRow(row: PublicCheckinAnnouncementRow): PublicCheckinAnnouncement {
+  return {
+    id: Number(row.id),
+    siteId: Number(row.site_id),
+    sourceKey: row.source_key,
+    title: row.title,
+    content: row.content,
+    level: row.level,
+    sourceUrl: row.source_url,
+    firstSeenAt: row.first_seen_at == null ? null : Number(row.first_seen_at),
+    lastSeenAt: row.last_seen_at == null ? null : Number(row.last_seen_at),
+    readAt: row.read_at == null ? null : Number(row.read_at)
+  };
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'");
+}
+
+function stripAnnouncementHtml(value: string): string {
+  return decodeHtmlEntities(
+    value
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>|<\/div>|<\/li>|<\/h\d>/gi, '\n')
+      .replace(/<[^>]+>/g, ' ')
+  )
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+function normalizeAnnouncementBody(value: unknown): string {
+  const text = asString(value).trim();
+  if (!text) {
+    return '';
+  }
+
+  const plain = /<\/?[a-z][\s\S]*>/i.test(text) ? stripAnnouncementHtml(text) : decodeHtmlEntities(text);
+  return plain
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function normalizeAnnouncementContent(value: unknown): string {
+  return asString(value)
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .trim();
+}
+
+function normalizeAnnouncementLevel(value: unknown, fallback: PublicCheckinAnnouncementLevel = 'info'): PublicCheckinAnnouncementLevel {
+  const text = asString(value).trim().toLowerCase();
+  if (!text) {
+    return fallback;
+  }
+  if (['error', 'danger', 'critical', 'fatal', 'urgent'].some((item) => text.includes(item))) {
+    return 'error';
+  }
+  if (['warning', 'warn', 'important', 'system', 'notice'].some((item) => text.includes(item))) {
+    return 'warning';
+  }
+  return 'info';
+}
+
+function buildAnnouncementSourceKey(content: string, upstreamId = ''): string {
+  const normalizedId = upstreamId.trim();
+  if (normalizedId) {
+    return `id:${normalizedId}`;
+  }
+
+  const fingerprint = normalizeAnnouncementBody(content) || normalizeAnnouncementContent(content);
+  return `hash:${createHash('sha1').update(fingerprint, 'utf8').digest('hex')}`;
+}
+
+function firstNonEmptyField(record: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = asString(record[key]).trim();
+    if (value) {
+      return value;
+    }
+  }
+  return '';
+}
+
+function normalizeAnnouncementCandidate(
+  candidate: unknown,
+  options: {
+    fallbackTitle?: string;
+    defaultLevel?: PublicCheckinAnnouncementLevel;
+  } = {}
+): NormalizedAnnouncementInput | null {
+  if (typeof candidate === 'string') {
+    const content = normalizeAnnouncementContent(candidate);
+    if (!content) {
+      return null;
+    }
+    return {
+      sourceKey: buildAnnouncementSourceKey(content),
+      title: options.fallbackTitle || '站点公告',
+      content,
+      level: options.defaultLevel || 'info',
+      sourceUrl: null
+    };
+  }
+
+  const record = asRecord(candidate);
+  if (Object.keys(record).length === 0) {
+    return null;
+  }
+
+  const upstreamId = firstNonEmptyField(record, [
+    'sourceKey',
+    'source_key',
+    'id',
+    '_id',
+    'uuid',
+    'noticeId',
+    'notice_id',
+    'announcementId',
+    'announcement_id',
+    'key'
+  ]);
+
+  const title = firstNonEmptyField(record, [
+    'title',
+    'subject',
+    'name',
+    'noticeTitle',
+    'notice_title',
+    'announcementTitle',
+    'announcement_title'
+  ]) || options.fallbackTitle || '站点公告';
+
+  const sourceUrl = firstNonEmptyField(record, [
+    'sourceUrl',
+    'source_url',
+    'url',
+    'link',
+    'href'
+  ]) || null;
+
+  const directContent = [
+    record.content,
+    record.html,
+    record.body,
+    record.message,
+    record.msg,
+    record.notice,
+    record.text,
+    record.description,
+    record.systemNotice,
+    record.system_notice,
+    record.announcement
+  ].find((value) => asString(value).trim());
+
+  const content = normalizeAnnouncementContent(
+    directContent
+    ?? (typeof record.data === 'string' ? record.data : '')
+  );
+
+  if (!content) {
+    return null;
+  }
+
+  return {
+    sourceKey: buildAnnouncementSourceKey(content, upstreamId),
+    title,
+    content,
+    level: normalizeAnnouncementLevel(record.level ?? record.type ?? record.severity, options.defaultLevel || 'info'),
+    sourceUrl
+  };
+}
+
+function extractAnnouncementsFromNoticePayload(payload: unknown): NormalizedAnnouncementInput[] {
+  const record = asRecord(payload);
+  const data = record.data;
+  const extracted: NormalizedAnnouncementInput[] = [];
+
+  const pushCandidate = (
+    candidate: unknown,
+    options: {
+      fallbackTitle?: string;
+      defaultLevel?: PublicCheckinAnnouncementLevel;
+    } = {}
+  ): void => {
+    if (Array.isArray(candidate)) {
+      candidate.forEach((item) => pushCandidate(item, options));
+      return;
+    }
+
+    const normalized = normalizeAnnouncementCandidate(candidate, options);
+    if (normalized) {
+      extracted.push(normalized);
+    }
+  };
+
+  pushCandidate(Array.isArray(data) ? data : [], { fallbackTitle: '站点公告' });
+  pushCandidate(Array.isArray(payload) ? payload : [], { fallbackTitle: '站点公告' });
+
+  const noticeFields: Array<[string, PublicCheckinAnnouncementLevel, string]> = [
+    ['notice', 'info', '通知'],
+    ['notification', 'info', '通知'],
+    ['announcement', 'info', '公告'],
+    ['systemNotice', 'warning', '系统公告'],
+    ['system_notice', 'warning', '系统公告'],
+    ['systemAnnouncement', 'warning', '系统公告'],
+    ['system_announcement', 'warning', '系统公告']
+  ];
+
+  const listFields: Array<[string, PublicCheckinAnnouncementLevel, string]> = [
+    ['notices', 'info', '通知'],
+    ['noticeList', 'info', '通知'],
+    ['notice_list', 'info', '通知'],
+    ['notifications', 'info', '通知'],
+    ['announcements', 'info', '公告'],
+    ['items', 'info', '公告'],
+    ['list', 'info', '公告'],
+    ['records', 'info', '公告'],
+    ['systemNotices', 'warning', '系统公告'],
+    ['systemNoticeList', 'warning', '系统公告'],
+    ['system_notice_list', 'warning', '系统公告']
+  ];
+
+  const recordsToSearch = [record, asRecord(data)];
+  for (const target of recordsToSearch) {
+    for (const [field, level, title] of noticeFields) {
+      if (field in target) {
+        pushCandidate(target[field], { fallbackTitle: title, defaultLevel: level });
+      }
+    }
+    for (const [field, level, title] of listFields) {
+      if (field in target) {
+        pushCandidate(target[field], { fallbackTitle: title, defaultLevel: level });
+      }
+    }
+  }
+
+  if (extracted.length === 0 && typeof data === 'string') {
+    pushCandidate(data, { fallbackTitle: '站点公告' });
+  }
+
+  const deduped = new Map<string, NormalizedAnnouncementInput>();
+  for (const item of extracted) {
+    if (!deduped.has(item.sourceKey)) {
+      deduped.set(item.sourceKey, item);
+    }
+  }
+  return Array.from(deduped.values());
 }
 
 function siteFromRow(row: SiteRow): PublicCheckinSite {
@@ -497,7 +818,12 @@ function joinedToAccountWithSite(row: JoinedAccountRow): AccountWithSite {
   };
 }
 
-function toSafeAccount(account: AccountRow, site: SiteRow, lastCheckinReward: number | null = null): PublicCheckinAccount {
+function toSafeAccount(
+  account: AccountRow,
+  site: SiteRow,
+  lastCheckinReward: number | null = null,
+  announcementUnreadCount = 0
+): PublicCheckinAccount {
   const health = resolveHealth(account);
   return {
     id: Number(account.id),
@@ -513,6 +839,7 @@ function toSafeAccount(account: AccountRow, site: SiteRow, lastCheckinReward: nu
     status: account.status,
     lastError: account.last_error,
     lastCheckinReward,
+    announcementUnreadCount,
     ...health,
     createdAt: account.created_at == null ? null : Number(account.created_at),
     updatedAt: account.updated_at == null ? null : Number(account.updated_at),
@@ -855,6 +1182,28 @@ class PublicCheckinAdapter {
     }
   }
 
+  async getAnnouncements(credential?: PublicCheckinCredential): Promise<NormalizedAnnouncementInput[]> {
+    const attempts = ['/api/notice'];
+    const errors: string[] = [];
+
+    for (const requestPath of attempts) {
+      try {
+        const payload = await this.fetchJson<unknown>(requestPath, {
+          headers: credential ? this.buildAuthHeaders(credential) : undefined
+        });
+        return extractAnnouncementsFromNoticePayload(payload);
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : `${requestPath} 获取公告失败`);
+      }
+    }
+
+    if (errors.length > 0 && errors.every((message) => /HTTP 404|not found|Invalid URL/i.test(message))) {
+      return [];
+    }
+
+    throw new Error(errors[0] || '获取公告失败');
+  }
+
   protected async fetchJson<T>(requestPath: string, init: RequestInit = {}): Promise<T> {
     const initialHeaders = init.headers as Record<string, string> | undefined;
     let cookie = initialHeaders?.Cookie || initialHeaders?.cookie || '';
@@ -1084,6 +1433,64 @@ async function getAccountWithSite(db: D1Database, accountId: number): Promise<Ac
   return row ? joinedToAccountWithSite(row) : null;
 }
 
+async function getAccountWithSiteForAnnouncement(db: D1Database, accountId: number): Promise<AccountWithSite | null> {
+  return getAccountWithSite(db, accountId);
+}
+
+async function getAnnouncementUnreadCounts(db: D1Database): Promise<Map<number, number>> {
+  const rows = await dbAll<{ site_id: number; count: number }>(db, `
+    SELECT site_id, COUNT(*) AS count
+    FROM public_checkin_announcements
+    WHERE read_at IS NULL
+    GROUP BY site_id
+  `);
+  return new Map(rows.map((row) => [Number(row.site_id), Number(row.count || 0)]));
+}
+
+async function listAnnouncementsForSite(db: D1Database, siteId: number): Promise<PublicCheckinAnnouncement[]> {
+  const rows = await dbAll<PublicCheckinAnnouncementRow>(db, `
+    SELECT
+      id,
+      site_id,
+      source_key,
+      title,
+      content,
+      level,
+      source_url,
+      first_seen_at,
+      last_seen_at,
+      read_at
+    FROM public_checkin_announcements
+    WHERE site_id = ?
+    ORDER BY COALESCE(first_seen_at, last_seen_at) DESC, id DESC
+  `, [siteId]);
+  return rows.map(announcementFromRow);
+}
+
+async function listAnnouncementsForAccount(db: D1Database, accountId: number): Promise<PublicCheckinAnnouncement[]> {
+  const row = await getAccountWithSiteForAnnouncement(db, accountId);
+  if (!row) {
+    throw new HTTPException(404, { message: '账号不存在' });
+  }
+  return listAnnouncementsForSite(db, Number(row.site.id));
+}
+
+async function markAnnouncementsReadForSite(db: D1Database, siteId: number): Promise<void> {
+  await dbRun(db, `
+    UPDATE public_checkin_announcements
+    SET read_at = ?
+    WHERE site_id = ? AND read_at IS NULL
+  `, [unixNow(), siteId]);
+}
+
+function normalizeAnnouncementPollingInterval(value: unknown): 15 | 30 | 60 {
+  const parsed = Number(value);
+  if (ANNOUNCEMENT_POLLING_INTERVALS.includes(parsed as 15 | 30 | 60)) {
+    return parsed as 15 | 30 | 60;
+  }
+  throw new HTTPException(400, { message: '公告轮询频率仅支持 15 / 30 / 60 分钟' });
+}
+
 async function ensureSite(db: D1Database, input: ReturnType<typeof validateAccountInput>, currentAccountId?: number): Promise<number> {
   if (input.siteId) return input.siteId;
   if (!input.site) throw new HTTPException(400, { message: '缺少站点信息' });
@@ -1156,9 +1563,16 @@ async function listAccounts(db: D1Database): Promise<PublicCheckinAccount[]> {
     }
   }
 
+  const unreadCounts = await getAnnouncementUnreadCounts(db);
+
   return rows.map((row) => {
     const { account, site } = joinedToAccountWithSite(row);
-    return toSafeAccount(account, site, rewards.get(account.id) ?? null);
+    return toSafeAccount(
+      account,
+      site,
+      rewards.get(account.id) ?? null,
+      unreadCounts.get(Number(site.id)) ?? 0
+    );
   });
 }
 
@@ -1726,20 +2140,202 @@ function describeCookieDiagnostics(credential: PublicCheckinCredential, useProxy
   return `。Cookie诊断：${items.join('，')}${hint}`;
 }
 
+async function resolveAnnouncementFetchTarget(db: D1Database, siteId: number): Promise<AccountWithSite | null> {
+  const row = await dbFirst<JoinedAccountRow>(db, `
+    SELECT
+      a.id AS account_id,
+      a.site_id AS site_id,
+      a.label AS label,
+      a.credential_type AS credential_type,
+      a.credential_data AS credential_data,
+      a.api_key_data AS api_key_data,
+      a.balance AS balance,
+      a.balance_updated_at AS balance_updated_at,
+      a.checkin_enabled AS checkin_enabled,
+      a.use_proxy AS use_proxy,
+      a.status AS status,
+      a.last_error AS last_error,
+      a.created_at AS account_created_at,
+      a.updated_at AS account_updated_at,
+      s.name AS site_name,
+      s.url AS site_url,
+      s.platform AS site_platform,
+      s.created_at AS site_created_at,
+      s.updated_at AS site_updated_at
+    FROM public_checkin_accounts a
+    INNER JOIN public_checkin_sites s ON s.id = a.site_id
+    WHERE a.site_id = ?
+    ORDER BY
+      CASE a.status
+        WHEN 'active' THEN 0
+        WHEN 'error' THEN 1
+        ELSE 2
+      END ASC,
+      COALESCE(a.updated_at, a.id) DESC,
+      a.id DESC
+    LIMIT 1
+  `, [siteId]);
+
+  return row ? joinedToAccountWithSite(row) : null;
+}
+
+async function fetchAnnouncementsForSite(db: D1Database, siteId: number): Promise<{ site: SiteRow; items: NormalizedAnnouncementInput[] }> {
+  const target = await resolveAnnouncementFetchTarget(db, siteId);
+  if (!target) {
+    throw new HTTPException(404, { message: '站点不存在或没有可用账号' });
+  }
+
+  const adapter = await createAdapterForAccount(
+    db,
+    target.site.platform,
+    target.site.url,
+    target.account.use_proxy === 1,
+    target.site.name
+  );
+
+  let anonymousError: unknown = null;
+  try {
+    const anonymousItems = await adapter.getAnnouncements();
+    if (anonymousItems.length > 0) {
+      return { site: target.site, items: anonymousItems };
+    }
+
+    const credential = target.account.credential_data
+      ? await resolveCredential(db, Number(target.account.id)).then((row) => row.credential).catch(() => null)
+      : null;
+    if (credential) {
+      return {
+        site: target.site,
+        items: await adapter.getAnnouncements(credential)
+      };
+    }
+
+    return { site: target.site, items: anonymousItems };
+  } catch (error) {
+    anonymousError = error;
+  }
+
+  if (target.account.credential_data) {
+    const credential = await resolveCredential(db, Number(target.account.id)).then((row) => row.credential).catch(() => null);
+    if (credential) {
+      return {
+        site: target.site,
+        items: await adapter.getAnnouncements(credential)
+      };
+    }
+  }
+
+  throw anonymousError instanceof Error ? anonymousError : new Error('获取公告失败');
+}
+
+async function syncAnnouncementsForSite(db: D1Database, siteId: number): Promise<PublicCheckinAnnouncement[]> {
+  return withAccountMutex(
+    `public-checkin-announcements:${siteId}`,
+    async () => listAnnouncementsForSite(db, siteId),
+    async () => {
+      const { site, items } = await fetchAnnouncementsForSite(db, siteId);
+      const now = unixNow();
+      const existingRows = await dbAll<PublicCheckinAnnouncementRow>(db, `
+        SELECT
+          id,
+          site_id,
+          source_key,
+          title,
+          content,
+          level,
+          source_url,
+          first_seen_at,
+          last_seen_at,
+          read_at
+        FROM public_checkin_announcements
+        WHERE site_id = ?
+      `, [siteId]);
+      const existingMap = new Map(existingRows.map((row) => [row.source_key, row]));
+
+      for (const item of items) {
+        const title = item.title.trim() || '站点公告';
+        const content = item.content.trim();
+        if (!content) {
+          continue;
+        }
+
+        const existing = existingMap.get(item.sourceKey);
+        if (existing) {
+          await dbRun(db, `
+            UPDATE public_checkin_announcements
+            SET title = ?, content = ?, level = ?, source_url = ?, last_seen_at = ?
+            WHERE id = ?
+          `, [title, content, item.level, item.sourceUrl, now, Number(existing.id)]);
+          continue;
+        }
+
+        await dbRun(db, `
+          INSERT INTO public_checkin_announcements (
+            site_id,
+            source_key,
+            title,
+            content,
+            level,
+            source_url,
+            first_seen_at,
+            last_seen_at,
+            read_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+        `, [siteId, item.sourceKey, title, content, item.level, item.sourceUrl, now, now]);
+
+        await sendAnnouncementNotification(db, {
+          siteName: site.name,
+          title,
+          content,
+          sourceUrl: item.sourceUrl,
+          discoveredAt: now
+        }).catch((error) => {
+          console.warn(`[PublicCheckin] 公告通知发送失败: ${site.name}`, error);
+        });
+      }
+
+      return listAnnouncementsForSite(db, siteId);
+    }
+  );
+}
+
+async function syncAnnouncementsForAllSites(db: D1Database): Promise<void> {
+  const rows = await dbAll<{ site_id: number }>(db, `
+    SELECT DISTINCT site_id
+    FROM public_checkin_accounts
+    ORDER BY site_id ASC
+  `);
+
+  for (const row of rows) {
+    const siteId = Number(row.site_id);
+    try {
+      await syncAnnouncementsForSite(db, siteId);
+    } catch (error) {
+      console.warn(`[PublicCheckin] 公告同步失败: siteId=${siteId}`, error);
+    }
+  }
+}
+
 async function getSettings(db: D1Database): Promise<PublicCheckinSettings> {
   const rows = await dbAll<{ key: string; value: string }>(db, 'SELECT key, value FROM public_checkin_settings');
   const values = new Map(rows.map((row) => [row.key, row.value]));
   const checkinTime = normalizeCheckinTime(values.get('checkinTime') || cronToDailyTime(values.get('checkinCron')) || DEFAULT_SETTINGS.checkinTime);
+  const announcementPollingIntervalMinutes = values.has('announcementPollingIntervalMinutes')
+    ? normalizeAnnouncementPollingInterval(values.get('announcementPollingIntervalMinutes'))
+    : DEFAULT_SETTINGS.announcementPollingIntervalMinutes;
   return {
     checkinCron: dailyTimeToCron(checkinTime),
     checkinTime,
-    timezone: values.get('timezone') || DEFAULT_SETTINGS.timezone
+    timezone: values.get('timezone') || DEFAULT_SETTINGS.timezone,
+    announcementPollingIntervalMinutes
   };
 }
 
 function validateSettings(settings: PublicCheckinSettings): void {
   if (!validateCronExpression(settings.checkinCron)) throw new HTTPException(400, { message: '签到 Cron 表达式不合法' });
   normalizeCheckinTime(settings.checkinTime);
+  normalizeAnnouncementPollingInterval(settings.announcementPollingIntervalMinutes);
   if (!settings.timezone.trim()) throw new HTTPException(400, { message: '时区不能为空' });
   try {
     new Intl.DateTimeFormat('en-US', { timeZone: settings.timezone }).format(new Date());
@@ -1754,7 +2350,10 @@ async function updateSettings(db: D1Database, body: unknown): Promise<PublicChec
   const next = {
     checkinCron: dailyTimeToCron(checkinTime),
     checkinTime,
-    timezone: asString(input.timezone).trim()
+    timezone: asString(input.timezone).trim(),
+    announcementPollingIntervalMinutes: normalizeAnnouncementPollingInterval(
+      input.announcementPollingIntervalMinutes ?? DEFAULT_SETTINGS.announcementPollingIntervalMinutes
+    )
   };
   validateSettings(next);
   const now = unixNow();
@@ -1950,6 +2549,20 @@ export function registerPublicCheckinRoutes(app: Hono<any>): void {
   });
   app.post('/api/public-checkin/accounts/:id/test', async (c) => c.json(await refreshBalanceForAccount(c.env.DB, routeId(c.req.param('id')))));
   app.post('/api/public-checkin/accounts/:id/models/test', async (c) => c.json(await testAccountModels(c.env.DB, routeId(c.req.param('id')))));
+  app.get('/api/public-checkin/accounts/:id/announcements', async (c) => {
+    return c.json(await listAnnouncementsForAccount(c.env.DB, routeId(c.req.param('id'))));
+  });
+  app.post('/api/public-checkin/accounts/:id/announcements/sync', async (c) => {
+    const account = await getAccountWithSiteForAnnouncement(c.env.DB, routeId(c.req.param('id')));
+    if (!account) throw new HTTPException(404, { message: '账号不存在' });
+    return c.json(await syncAnnouncementsForSite(c.env.DB, Number(account.site.id)));
+  });
+  app.post('/api/public-checkin/accounts/:id/announcements/read-all', async (c) => {
+    const account = await getAccountWithSiteForAnnouncement(c.env.DB, routeId(c.req.param('id')));
+    if (!account) throw new HTTPException(404, { message: '账号不存在' });
+    await markAnnouncementsReadForSite(c.env.DB, Number(account.site.id));
+    return c.json({ ok: true });
+  });
 
   app.get('/api/public-checkin/sites', async (c) => c.json(await listSites(c.env.DB)));
   app.post('/api/public-checkin/sites', async (c) => c.json(await createSite(c.env.DB, await readBody(c)), 201));
@@ -2046,20 +2659,68 @@ async function restartPublicCheckinScheduler(db: D1Database): Promise<void> {
   });
   balanceSchedule = null;
   checkinSchedule.start();
-  console.info(`[PublicCheckin] 调度器已启动: checkin=${settings.checkinCron}, timezone=${settings.timezone}`);
+  scheduleAnnouncementPolling(db, settings.announcementPollingIntervalMinutes, !announcementPollingBootstrapped);
+  announcementPollingBootstrapped = true;
+  console.info(
+    `[PublicCheckin] 调度器已启动: checkin=${settings.checkinCron}, timezone=${settings.timezone}, announcements=${settings.announcementPollingIntervalMinutes}m`
+  );
 }
 
 function stopPublicCheckinSchedulesOnly(): void {
   checkinSchedule?.stop();
   balanceSchedule?.stop();
+  if (announcementPollTimer) {
+    clearTimeout(announcementPollTimer);
+  }
   checkinSchedule = null;
   balanceSchedule = null;
+  announcementPollTimer = null;
 }
 
 function stopPublicCheckinScheduler(): void {
   stopPublicCheckinSchedulesOnly();
   schedulerDb = null;
   schedulerStarted = false;
+  announcementPollingInFlight = false;
+  announcementPollingBootstrapped = false;
+}
+
+function scheduleAnnouncementPolling(
+  db: D1Database,
+  intervalMinutes: 15 | 30 | 60,
+  immediate = false
+): void {
+  if (announcementPollTimer) {
+    clearTimeout(announcementPollTimer);
+  }
+
+  const delayMs = immediate ? 0 : intervalMinutes * 60_000;
+  announcementPollTimer = setTimeout(async () => {
+    await runAnnouncementPollingCycle(db, intervalMinutes);
+  }, delayMs);
+}
+
+async function runAnnouncementPollingCycle(db: D1Database, intervalMinutes: 15 | 30 | 60): Promise<void> {
+  if (!schedulerStarted) {
+    return;
+  }
+
+  if (announcementPollingInFlight) {
+    console.info('[PublicCheckin] 公告轮询仍在执行中，跳过本轮');
+    scheduleAnnouncementPolling(db, intervalMinutes, false);
+    return;
+  }
+
+  announcementPollingInFlight = true;
+  try {
+    console.info('[PublicCheckin] 开始执行公告轮询');
+    await syncAnnouncementsForAllSites(db);
+  } catch (error) {
+    console.error('[PublicCheckin] 公告轮询执行异常', error);
+  } finally {
+    announcementPollingInFlight = false;
+    scheduleAnnouncementPolling(db, intervalMinutes, false);
+  }
 }
 
 function validateCronExpression(expression: string): boolean {
@@ -2168,5 +2829,17 @@ export const publicCheckinTestHooks = {
   parseBalancePayload,
   inferPublicCheckinRewardFromBalanceDelta,
   buildCheckinResultForNotification,
-  validateCronExpression
+  validateCronExpression,
+  extractAnnouncementsFromNoticePayload,
+  buildAnnouncementSourceKey,
+  normalizeAnnouncementLevel,
+  syncAnnouncementsForSite,
+  listAnnouncementsForAccount,
+  markAnnouncementsReadForSite,
+  setAdapterOverride(factory: typeof adapterOverride) {
+    adapterOverride = factory;
+  },
+  setAnnouncementNotificationSenderOverride(factory: typeof announcementNotificationSenderOverride) {
+    announcementNotificationSenderOverride = factory;
+  }
 };

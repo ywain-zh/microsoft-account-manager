@@ -362,6 +362,29 @@ test('formats public checkin error notification with configured timezone', () =>
   assert.match(message, /时间：2026\/6\/19 08:00:00/);
 });
 
+test('formats public checkin announcement notification with escaping and source link', () => {
+  const message = notificationTestHooks.buildPublicCheckinAnnouncementMessage(
+    {
+      siteName: '公益站 <A> & Co',
+      title: '通知 <升级>',
+      content: `<b>新公告</b> ${'x'.repeat(420)}`,
+      sourceUrl: 'https://public.example.test/notice?id=1&from=bot',
+      discoveredAt: Math.floor(Date.parse('2026-06-22T00:00:00Z') / 1000)
+    },
+    new Date('2026-06-22T00:00:00Z'),
+    'Asia/Shanghai'
+  );
+
+  assert.match(message, /公益站新公告/);
+  assert.match(message, /发现时间：2026\/6\/22 08:00:00/);
+  assert.match(message, /站点：公益站 &lt;A&gt; &amp; Co/);
+  assert.match(message, /标题：通知 &lt;升级&gt;/);
+  assert.doesNotMatch(message, /<b>新公告<\/b>/);
+  assert.match(message, /摘要：新公告 x+/);
+  assert.match(message, /来源：https:\/\/public\.example\.test\/notice\?id=1&amp;from=bot/);
+  assert.ok(message.length <= 3900);
+});
+
 test('limits Telegram message length', () => {
   const message = notificationTestHooks.limitTelegramText('x'.repeat(5000), 80);
   assert.equal(message.length, 80);

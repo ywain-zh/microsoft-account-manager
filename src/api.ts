@@ -23,6 +23,7 @@ import type {
   NotificationTestResult,
   OpenAiModelsResponse,
   PublicCheckinAccount,
+  PublicCheckinAnnouncement,
   PublicCheckinAccountCredentialResponse,
   PublicCheckinAccountPayload,
   PublicCheckinBalanceResult,
@@ -446,6 +447,22 @@ export const api = {
 
   getPublicCheckinCredential(id: number): Promise<PublicCheckinAccountCredentialResponse> {
     return request<PublicCheckinAccountCredentialResponse>(`/api/public-checkin/accounts/${id}/credential`);
+  },
+
+  listPublicCheckinAnnouncements(id: number): Promise<PublicCheckinAnnouncement[]> {
+    return request<PublicCheckinAnnouncement[]>(`/api/public-checkin/accounts/${id}/announcements`);
+  },
+
+  syncPublicCheckinAnnouncements(id: number): Promise<PublicCheckinAnnouncement[]> {
+    return request<PublicCheckinAnnouncement[]>(`/api/public-checkin/accounts/${id}/announcements/sync`, {
+      method: 'POST'
+    });
+  },
+
+  markPublicCheckinAnnouncementsRead(id: number): Promise<{ ok: true }> {
+    return request<{ ok: true }>(`/api/public-checkin/accounts/${id}/announcements/read-all`, {
+      method: 'POST'
+    });
   },
 
   testPublicCheckinModels(id: number): Promise<PublicCheckinModelProbeResponse> {

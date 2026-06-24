@@ -1,13 +1,308 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { Hono } from 'hono';
 
 import {
   parsePublicCheckinRewardAmount,
+  registerPublicCheckinRoutes,
   publicCheckinTestHooks
 } from '../server/runtime/public-checkin.ts';
 
 process.env.PUBLIC_CHECKIN_ENCRYPTION_KEY =
   '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+type MemorySiteRow = {
+  id: number;
+  name: string;
+  url: string;
+  platform: 'new-api' | 'one-api' | 'onehub';
+  created_at: number;
+  updated_at: number;
+};
+
+type MemoryAccountRow = {
+  id: number;
+  site_id: number;
+  label: string;
+  credential_type: 'password' | 'access_token' | 'cookie';
+  credential_data: string;
+  api_key_data: string | null;
+  balance: number | null;
+  balance_updated_at: number | null;
+  checkin_enabled: number;
+  use_proxy: number;
+  status: 'active' | 'disabled' | 'error';
+  last_error: string | null;
+  created_at: number;
+  updated_at: number;
+};
+
+type MemoryAnnouncementRow = {
+  id: number;
+  site_id: number;
+  source_key: string;
+  title: string;
+  content: string;
+  level: 'info' | 'warning' | 'error';
+  source_url: string | null;
+  first_seen_at: number;
+  last_seen_at: number;
+  read_at: number | null;
+};
+
+class PublicCheckinMemoryStatement implements D1PreparedStatement {
+  private readonly database: PublicCheckinMemoryD1Database;
+  private readonly query: string;
+  private readonly values: unknown[];
+
+  constructor(database: PublicCheckinMemoryD1Database, query: string, values: unknown[] = []) {
+    this.database = database;
+    this.query = query;
+    this.values = values;
+  }
+
+  bind(...values: unknown[]): D1PreparedStatement {
+    return new PublicCheckinMemoryStatement(this.database, this.query, values);
+  }
+
+  async first<T>(): Promise<T | null> {
+    if (/FROM public_checkin_accounts a\s+INNER JOIN public_checkin_sites s/i.test(this.query)) {
+      const accountIdMatch = /WHERE a\.id = \?/i.test(this.query);
+      const siteIdMatch = /WHERE a\.site_id = \?/i.test(this.query);
+      const account = accountIdMatch
+        ? this.database.accounts.find((item) => item.id === Number(this.values[0]))
+        : siteIdMatch
+          ? this.database.accounts
+            .filter((item) => item.site_id === Number(this.values[0]))
+            .sort((left, right) => right.id - left.id)[0]
+          : null;
+      return account ? this.database.joinAccount(account) as T : null;
+    }
+
+    throw new Error(`Unsupported first query: ${this.query}`);
+  }
+
+  async all<T>(): Promise<{ results: T[]; success: boolean; meta: D1Result['meta'] }> {
+    if (/SELECT key, value FROM public_checkin_settings/i.test(this.query)) {
+      return {
+        results: Array.from(this.database.settings.entries()).map(([key, value]) => ({ key, value })) as T[],
+        success: true,
+        meta: { rows_read: this.database.settings.size }
+      };
+    }
+
+    if (/FROM public_checkin_announcements\s+WHERE site_id = \?/i.test(this.query)) {
+      const siteId = Number(this.values[0]);
+      const results = this.database.announcements
+        .filter((item) => item.site_id === siteId)
+        .sort((left, right) => (right.first_seen_at - left.first_seen_at) || (right.id - left.id));
+      return { results: results as T[], success: true, meta: { rows_read: results.length } };
+    }
+
+    if (/FROM public_checkin_announcements\s+WHERE read_at IS NULL/i.test(this.query)) {
+      const counts = new Map<number, number>();
+      for (const item of this.database.announcements) {
+        if (item.read_at == null) {
+          counts.set(item.site_id, (counts.get(item.site_id) || 0) + 1);
+        }
+      }
+      const results = Array.from(counts.entries()).map(([site_id, count]) => ({ site_id, count }));
+      return { results: results as T[], success: true, meta: { rows_read: results.length } };
+    }
+
+    if (/FROM public_checkin_logs/i.test(this.query)) {
+      return { results: [] as T[], success: true, meta: { rows_read: 0 } };
+    }
+
+    if (/FROM public_checkin_accounts/i.test(this.query) && /SELECT DISTINCT site_id/i.test(this.query)) {
+      const results = Array.from(new Set(this.database.accounts.map((item) => item.site_id)))
+        .sort((left, right) => left - right)
+        .map((site_id) => ({ site_id }));
+      return { results: results as T[], success: true, meta: { rows_read: results.length } };
+    }
+
+    if (/FROM public_checkin_accounts a\s+INNER JOIN public_checkin_sites s/i.test(this.query)) {
+      const results = this.database.accounts
+        .slice()
+        .sort((left, right) => left.id - right.id)
+        .map((account) => this.database.joinAccount(account));
+      return { results: results as T[], success: true, meta: { rows_read: results.length } };
+    }
+
+    throw new Error(`Unsupported all query: ${this.query}`);
+  }
+
+  async run(): Promise<D1Result> {
+    if (/INSERT INTO public_checkin_sites/i.test(this.query)) {
+      const row: MemorySiteRow = {
+        id: this.database.nextSiteId++,
+        name: String(this.values[0]),
+        url: String(this.values[1]),
+        platform: this.values[2] as MemorySiteRow['platform'],
+        created_at: Number(this.values[3]),
+        updated_at: Number(this.values[4])
+      };
+      this.database.sites.push(row);
+      return { success: true, meta: { changes: 1, rows_written: 1, last_row_id: row.id } };
+    }
+
+    if (/INSERT INTO public_checkin_accounts/i.test(this.query)) {
+      const row: MemoryAccountRow = {
+        id: this.database.nextAccountId++,
+        site_id: Number(this.values[0]),
+        label: String(this.values[1]),
+        credential_type: this.values[2] as MemoryAccountRow['credential_type'],
+        credential_data: String(this.values[3]),
+        api_key_data: null,
+        balance: null,
+        balance_updated_at: null,
+        checkin_enabled: 1,
+        use_proxy: 0,
+        status: 'active',
+        last_error: null,
+        created_at: Number(this.values[4]),
+        updated_at: Number(this.values[5])
+      };
+      this.database.accounts.push(row);
+      return { success: true, meta: { changes: 1, rows_written: 1, last_row_id: row.id } };
+    }
+
+    if (/INSERT INTO public_checkin_announcements/i.test(this.query)) {
+      const row: MemoryAnnouncementRow = {
+        id: this.database.nextAnnouncementId++,
+        site_id: Number(this.values[0]),
+        source_key: String(this.values[1]),
+        title: String(this.values[2]),
+        content: String(this.values[3]),
+        level: this.values[4] as MemoryAnnouncementRow['level'],
+        source_url: this.values[5] == null ? null : String(this.values[5]),
+        first_seen_at: Number(this.values[6]),
+        last_seen_at: Number(this.values[7]),
+        read_at: null
+      };
+      this.database.announcements.push(row);
+      return { success: true, meta: { changes: 1, rows_written: 1, last_row_id: row.id } };
+    }
+
+    if (/UPDATE public_checkin_announcements\s+SET title = \?/i.test(this.query)) {
+      const row = this.database.announcements.find((item) => item.id === Number(this.values[5]));
+      if (row) {
+        row.title = String(this.values[0]);
+        row.content = String(this.values[1]);
+        row.level = this.values[2] as MemoryAnnouncementRow['level'];
+        row.source_url = this.values[3] == null ? null : String(this.values[3]);
+        row.last_seen_at = Number(this.values[4]);
+      }
+      return { success: true, meta: { changes: row ? 1 : 0, rows_written: row ? 1 : 0 } };
+    }
+
+    if (/UPDATE public_checkin_announcements\s+SET read_at = \?/i.test(this.query)) {
+      let changes = 0;
+      const readAt = Number(this.values[0]);
+      const siteId = Number(this.values[1]);
+      for (const row of this.database.announcements) {
+        if (row.site_id === siteId && row.read_at == null) {
+          row.read_at = readAt;
+          changes += 1;
+        }
+      }
+      return { success: true, meta: { changes, rows_written: changes } };
+    }
+
+    if (/INSERT INTO public_checkin_settings/i.test(this.query)) {
+      this.database.settings.set(String(this.values[0]), String(this.values[1]));
+      return { success: true, meta: { changes: 1, rows_written: 1 } };
+    }
+
+    throw new Error(`Unsupported run query: ${this.query}`);
+  }
+}
+
+class PublicCheckinMemoryD1Database implements D1Database {
+  readonly sites: MemorySiteRow[] = [];
+  readonly accounts: MemoryAccountRow[] = [];
+  readonly announcements: MemoryAnnouncementRow[] = [];
+  readonly settings = new Map<string, string>();
+  nextSiteId = 1;
+  nextAccountId = 1;
+  nextAnnouncementId = 1;
+
+  prepare(query: string): D1PreparedStatement {
+    return new PublicCheckinMemoryStatement(this, query);
+  }
+
+  async exec(): Promise<D1Result> {
+    return { success: true, meta: {} };
+  }
+
+  joinAccount(account: MemoryAccountRow): Record<string, unknown> {
+    const site = this.sites.find((item) => item.id === account.site_id);
+    if (!site) throw new Error(`Missing site ${account.site_id}`);
+    return {
+      account_id: account.id,
+      site_id: account.site_id,
+      label: account.label,
+      credential_type: account.credential_type,
+      credential_data: account.credential_data,
+      api_key_data: account.api_key_data,
+      balance: account.balance,
+      balance_updated_at: account.balance_updated_at,
+      checkin_enabled: account.checkin_enabled,
+      use_proxy: account.use_proxy,
+      status: account.status,
+      last_error: account.last_error,
+      account_created_at: account.created_at,
+      account_updated_at: account.updated_at,
+      site_name: site.name,
+      site_url: site.url,
+      site_platform: site.platform,
+      site_created_at: site.created_at,
+      site_updated_at: site.updated_at
+    };
+  }
+}
+
+async function createPublicCheckinDb(): Promise<{
+  db: PublicCheckinMemoryD1Database;
+  cleanup: () => Promise<void>;
+}> {
+  return {
+    db: new PublicCheckinMemoryD1Database(),
+    cleanup: async () => {}
+  };
+}
+
+async function seedPublicCheckinAccount(db: PublicCheckinMemoryD1Database, siteId?: number): Promise<{
+  siteId: number;
+  accountId: number;
+}> {
+  const now = Math.floor(Date.now() / 1000);
+  const resolvedSiteId = siteId ?? Number((await db.prepare(`
+    INSERT INTO public_checkin_sites (name, url, platform, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).bind('测试公益站', 'https://public.example.test', 'new-api', now, now).run()).meta.last_row_id);
+
+  const credential = publicCheckinTestHooks.encryptCredential(JSON.stringify({
+    type: 'access_token',
+    accessToken: 'sk-test'
+  }));
+  const accountId = Number((await db.prepare(`
+    INSERT INTO public_checkin_accounts (
+      site_id,
+      label,
+      credential_type,
+      credential_data,
+      checkin_enabled,
+      use_proxy,
+      status,
+      created_at,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, 1, 0, 'active', ?, ?)
+  `).bind(resolvedSiteId, `测试账号 ${now}`, 'access_token', credential, now, now).run()).meta.last_row_id);
+
+  return { siteId: resolvedSiteId, accountId };
+}
 
 test('normalizes raw headers into a safe Cookie header', () => {
   const cookie = publicCheckinTestHooks.normalizeCookieHeader(`
@@ -332,4 +627,143 @@ test('validates supported cron expressions', () => {
   assert.equal(publicCheckinTestHooks.validateCronExpression('0 8 * * *'), true);
   assert.equal(publicCheckinTestHooks.validateCronExpression('*/15 0-23 * * 1-5'), true);
   assert.equal(publicCheckinTestHooks.validateCronExpression('invalid cron'), false);
+});
+
+test('extracts notification and system announcement payloads into one announcement flow', () => {
+  const items = publicCheckinTestHooks.extractAnnouncementsFromNoticePayload({
+    data: {
+      notice: '常规通知内容',
+      systemNotice: '<b>系统公告内容</b>',
+      announcements: [
+        {
+          id: 'upstream-1',
+          title: '额度规则更新',
+          content: '规则正文',
+          url: 'https://public.example.test/notice/1'
+        },
+        {
+          id: 'upstream-1',
+          title: '额度规则更新重复',
+          content: '规则正文重复'
+        }
+      ]
+    }
+  });
+
+  assert.equal(items.length, 3);
+  assert.deepEqual(
+    items.map((item) => [item.title, item.level]),
+    [
+      ['通知', 'info'],
+      ['系统公告', 'warning'],
+      ['额度规则更新', 'info']
+    ]
+  );
+  assert.equal(items[2].sourceKey, 'id:upstream-1');
+  assert.equal(items[2].sourceUrl, 'https://public.example.test/notice/1');
+});
+
+test('syncs public checkin announcements by site with insert-only notifications and read state', async () => {
+  const { db, cleanup } = await createPublicCheckinDb();
+  const notifications: Array<{ siteName: string; title: string; content: string; sourceUrl?: string | null }> = [];
+  let fetchCount = 0;
+
+  publicCheckinTestHooks.setAdapterOverride(() => ({
+    getAnnouncements: async () => {
+      fetchCount += 1;
+      return [
+        {
+          sourceKey: 'notice-1',
+          title: fetchCount === 1 ? '首次公告' : '首次公告已更新',
+          content: fetchCount === 1 ? '第一版正文' : '第二版正文',
+          level: 'info',
+          sourceUrl: 'https://public.example.test/notice'
+        }
+      ];
+    }
+  } as ReturnType<typeof publicCheckinTestHooks.createAdapter>));
+  publicCheckinTestHooks.setAnnouncementNotificationSenderOverride(async (_db, item) => {
+    notifications.push(item);
+  });
+
+  try {
+    const { siteId, accountId } = await seedPublicCheckinAccount(db);
+    await seedPublicCheckinAccount(db, siteId);
+
+    const firstSync = await publicCheckinTestHooks.syncAnnouncementsForSite(db, siteId);
+    assert.equal(fetchCount, 1);
+    assert.equal(firstSync.length, 1);
+    assert.equal(firstSync[0].title, '首次公告');
+    assert.equal(firstSync[0].readAt, null);
+    assert.deepEqual(notifications.map((item) => item.title), ['首次公告']);
+
+    const secondSync = await publicCheckinTestHooks.syncAnnouncementsForSite(db, siteId);
+    assert.equal(fetchCount, 2);
+    assert.equal(secondSync.length, 1);
+    assert.equal(secondSync[0].title, '首次公告已更新');
+    assert.equal(secondSync[0].content, '第二版正文');
+    assert.equal(notifications.length, 1);
+
+    const accountAnnouncements = await publicCheckinTestHooks.listAnnouncementsForAccount(db, accountId);
+    assert.equal(accountAnnouncements.length, 1);
+    assert.equal(accountAnnouncements[0].readAt, null);
+
+    await publicCheckinTestHooks.markAnnouncementsReadForSite(db, siteId);
+    const readAnnouncements = await publicCheckinTestHooks.listAnnouncementsForAccount(db, accountId);
+    assert.ok(readAnnouncements[0].readAt);
+  } finally {
+    publicCheckinTestHooks.setAdapterOverride(null);
+    publicCheckinTestHooks.setAnnouncementNotificationSenderOverride(null);
+    await cleanup();
+  }
+});
+
+test('public checkin settings route saves announcement polling interval', async () => {
+  const { db, cleanup } = await createPublicCheckinDb();
+  const app = new Hono<{ Bindings: { DB: D1Database } }>();
+  registerPublicCheckinRoutes(app);
+
+  try {
+    const response = await app.request(
+      'http://localhost/api/public-checkin/settings',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          checkinTime: '09:30',
+          timezone: 'Asia/Shanghai',
+          announcementPollingIntervalMinutes: 15
+        })
+      },
+      { DB: db }
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      checkinCron: '30 9 * * *',
+      checkinTime: '09:30',
+      timezone: 'Asia/Shanghai',
+      announcementPollingIntervalMinutes: 15
+    });
+
+    const loaded = await app.request('http://localhost/api/public-checkin/settings', {}, { DB: db });
+    assert.equal(loaded.status, 200);
+    assert.equal((await loaded.json()).announcementPollingIntervalMinutes, 15);
+
+    const invalid = await app.request(
+      'http://localhost/api/public-checkin/settings',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          checkinTime: '09:30',
+          timezone: 'Asia/Shanghai',
+          announcementPollingIntervalMinutes: 10
+        })
+      },
+      { DB: db }
+    );
+    assert.equal(invalid.status, 400);
+  } finally {
+    await cleanup();
+  }
 });

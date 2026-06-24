@@ -40,6 +40,14 @@ export interface PublicCheckinNotificationItem {
   };
 }
 
+export interface PublicCheckinAnnouncementNotificationItem {
+  siteName: string;
+  title: string;
+  content: string;
+  sourceUrl?: string | null;
+  discoveredAt?: number | null;
+}
+
 interface StoredTelegramNotificationConfig {
   enabled: boolean;
   botTokenEncrypted: string;
@@ -612,6 +620,51 @@ export async function sendPublicCheckinSchedulerErrorNotification(db: D1Database
   }
 }
 
+function truncateMultiline(value: string, maxLength = 220): string {
+  const normalized = value
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 3)}...`;
+}
+
+export function buildPublicCheckinAnnouncementMessage(
+  item: PublicCheckinAnnouncementNotificationItem,
+  now = new Date(),
+  timezone = DEFAULT_PUBLIC_CHECKIN_TIMEZONE
+): string {
+  const lines = [
+    '公益站新公告',
+    `发现时间：${formatDateTime(item.discoveredAt ? new Date(item.discoveredAt * 1000) : now, timezone)}`,
+    `站点：${escapeTelegramHtml(truncateLine(item.siteName, 80))}`,
+    `标题：${escapeTelegramHtml(truncateLine(item.title || '站点公告', 140))}`,
+    `摘要：${escapeTelegramHtml(truncateMultiline(item.content || '暂无正文', 360))}`
+  ];
+
+  if (item.sourceUrl?.trim()) {
+    lines.push(`来源：${escapeTelegramHtml(item.sourceUrl.trim())}`);
+  }
+
+  return limitTelegramText(lines.join('\n'));
+}
+
+export async function sendPublicCheckinAnnouncementNotification(
+  db: D1Database,
+  item: PublicCheckinAnnouncementNotificationItem
+): Promise<void> {
+  const timezone = await getPublicCheckinNotificationTimezone(db);
+  const result = await sendConfiguredTelegramMessage(
+    db,
+    buildPublicCheckinAnnouncementMessage(item, new Date(), timezone)
+  );
+  if (!result.ok && result.message !== 'Telegram 通知未启用') {
+    throw new Error(result.message);
+  }
+}
+
 export function registerNotificationRoutes(app: Hono<any>): void {
   app.get('/api/system/notification-config', async (c) => {
     return c.json({ item: await getNotificationConfig(c.env.DB) });
@@ -638,5 +691,6 @@ export const notificationTestHooks = {
   getPublicCheckinNotificationTimezone,
   buildPublicCheckinSummaryMessage,
   buildPublicCheckinErrorMessage,
+  buildPublicCheckinAnnouncementMessage,
   limitTelegramText
 };

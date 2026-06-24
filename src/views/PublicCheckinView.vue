@@ -44,6 +44,7 @@
             <col class="col-balance">
             <col class="col-switch">
             <col class="col-status">
+            <col class="col-announcement">
             <col class="col-actions">
           </colgroup>
           <thead>
@@ -52,17 +53,18 @@
               <th>余额</th>
               <th>自动签到</th>
               <th>状态</th>
+              <th>公告</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="5">
+              <td colspan="6">
                 <div class="table-empty">加载中...</div>
               </td>
             </tr>
             <tr v-else-if="!accounts.length">
-              <td colspan="5">
+              <td colspan="6">
                 <div class="table-empty">暂无账号</div>
               </td>
             </tr>
@@ -104,6 +106,24 @@
                     <span :class="account.healthState === 'normal' ? 'muted-small' : 'error-small'" :title="account.healthMessage || ''">
                       {{ account.healthMessage || '-' }}<span v-if="account.useProxy"> · 本地代理</span>
                     </span>
+                  </div>
+                </td>
+                <td>
+                  <div class="announcement-cell">
+                    <n-button
+                      class="announcement-pill"
+                      :class="{ 'has-unread': account.announcementUnreadCount > 0 }"
+                      size="small"
+                      :disabled="isAccountBusy(account.id)"
+                      :aria-label="`查看 ${account.site.name} 的公告`"
+                      @click="openAnnouncementsModal(account)"
+                    >
+                      <span class="announcement-pill__label">公告</span>
+                      <span v-if="account.announcementUnreadCount > 0" class="announcement-pill__badge">
+                        {{ formatAnnouncementUnreadCount(account.announcementUnreadCount) }}
+                      </span>
+                      <span v-else class="announcement-pill__hint">查看</span>
+                    </n-button>
                   </div>
                 </td>
                 <td>
@@ -262,6 +282,119 @@
       </div>
     </n-modal>
 
+    <n-modal
+      v-model:show="announcementsModalVisible"
+      preset="card"
+      class="public-checkin-modal announcements-modal"
+      :title="announcementsModalTitle"
+      style="width: min(860px, 96vw); border-radius: 16px;"
+    >
+      <div class="announcements-panel">
+        <div class="announcements-toolbar">
+          <div class="announcements-toolbar-copy">
+            <span class="announcements-site">{{ announcementModalAccount?.site.name || '公益站公告' }}</span>
+            <span class="announcements-meta">{{ announcementsMetaText }}</span>
+          </div>
+          <n-button
+            class="announcement-sync-btn"
+            :loading="announcementsSyncing"
+            :disabled="!announcementModalAccount"
+            @click="syncAnnouncementsManually"
+          >
+            同步公告
+          </n-button>
+        </div>
+
+        <div v-if="announcementsLoading && !announcements.length" class="announcements-skeleton-list" aria-live="polite">
+          <div v-for="index in 3" :key="index" class="announcement-skeleton-card"></div>
+        </div>
+
+        <div v-else-if="announcementError && !announcements.length" class="announcement-state announcement-state-error" role="alert">
+          <div class="announcement-state__title">这次没有拿到公告</div>
+          <div class="announcement-state__text">{{ announcementError }}</div>
+          <n-button class="announcement-sync-btn" :loading="announcementsSyncing" @click="syncAnnouncementsManually">
+            重新同步
+          </n-button>
+        </div>
+
+        <div v-else-if="!announcements.length" class="announcement-state">
+          <div class="announcement-state__title">还没有发现公告</div>
+          <div class="announcement-state__text">
+            通知和系统公告会统一归并在这里。打开弹框后会先读本地记录，再自动同步一次站点公告。
+          </div>
+        </div>
+
+        <template v-else>
+          <div v-if="announcementError" class="announcement-inline-error" role="alert">
+            {{ announcementError }}
+          </div>
+
+          <div class="announcements-list">
+            <article
+              v-for="item in announcements"
+              :key="item.id"
+              class="announcement-card"
+              :class="[`is-${item.level}`, { 'is-collapsed': !isAnnouncementExpanded(item.id) }]"
+            >
+              <div class="announcement-card__header">
+                <div class="announcement-card__title-wrap">
+                  <h3 class="announcement-card__title">{{ item.title || '站点公告' }}</h3>
+                  <n-tag :type="announcementLevelTagType(item.level)" size="small" :bordered="false">
+                    {{ announcementLevelLabel(item.level) }}
+                  </n-tag>
+                </div>
+                <div class="announcement-card__meta">
+                  <span>首次发现 {{ formatAnnouncementTime(item.firstSeenAt || item.lastSeenAt) }}</span>
+                  <span class="announcement-read-state" :class="{ 'is-unread': !item.readAt }">
+                    {{ item.readAt ? '已读' : '未读' }}
+                  </span>
+                  <button
+                    class="announcement-card__toggle"
+                    type="button"
+                    :aria-expanded="isAnnouncementExpanded(item.id)"
+                    @click="toggleAnnouncementExpanded(item.id)"
+                  >
+                    {{ isAnnouncementExpanded(item.id) ? '收起' : '展开' }}
+                  </button>
+                </div>
+              </div>
+
+              <div
+                v-if="isAnnouncementExpanded(item.id)"
+                class="announcement-card__content"
+                v-html="renderAnnouncementHtml(item.content)"
+              ></div>
+
+              <div class="announcement-card__footer">
+                <span class="announcement-card__seen">最近同步 {{ formatAnnouncementTime(item.lastSeenAt || item.firstSeenAt) }}</span>
+                <a
+                  v-if="item.sourceUrl"
+                  class="announcement-card__source"
+                  :href="item.sourceUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  查看来源
+                </a>
+                <span v-else class="announcement-card__source is-muted">无来源链接</span>
+              </div>
+            </article>
+          </div>
+        </template>
+      </div>
+
+      <template #footer>
+        <div class="modal-footer">
+          <div class="announcements-footer-note">
+            {{ announcementsSyncing ? '正在抓取站点公告，完成后会自动清掉未读数。' : '公告只在首次发现时推送 Telegram；后续刷新只更新本地记录。' }}
+          </div>
+          <div class="modal-footer-actions">
+            <n-button @click="announcementsModalVisible = false">关闭</n-button>
+          </div>
+        </div>
+      </template>
+    </n-modal>
+
     <n-modal v-model:show="settingsModalVisible" preset="card" class="public-checkin-modal settings-modal" title="调度设置" style="width: min(560px, 94vw); border-radius: 12px;">
       <n-form label-placement="top" class="designed-form settings-form">
         <n-form-item label="每日签到时间">
@@ -274,6 +407,10 @@
             style="width: 100%;"
           />
           <template #feedback>到点后执行自动签到；余额刷新保留为手动操作。</template>
+        </n-form-item>
+        <n-form-item label="公告自动检测">
+          <n-select v-model:value="settingsForm.announcementPollingIntervalMinutes" :options="announcementPollingOptions" />
+          <template #feedback>默认 30 分钟一次，任务串行执行且不可重叠，避免对公益站造成明显压力。</template>
         </n-form-item>
         <n-form-item label="时区">
           <n-select v-model:value="settingsForm.timezone" :options="timezoneOptions" />
@@ -346,8 +483,10 @@ import {
 import SecretInput from '../components/SecretInput.vue';
 import { api } from '../api';
 import { usePublicCheckinConsole } from '../state/public-checkin-console';
+import { renderPublicCheckinAnnouncementContent } from '../utils/public-checkin-announcements';
 import type {
   PublicCheckinAccount,
+  PublicCheckinAnnouncement,
   PublicCheckinLog,
   PublicCheckinModelProbeItem,
   PublicCheckinStatus,
@@ -373,6 +512,7 @@ const {
   formatTime,
   buildPayload,
   loadInitialData,
+  reloadSummary,
   loadLogs,
   saveAccount,
   deleteAccount,
@@ -389,17 +529,27 @@ const {
 
 const accountModalVisible = ref(false);
 const logModalVisible = ref(false);
+const announcementsModalVisible = ref(false);
 const settingsModalVisible = ref(false);
 const modelsModalVisible = ref(false);
 const connectionTesting = ref(false);
 const editingAccount = ref<PublicCheckinAccount | null>(null);
+const announcementModalAccount = ref<PublicCheckinAccount | null>(null);
+const announcements = ref<PublicCheckinAnnouncement[]>([]);
+const announcementsLoading = ref(false);
+const announcementsSyncing = ref(false);
+const announcementError = ref('');
 const modelsLoading = ref(false);
 const modelsModalSiteName = ref('');
 const modelProbeItems = ref<PublicCheckinModelProbeItem[]>([]);
+const expandedAnnouncementIds = ref<Set<number>>(new Set());
 const accountPage = ref(1);
 const accountPageSize = 12;
 const logPage = ref(1);
 const logPageSize = 10;
+const announcementCache = new Map<number, PublicCheckinAnnouncement[]>();
+let announcementSessionId = 0;
+let announcementSyncedSessionId: number | null = null;
 
 const accountSiteNameInputProps = {
   autocomplete: 'off',
@@ -445,7 +595,8 @@ const accountForm = reactive({
 const settingsForm = reactive<PublicCheckinSettings>({
   checkinCron: '0 8 * * *',
   checkinTime: '08:00',
-  timezone: 'Asia/Shanghai'
+  timezone: 'Asia/Shanghai',
+  announcementPollingIntervalMinutes: 30
 });
 
 const logFilters = reactive<{
@@ -473,6 +624,11 @@ const statusOptions = [
 
 const timezoneOptions = ['Asia/Shanghai', 'UTC', 'Asia/Tokyo', 'America/Los_Angeles', 'America/New_York', 'Europe/London']
   .map((value) => ({ label: value, value }));
+const announcementPollingOptions: Array<{ label: string; value: 15 | 30 | 60 }> = [
+  { label: '15 分钟一次', value: 15 },
+  { label: '30 分钟一次', value: 30 },
+  { label: '60 分钟一次', value: 60 }
+];
 
 const accountPageCount = computed(() => Math.max(1, Math.ceil(accounts.value.length / accountPageSize)));
 const pagedAccounts = computed(() => {
@@ -483,6 +639,18 @@ const pagedAccounts = computed(() => {
 const logPageCount = computed(() => Math.max(1, Math.ceil(logs.total / logPageSize)));
 type PublicCheckinBusyAction = NonNullable<typeof busyAccountAction.value>;
 const modelsModalTitle = computed(() => modelsModalSiteName.value ? `模型管理 · ${modelsModalSiteName.value}` : '模型管理');
+const announcementsModalTitle = computed(() => {
+  const siteName = announcementModalAccount.value?.site.name;
+  return siteName ? `公益站公告 · ${siteName}` : '公益站公告';
+});
+const announcementsMetaText = computed(() => {
+  const account = announcementModalAccount.value;
+  if (!account) return '通知和系统公告会统一归并在一个公告流里。';
+  if (announcementsSyncing.value) return '正在同步站点公告...';
+  if (announcements.value.length === 0) return '暂时还没有抓到通知或系统公告。';
+  const unreadCount = announcements.value.filter((item) => !item.readAt).length;
+  return `共 ${announcements.value.length} 条，${unreadCount > 0 ? `${unreadCount} 条未读` : '已全部读完'}`;
+});
 
 const logColumns: DataTableColumns<PublicCheckinLog> = [
   {
@@ -568,6 +736,73 @@ function formatSignedMoney(value: number | null | undefined): string {
   if (typeof value !== 'number' || Number.isNaN(value)) return '+0.00';
   const absolute = Math.abs(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return `${value < 0 ? '-' : '+'}${absolute}`;
+}
+
+function formatAnnouncementTime(value: number | null | undefined): string {
+  return formatTime(value);
+}
+
+function formatAnnouncementUnreadCount(count: number): string {
+  if (count > 99) return '99+';
+  return String(Math.max(0, count));
+}
+
+function announcementLevelLabel(level: PublicCheckinAnnouncement['level']): string {
+  if (level === 'warning') return '系统公告';
+  if (level === 'error') return '重要公告';
+  return '通知';
+}
+
+function announcementLevelTagType(level: PublicCheckinAnnouncement['level']): 'info' | 'warning' | 'error' {
+  if (level === 'warning') return 'warning';
+  if (level === 'error') return 'error';
+  return 'info';
+}
+
+function renderAnnouncementHtml(content: string): string {
+  return renderPublicCheckinAnnouncementContent(content);
+}
+
+function resetExpandedAnnouncements(items: PublicCheckinAnnouncement[]): void {
+  const nextExpanded = new Set<number>();
+  if (items.length > 0) {
+    nextExpanded.add(items[0].id);
+  }
+  expandedAnnouncementIds.value = nextExpanded;
+}
+
+function isAnnouncementExpanded(id: number): boolean {
+  return expandedAnnouncementIds.value.has(id);
+}
+
+function toggleAnnouncementExpanded(id: number): void {
+  const next = new Set(expandedAnnouncementIds.value);
+  if (next.has(id)) {
+    next.delete(id);
+  } else {
+    next.add(id);
+  }
+  expandedAnnouncementIds.value = next;
+}
+
+function toErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function cloneAnnouncements(items: PublicCheckinAnnouncement[]): PublicCheckinAnnouncement[] {
+  return items.map((item) => ({ ...item }));
+}
+
+function cacheAnnouncements(siteId: number, items: PublicCheckinAnnouncement[]): void {
+  announcementCache.set(siteId, cloneAnnouncements(items));
+}
+
+function readCachedAnnouncements(siteId: number): PublicCheckinAnnouncement[] {
+  return cloneAnnouncements(announcementCache.get(siteId) || []);
+}
+
+function isCurrentAnnouncementSession(sessionId: number): boolean {
+  return sessionId === announcementSessionId;
 }
 
 function isAccountBusy(accountId: number): boolean {
@@ -698,10 +933,128 @@ async function openLogModal(): Promise<void> {
   await refreshLogs();
 }
 
+async function loadAnnouncementsFromStore(account: PublicCheckinAccount, sessionId: number, showLoading: boolean): Promise<void> {
+  if (showLoading) {
+    announcementsLoading.value = true;
+  }
+
+  try {
+    const items = await api.listPublicCheckinAnnouncements(account.id);
+    if (!isCurrentAnnouncementSession(sessionId) || announcementSyncedSessionId === sessionId) {
+      return;
+    }
+    cacheAnnouncements(account.siteId, items);
+    announcements.value = cloneAnnouncements(items);
+    resetExpandedAnnouncements(items);
+    announcementSyncedSessionId = sessionId;
+    announcementError.value = '';
+  } catch (error) {
+    if (!isCurrentAnnouncementSession(sessionId)) {
+      return;
+    }
+    if (announcements.value.length === 0) {
+      announcementError.value = toErrorMessage(error, '读取本地公告失败');
+    }
+  } finally {
+    if (showLoading && isCurrentAnnouncementSession(sessionId)) {
+      announcementsLoading.value = false;
+    }
+  }
+}
+
+async function markAnnouncementFeedRead(account: PublicCheckinAccount, sessionId: number): Promise<void> {
+  try {
+    await api.markPublicCheckinAnnouncementsRead(account.id);
+    if (!isCurrentAnnouncementSession(sessionId)) {
+      return;
+    }
+    const readAt = Math.floor(Date.now() / 1000);
+    const next = announcements.value.map((item) => ({
+      ...item,
+      readAt: item.readAt || readAt
+    }));
+    announcements.value = next;
+    cacheAnnouncements(account.siteId, next);
+  } catch (error) {
+    if (isCurrentAnnouncementSession(sessionId)) {
+      announcementError.value = toErrorMessage(error, '公告已同步，但标记已读失败');
+    }
+  } finally {
+    try {
+      await reloadSummary();
+    } catch (error) {
+      handleApiError(error);
+    }
+  }
+}
+
+async function syncAnnouncementsForAccount(
+  account: PublicCheckinAccount,
+  options: {
+    sessionId?: number;
+    showMessage?: boolean;
+  } = {}
+): Promise<void> {
+  const sessionId = options.sessionId ?? announcementSessionId;
+  announcementsSyncing.value = true;
+
+  try {
+    const items = await api.syncPublicCheckinAnnouncements(account.id);
+    if (!isCurrentAnnouncementSession(sessionId)) {
+      return;
+    }
+    cacheAnnouncements(account.siteId, items);
+    announcements.value = cloneAnnouncements(items);
+    resetExpandedAnnouncements(items);
+    announcementError.value = '';
+    await markAnnouncementFeedRead(account, sessionId);
+    if (options.showMessage && isCurrentAnnouncementSession(sessionId)) {
+      message.success('公告已同步');
+    }
+  } catch (error) {
+    if (!isCurrentAnnouncementSession(sessionId)) {
+      return;
+    }
+    const nextMessage = toErrorMessage(error, '同步公告失败');
+    announcementError.value = nextMessage;
+    if (options.showMessage) {
+      message.error(nextMessage);
+    }
+  } finally {
+    if (isCurrentAnnouncementSession(sessionId)) {
+      announcementsSyncing.value = false;
+    }
+  }
+}
+
+function openAnnouncementsModal(account: PublicCheckinAccount): void {
+  announcementModalAccount.value = account;
+  announcementsModalVisible.value = true;
+  announcementError.value = '';
+
+  const cached = readCachedAnnouncements(account.siteId);
+  announcements.value = cached;
+  resetExpandedAnnouncements(cached);
+  announcementsLoading.value = cached.length === 0;
+
+  const sessionId = ++announcementSessionId;
+  announcementSyncedSessionId = null;
+  void loadAnnouncementsFromStore(account, sessionId, cached.length === 0);
+  void syncAnnouncementsForAccount(account, { sessionId });
+}
+
+async function syncAnnouncementsManually(): Promise<void> {
+  if (!announcementModalAccount.value) {
+    return;
+  }
+  await syncAnnouncementsForAccount(announcementModalAccount.value, { showMessage: true });
+}
+
 function openSettingsModal(): void {
   settingsForm.checkinCron = settings.checkinCron;
   settingsForm.checkinTime = settings.checkinTime;
   settingsForm.timezone = settings.timezone;
+  settingsForm.announcementPollingIntervalMinutes = settings.announcementPollingIntervalMinutes;
   settingsModalVisible.value = true;
 }
 
@@ -936,7 +1289,7 @@ onMounted(() => {
 
 .accounts-table {
   width: 100%;
-  min-width: 1000px;
+  min-width: 1120px;
   table-layout: fixed;
   border-collapse: collapse;
   text-align: left;
@@ -971,11 +1324,15 @@ onMounted(() => {
 }
 
 .accounts-table .col-status {
-  width: 248px;
+  width: 168px;
+}
+
+.accounts-table .col-announcement {
+  width: 84px;
 }
 
 .accounts-table .col-actions {
-  width: 372px;
+  width: 384px;
 }
 
 .accounts-table th:last-child {
@@ -997,6 +1354,17 @@ onMounted(() => {
   font-size: var(--text-sm);
   line-height: var(--leading-body);
   vertical-align: middle;
+}
+
+.accounts-table th:nth-child(5),
+.accounts-table td:nth-child(5) {
+  padding-left: 4px;
+  padding-right: 8px;
+}
+
+.accounts-table th:nth-child(4),
+.accounts-table td:nth-child(4) {
+  padding-right: 8px;
 }
 
 .accounts-table td:last-child {
@@ -1099,6 +1467,85 @@ onMounted(() => {
   flex-direction: column;
   align-items: flex-start;
   gap: 4px;
+}
+
+.announcement-cell {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  transform: translateX(-20px);
+}
+
+.announcement-cell :deep(.announcement-pill) {
+  min-width: 84px;
+  height: 36px;
+  padding: 0 10px !important;
+  border-radius: 999px;
+  --n-color: rgba(238, 242, 255, 0.96) !important;
+  --n-color-hover: #e0e7ff !important;
+  --n-color-pressed: #c7d2fe !important;
+  --n-color-focus: #e0e7ff !important;
+  --n-text-color: #3730a3 !important;
+  --n-text-color-hover: #312e81 !important;
+  --n-border: 1px solid rgba(99, 102, 241, 0.2) !important;
+  --n-border-hover: 1px solid rgba(99, 102, 241, 0.28) !important;
+  --n-border-pressed: 1px solid rgba(99, 102, 241, 0.32) !important;
+  --n-border-focus: 1px solid rgba(99, 102, 241, 0.32) !important;
+  box-shadow: 0 8px 18px rgba(79, 70, 229, 0.08);
+  backdrop-filter: blur(12px);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.announcement-cell :deep(.announcement-pill .n-button__content) {
+  gap: 6px;
+}
+
+.announcement-cell :deep(.announcement-pill:not(.n-button--disabled):hover) {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px rgba(79, 70, 229, 0.12);
+}
+
+.announcement-cell :deep(.announcement-pill.has-unread) {
+  --n-color: rgba(255, 247, 237, 0.96) !important;
+  --n-color-hover: #ffedd5 !important;
+  --n-color-pressed: #fed7aa !important;
+  --n-color-focus: #ffedd5 !important;
+  --n-text-color: #9a3412 !important;
+  --n-text-color-hover: #7c2d12 !important;
+  --n-border: 1px solid rgba(249, 115, 22, 0.22) !important;
+  --n-border-hover: 1px solid rgba(249, 115, 22, 0.32) !important;
+  --n-border-pressed: 1px solid rgba(249, 115, 22, 0.38) !important;
+  --n-border-focus: 1px solid rgba(249, 115, 22, 0.38) !important;
+  box-shadow: 0 12px 24px rgba(249, 115, 22, 0.12);
+}
+
+.announcement-pill__label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.01em;
+}
+
+.announcement-pill__hint {
+  color: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  opacity: 0.78;
+}
+
+.announcement-pill__badge {
+  display: inline-flex;
+  min-width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #fb923c, #f97316);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 8px 16px rgba(249, 115, 22, 0.24);
 }
 
 .muted-small {
@@ -1318,6 +1765,337 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.announcements-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.announcements-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  border-radius: 16px;
+  background:
+    linear-gradient(140deg, rgba(255, 255, 255, 0.96), rgba(238, 242, 255, 0.84)),
+    radial-gradient(circle at top right, rgba(251, 146, 60, 0.1), transparent 45%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 14px 28px rgba(15, 23, 42, 0.06);
+  backdrop-filter: blur(16px);
+}
+
+.announcements-toolbar-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.announcements-site {
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: var(--weight-bold);
+}
+
+.announcements-meta {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.announcements-toolbar :deep(.announcement-sync-btn) {
+  min-width: 104px;
+  height: 38px;
+  border-radius: 999px;
+  --n-color: #ffffff !important;
+  --n-color-hover: #eef2ff !important;
+  --n-color-pressed: #e0e7ff !important;
+  --n-color-focus: #eef2ff !important;
+  --n-text-color: #3730a3 !important;
+  --n-text-color-hover: #312e81 !important;
+  --n-border: 1px solid rgba(99, 102, 241, 0.22) !important;
+  --n-border-hover: 1px solid rgba(99, 102, 241, 0.32) !important;
+  --n-border-pressed: 1px solid rgba(99, 102, 241, 0.38) !important;
+  --n-border-focus: 1px solid rgba(99, 102, 241, 0.38) !important;
+}
+
+.announcements-skeleton-list,
+.announcements-list {
+  display: flex;
+  max-height: min(62vh, 620px);
+  flex-direction: column;
+  gap: 12px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.announcement-skeleton-card {
+  height: 126px;
+  border-radius: 18px;
+  background:
+    linear-gradient(90deg, rgba(226, 232, 240, 0.72) 22%, rgba(248, 250, 252, 0.98) 50%, rgba(226, 232, 240, 0.72) 78%);
+  background-size: 200% 100%;
+  animation: models-skeleton-shimmer 1.2s linear infinite;
+}
+
+.announcement-state {
+  display: flex;
+  min-height: 240px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(255, 255, 255, 0.9));
+  padding: 28px 24px;
+  text-align: center;
+}
+
+.announcement-state-error {
+  border-color: #fdba74;
+  background: linear-gradient(180deg, rgba(255, 247, 237, 0.92), rgba(255, 255, 255, 0.94));
+}
+
+.announcement-state__title {
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: var(--weight-bold);
+}
+
+.announcement-state__text {
+  max-width: 460px;
+  color: #64748b;
+  font-size: var(--text-sm);
+  line-height: 1.68;
+}
+
+.announcement-inline-error {
+  border: 1px solid #fed7aa;
+  border-radius: 14px;
+  background: #fff7ed;
+  padding: 12px 14px;
+  color: #9a3412;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.announcement-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.94)),
+    radial-gradient(circle at top right, rgba(79, 70, 229, 0.08), transparent 42%);
+  padding: 18px;
+  box-shadow: 0 16px 30px rgba(15, 23, 42, 0.06);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.announcement-card::before {
+  content: '';
+  position: absolute;
+  top: 18px;
+  bottom: 18px;
+  left: 0;
+  width: 4px;
+  border-radius: 999px;
+  background: #6366f1;
+}
+
+.announcement-card.is-warning::before {
+  background: #f59e0b;
+}
+
+.announcement-card.is-error::before {
+  background: #ef4444;
+}
+
+.announcement-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 20px 32px rgba(15, 23, 42, 0.08);
+}
+
+.announcement-card__header,
+.announcement-card__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.announcement-card__title-wrap {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.announcement-card__toggle {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: #4f46e5;
+  font-size: 12px;
+  font-weight: var(--weight-semibold);
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.announcement-card__toggle:hover,
+.announcement-card__toggle:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.announcement-card__title {
+  margin: 0;
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: var(--weight-bold);
+  line-height: 1.4;
+}
+
+.announcement-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.announcement-read-state {
+  color: #475569;
+  font-weight: var(--weight-semibold);
+}
+
+.announcement-read-state.is-unread {
+  color: #ea580c;
+}
+
+.announcement-card__content {
+  color: #334155;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.announcement-card.is-collapsed .announcement-card__content {
+  display: none;
+}
+
+.announcement-card__content :deep(p) {
+  margin: 0 0 0.5em;
+}
+
+.announcement-card__content :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.announcement-card__content :deep(a) {
+  color: #4f46e5;
+  text-decoration: none;
+}
+
+.announcement-card__content :deep(a:hover),
+.announcement-card__content :deep(a:focus-visible) {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.announcement-card__content :deep(ul),
+.announcement-card__content :deep(ol) {
+  margin: 0.35em 0 0.55em 1.25em;
+  padding: 0;
+}
+
+.announcement-card__content :deep(li + li) {
+  margin-top: 0.24em;
+}
+
+.announcement-card__content :deep(center) {
+  margin: 0.35em 0;
+}
+
+.announcement-card__content :deep(br) {
+  line-height: 1.15;
+}
+
+.announcement-card__content :deep(strong),
+.announcement-card__content :deep(b) {
+  color: #0f172a;
+}
+
+.announcement-card__content :deep(code) {
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 6px;
+  background: rgba(241, 245, 249, 0.9);
+  padding: 0.08em 0.38em;
+  color: #1e293b;
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+.announcement-card__content :deep(pre) {
+  overflow: auto;
+  max-width: 100%;
+  margin: 0.5em 0;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 10px 12px;
+}
+
+.announcement-card__content :deep(pre code) {
+  display: block;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: #0f172a;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.announcement-card__seen,
+.announcement-card__source {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.announcement-card__source {
+  color: #4f46e5;
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+}
+
+.announcement-card__source:hover,
+.announcement-card__source:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.announcement-card__source.is-muted {
+  color: #94a3b8;
+}
+
+.announcements-footer-note {
+  max-width: 520px;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.58;
 }
 
 .models-summary {
@@ -1550,6 +2328,13 @@ onMounted(() => {
   box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
 }
 
+:global(.announcements-modal.n-card) {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.94)),
+    radial-gradient(circle at top right, rgba(99, 102, 241, 0.08), transparent 38%);
+  backdrop-filter: blur(20px);
+}
+
 :global(.public-checkin-modal .n-card-header) {
   min-height: 58px;
   padding: 18px 24px 14px;
@@ -1599,8 +2384,15 @@ onMounted(() => {
   }
 
   .toolbar-left,
-  .toolbar-right {
+  .toolbar-right,
+  .announcements-toolbar,
+  .announcement-card__header,
+  .announcement-card__footer {
     flex-wrap: wrap;
+  }
+
+  .announcements-toolbar {
+    align-items: flex-start;
   }
 
   .form-grid,
@@ -1628,6 +2420,24 @@ onMounted(() => {
 
   .modal-footer-actions {
     justify-content: flex-end;
+  }
+
+  .announcement-card {
+    padding: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .announcement-cell :deep(.announcement-pill),
+  .announcement-card,
+  .announcement-skeleton-card {
+    transition: none;
+    animation: none;
+  }
+
+  .announcement-cell :deep(.announcement-pill:not(.n-button--disabled):hover),
+  .announcement-card:hover {
+    transform: none;
   }
 }
 </style>

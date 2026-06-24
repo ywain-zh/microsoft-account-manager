@@ -225,6 +225,7 @@ export interface PublicCheckinAccount {
   status: PublicCheckinAccountStatus;
   lastError: string | null;
   lastCheckinReward: number | null;
+  announcementUnreadCount: number;
   healthState: 'normal' | 'abnormal' | 'failed' | 'unknown';
   healthMessage: string | null;
   createdAt: number | null;
@@ -276,6 +277,20 @@ export interface PublicCheckinSettings {
   checkinCron: string;
   checkinTime: string;
   timezone: string;
+  announcementPollingIntervalMinutes: 15 | 30 | 60;
+}
+
+export interface PublicCheckinAnnouncement {
+  id: number;
+  siteId: number;
+  sourceKey: string;
+  title: string;
+  content: string;
+  level: 'info' | 'warning' | 'error';
+  sourceUrl: string | null;
+  firstSeenAt: number | null;
+  lastSeenAt: number | null;
+  readAt: number | null;
 }
 
 export interface PublicCheckinBalanceResult {
