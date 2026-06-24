@@ -11,6 +11,7 @@ export type PublicCheckinCredentialType = 'password' | 'access_token' | 'cookie'
 export type PublicCheckinAccountStatus = 'active' | 'disabled' | 'error';
 export type PublicCheckinStatus = 'success' | 'failed' | 'skipped';
 export type PublicCheckinTriggeredBy = 'scheduler' | 'manual';
+export type PublicCheckinDailyBalanceDisplayMode = 'none' | 'reward' | 'usage';
 
 export interface PublicCheckinSite {
   id: number;
@@ -43,7 +44,8 @@ export interface PublicCheckinAccount {
   useProxy: boolean;
   status: PublicCheckinAccountStatus;
   lastError: string | null;
-  lastCheckinReward: number | null;
+  dailyBalanceDisplayMode: PublicCheckinDailyBalanceDisplayMode;
+  dailyBalanceDisplayAmount: number | null;
   announcementUnreadCount: number;
   healthState: 'normal' | 'abnormal' | 'failed' | 'unknown';
   healthMessage: string | null;
@@ -176,6 +178,22 @@ type PublicCheckinAnnouncementRow = {
   read_at: number | null;
 };
 
+type PublicCheckinDailyBalanceBaselineRow = {
+  id: number;
+  account_id: number;
+  local_date: string;
+  baseline_balance: number;
+  captured_at: number;
+  created_at: number;
+  updated_at: number;
+};
+
+type PublicCheckinLatestRewardRow = {
+  account_id: number;
+  reward: number | null;
+  executed_at: number;
+};
+
 type NormalizedAnnouncementInput = {
   sourceKey: string;
   title: string;
@@ -303,6 +321,18 @@ function inferPublicCheckinPlatform(input: {
     return 'anyrouter';
   }
   return input.platform || 'new-api';
+}
+
+function formatZonedLocalDate(timestampSeconds: number, timezone: string): string {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  const parts = formatter.formatToParts(new Date(timestampSeconds * 1000));
+  const read = (type: string) => parts.find((part) => part.type === type)?.value || '';
+  return `${read('year')}-${read('month')}-${read('day')}`;
 }
 
 function toStoredPublicCheckinPlatform(platform: PublicCheckinPlatform): StoredPublicCheckinPlatform {
@@ -821,7 +851,10 @@ function joinedToAccountWithSite(row: JoinedAccountRow): AccountWithSite {
 function toSafeAccount(
   account: AccountRow,
   site: SiteRow,
-  lastCheckinReward: number | null = null,
+  dailyBalanceDisplay: {
+    mode: PublicCheckinDailyBalanceDisplayMode;
+    amount: number | null;
+  } = { mode: 'none', amount: null },
   announcementUnreadCount = 0
 ): PublicCheckinAccount {
   const health = resolveHealth(account);
@@ -838,7 +871,8 @@ function toSafeAccount(
     useProxy: Number(account.use_proxy) === 1,
     status: account.status,
     lastError: account.last_error,
-    lastCheckinReward,
+    dailyBalanceDisplayMode: dailyBalanceDisplay.mode,
+    dailyBalanceDisplayAmount: dailyBalanceDisplay.amount,
     announcementUnreadCount,
     ...health,
     createdAt: account.created_at == null ? null : Number(account.created_at),
@@ -1475,6 +1509,179 @@ async function listAnnouncementsForAccount(db: D1Database, accountId: number): P
   return listAnnouncementsForSite(db, Number(row.site.id));
 }
 
+async function listDailyBalanceBaselinesForDate(
+  db: D1Database,
+  localDate: string
+): Promise<Map<number, PublicCheckinDailyBalanceBaselineRow>> {
+  const rows = await dbAll<PublicCheckinDailyBalanceBaselineRow>(db, `
+    SELECT
+      id,
+      account_id,
+      local_date,
+      baseline_balance,
+      captured_at,
+      created_at,
+      updated_at
+    FROM public_checkin_daily_balance_baselines
+    WHERE local_date = ?
+  `, [localDate]);
+  return new Map(rows.map((row) => [Number(row.account_id), row]));
+}
+
+async function listTodayRewardTotalsForDate(
+  db: D1Database,
+  localDate: string,
+  timezone: string
+): Promise<Map<number, number>> {
+  const rows = await dbAll<{ account_id: number; reward: number | null; executed_at: number }>(db, `
+    SELECT
+      account_id,
+      reward,
+      executed_at
+    FROM public_checkin_logs
+    WHERE status = 'success'
+      AND reward IS NOT NULL
+      AND reward > 0
+  `);
+  const totals = new Map<number, number>();
+  for (const row of rows) {
+    const executedAt = Number(row.executed_at);
+    if (formatZonedLocalDate(executedAt, timezone) !== localDate) {
+      continue;
+    }
+    const accountId = Number(row.account_id);
+    const next = (totals.get(accountId) || 0) + Number(row.reward || 0);
+    totals.set(accountId, Math.round(next * 1_000_000) / 1_000_000);
+  }
+  return totals;
+}
+
+async function listLatestPositiveRewardsForDate(
+  db: D1Database,
+  localDate: string,
+  timezone: string
+): Promise<Map<number, PublicCheckinLatestRewardRow>> {
+  const rows = await dbAll<PublicCheckinLatestRewardRow>(db, `
+    SELECT
+      account_id,
+      reward,
+      executed_at
+    FROM public_checkin_logs
+    WHERE status = 'success'
+      AND reward IS NOT NULL
+      AND reward > 0
+    ORDER BY executed_at DESC, id DESC
+  `);
+
+  const map = new Map<number, PublicCheckinLatestRewardRow>();
+  for (const row of rows) {
+    if (formatZonedLocalDate(Number(row.executed_at), timezone) !== localDate) {
+      continue;
+    }
+    const accountId = Number(row.account_id);
+    if (!map.has(accountId)) {
+      map.set(accountId, {
+        account_id: accountId,
+        reward: row.reward == null ? null : Number(row.reward),
+        executed_at: Number(row.executed_at)
+      });
+    }
+  }
+  return map;
+}
+
+async function upsertDailyBalanceBaseline(
+  db: D1Database,
+  accountId: number,
+  localDate: string,
+  baselineBalance: number,
+  capturedAt: number
+): Promise<void> {
+  await dbRun(db, `
+    INSERT INTO public_checkin_daily_balance_baselines (
+      account_id,
+      local_date,
+      baseline_balance,
+      captured_at,
+      created_at,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(account_id, local_date) DO UPDATE SET
+      baseline_balance = excluded.baseline_balance,
+      captured_at = excluded.captured_at,
+      updated_at = excluded.updated_at
+  `, [accountId, localDate, baselineBalance, capturedAt, capturedAt, capturedAt]);
+}
+
+async function captureDailyBalanceBaselines(db: D1Database, timezone: string): Promise<void> {
+  const accounts = await listAccounts(db);
+  const now = unixNow();
+  const localDate = formatZonedLocalDate(now, timezone);
+
+  for (const account of accounts) {
+    if (account.status === 'disabled') {
+      continue;
+    }
+    const result = await refreshBalanceForAccount(db, account.id, {
+      baselineMode: 'capture',
+      timezone,
+      localDate
+    });
+    if (!result.success || typeof result.balance !== 'number') {
+      console.warn(`[PublicCheckin] 余额基线采集失败: accountId=${account.id}`, result.errorMessage || '未知原因');
+    }
+  }
+}
+
+function resolveDailyBalanceDisplayState(input: {
+  baselineBalance: number | null;
+  currentBalance: number | null;
+  balanceUpdatedAt: number | null;
+  todayRewardTotal: number;
+  latestPositiveReward: PublicCheckinLatestRewardRow | null;
+}): { mode: PublicCheckinDailyBalanceDisplayMode; amount: number | null } {
+  const {
+    baselineBalance,
+    currentBalance,
+    balanceUpdatedAt,
+    todayRewardTotal,
+    latestPositiveReward
+  } = input;
+
+  if (baselineBalance == null || currentBalance == null || balanceUpdatedAt == null) {
+    return { mode: 'none', amount: null };
+  }
+
+  const computedUsage = Math.max(0, baselineBalance + todayRewardTotal - currentBalance);
+  const todayUsed = Number.isFinite(computedUsage)
+    ? Math.round(computedUsage * 1_000_000) / 1_000_000
+    : 0;
+
+  if (
+    latestPositiveReward
+    && typeof latestPositiveReward.reward === 'number'
+    && latestPositiveReward.reward > 0
+    && balanceUpdatedAt <= latestPositiveReward.executed_at
+  ) {
+    return { mode: 'reward', amount: latestPositiveReward.reward };
+  }
+
+  if (todayUsed > 0) {
+    return { mode: 'usage', amount: todayUsed };
+  }
+
+  if (
+    latestPositiveReward
+    && typeof latestPositiveReward.reward === 'number'
+    && latestPositiveReward.reward > 0
+  ) {
+    return { mode: 'reward', amount: latestPositiveReward.reward };
+  }
+
+  return { mode: 'none', amount: null };
+}
+
 async function markAnnouncementsReadForSite(db: D1Database, siteId: number): Promise<void> {
   await dbRun(db, `
     UPDATE public_checkin_announcements
@@ -1549,28 +1756,31 @@ async function listAccounts(db: D1Database): Promise<PublicCheckinAccount[]> {
     INNER JOIN public_checkin_sites s ON s.id = a.site_id
     ORDER BY COALESCE(a.created_at, a.id) ASC, a.id ASC
   `);
-
-  const rewardRows = await dbAll<{ account_id: number; reward: number | null }>(db, `
-    SELECT account_id, reward
-    FROM public_checkin_logs
-    WHERE status = 'success'
-    ORDER BY executed_at DESC, id DESC
-  `);
-  const rewards = new Map<number, number | null>();
-  for (const row of rewardRows) {
-    if (!rewards.has(Number(row.account_id))) {
-      rewards.set(Number(row.account_id), row.reward == null ? null : Number(row.reward));
-    }
-  }
-
   const unreadCounts = await getAnnouncementUnreadCounts(db);
+  const settings = await getSettings(db);
+  const now = unixNow();
+  const localDate = formatZonedLocalDate(now, settings.timezone);
+  const [baselines, todayRewardTotals, latestPositiveRewards] = await Promise.all([
+    listDailyBalanceBaselinesForDate(db, localDate),
+    listTodayRewardTotalsForDate(db, localDate, settings.timezone),
+    listLatestPositiveRewardsForDate(db, localDate, settings.timezone)
+  ]);
 
   return rows.map((row) => {
     const { account, site } = joinedToAccountWithSite(row);
+    const accountId = Number(account.id);
+    const baseline = baselines.get(accountId);
+    const displayState = resolveDailyBalanceDisplayState({
+      baselineBalance: baseline ? Number(baseline.baseline_balance) : null,
+      currentBalance: account.balance == null ? null : Number(account.balance),
+      balanceUpdatedAt: account.balance_updated_at == null ? null : Number(account.balance_updated_at),
+      todayRewardTotal: todayRewardTotals.get(accountId) ?? 0,
+      latestPositiveReward: latestPositiveRewards.get(accountId) ?? null
+    });
     return toSafeAccount(
       account,
       site,
-      rewards.get(account.id) ?? null,
+      displayState,
       unreadCounts.get(Number(site.id)) ?? 0
     );
   });
@@ -1853,7 +2063,15 @@ async function resolveCredential(db: D1Database, accountId: number): Promise<Acc
   return { ...row, credential: nextCredential };
 }
 
-async function refreshBalanceForAccount(db: D1Database, accountId: number): Promise<BalanceResult> {
+async function refreshBalanceForAccount(
+  db: D1Database,
+  accountId: number,
+  options: {
+    baselineMode?: 'none' | 'capture';
+    timezone?: string;
+    localDate?: string;
+  } = {}
+): Promise<BalanceResult> {
   let resolved: Awaited<ReturnType<typeof resolveCredential>>;
   try {
     resolved = await resolveCredential(db, accountId);
@@ -1870,11 +2088,17 @@ async function refreshBalanceForAccount(db: D1Database, accountId: number): Prom
   }));
   const now = unixNow();
   if (result.success && typeof result.balance === 'number') {
+    const baselineMode = options.baselineMode ?? 'none';
     await dbRun(db, `
       UPDATE public_checkin_accounts
       SET balance = ?, balance_updated_at = ?, last_error = NULL, status = 'active', updated_at = ?
       WHERE id = ?
     `, [result.balance, now, now, accountId]);
+    if (baselineMode === 'capture') {
+      const timezone = options.timezone ?? (await getSettings(db)).timezone;
+      const localDate = options.localDate ?? formatZonedLocalDate(now, timezone);
+      await upsertDailyBalanceBaseline(db, accountId, localDate, result.balance, now);
+    }
     return result;
   }
 
@@ -2657,12 +2881,20 @@ async function restartPublicCheckinScheduler(db: D1Database): Promise<void> {
       });
     }
   });
-  balanceSchedule = null;
+  balanceSchedule = new SimpleCronTask('0 0 * * *', settings.timezone, async () => {
+    console.info('[PublicCheckin] 开始采集每日余额基线');
+    try {
+      await captureDailyBalanceBaselines(db, settings.timezone);
+    } catch (error) {
+      console.error('[PublicCheckin] 每日余额基线采集异常', error);
+    }
+  });
   checkinSchedule.start();
+  balanceSchedule.start();
   scheduleAnnouncementPolling(db, settings.announcementPollingIntervalMinutes, !announcementPollingBootstrapped);
   announcementPollingBootstrapped = true;
   console.info(
-    `[PublicCheckin] 调度器已启动: checkin=${settings.checkinCron}, timezone=${settings.timezone}, announcements=${settings.announcementPollingIntervalMinutes}m`
+    `[PublicCheckin] 调度器已启动: checkin=${settings.checkinCron}, balance=0 0 * * *, timezone=${settings.timezone}, announcements=${settings.announcementPollingIntervalMinutes}m`
   );
 }
 
@@ -2830,6 +3062,11 @@ export const publicCheckinTestHooks = {
   inferPublicCheckinRewardFromBalanceDelta,
   buildCheckinResultForNotification,
   validateCronExpression,
+  formatZonedLocalDate,
+  resolveDailyBalanceDisplayState,
+  listAccounts,
+  refreshBalanceForAccount,
+  captureDailyBalanceBaselines,
   extractAnnouncementsFromNoticePayload,
   buildAnnouncementSourceKey,
   normalizeAnnouncementLevel,

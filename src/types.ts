@@ -192,6 +192,7 @@ export type PublicCheckinCredentialType = 'password' | 'access_token' | 'cookie'
 export type PublicCheckinAccountStatus = 'active' | 'disabled' | 'error';
 export type PublicCheckinStatus = 'success' | 'failed' | 'skipped';
 export type PublicCheckinTriggeredBy = 'scheduler' | 'manual';
+export type PublicCheckinDailyBalanceDisplayMode = 'none' | 'reward' | 'usage';
 
 export interface PublicCheckinSite {
   id: number;
@@ -224,7 +225,8 @@ export interface PublicCheckinAccount {
   useProxy: boolean;
   status: PublicCheckinAccountStatus;
   lastError: string | null;
-  lastCheckinReward: number | null;
+  dailyBalanceDisplayMode: PublicCheckinDailyBalanceDisplayMode;
+  dailyBalanceDisplayAmount: number | null;
   announcementUnreadCount: number;
   healthState: 'normal' | 'abnormal' | 'failed' | 'unknown';
   healthMessage: string | null;

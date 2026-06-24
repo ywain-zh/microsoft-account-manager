@@ -50,6 +50,27 @@ type MemoryAnnouncementRow = {
   read_at: number | null;
 };
 
+type MemoryBaselineRow = {
+  id: number;
+  account_id: number;
+  local_date: string;
+  baseline_balance: number;
+  captured_at: number;
+  created_at: number;
+  updated_at: number;
+};
+
+type MemoryLogRow = {
+  id: number;
+  account_id: number;
+  triggered_by: 'scheduler' | 'manual';
+  status: 'success' | 'failed' | 'skipped';
+  reward: number | null;
+  reward_note: string | null;
+  error_message: string | null;
+  executed_at: number;
+};
+
 class PublicCheckinMemoryStatement implements D1PreparedStatement {
   private readonly database: PublicCheckinMemoryD1Database;
   private readonly query: string;
@@ -110,8 +131,27 @@ class PublicCheckinMemoryStatement implements D1PreparedStatement {
       return { results: results as T[], success: true, meta: { rows_read: results.length } };
     }
 
+    if (/FROM public_checkin_daily_balance_baselines/i.test(this.query)) {
+      const localDate = String(this.values[0]);
+      const results = this.database.baselines.filter((item) => item.local_date === localDate);
+      return { results: results as T[], success: true, meta: { rows_read: results.length } };
+    }
+
     if (/FROM public_checkin_logs/i.test(this.query)) {
-      return { results: [] as T[], success: true, meta: { rows_read: 0 } };
+      let results = this.database.logs.slice();
+      if (/status = 'success'/i.test(this.query)) {
+        results = results.filter((item) => item.status === 'success');
+      }
+      if (/reward IS NOT NULL/i.test(this.query)) {
+        results = results.filter((item) => item.reward != null);
+      }
+      if (/reward > 0/i.test(this.query)) {
+        results = results.filter((item) => typeof item.reward === 'number' && item.reward > 0);
+      }
+      if (/ORDER BY executed_at DESC, id DESC/i.test(this.query)) {
+        results = results.sort((left, right) => (right.executed_at - left.executed_at) || (right.id - left.id));
+      }
+      return { results: results as T[], success: true, meta: { rows_read: results.length } };
     }
 
     if (/FROM public_checkin_accounts/i.test(this.query) && /SELECT DISTINCT site_id/i.test(this.query)) {
@@ -184,6 +224,71 @@ class PublicCheckinMemoryStatement implements D1PreparedStatement {
       return { success: true, meta: { changes: 1, rows_written: 1, last_row_id: row.id } };
     }
 
+    if (/INSERT INTO public_checkin_daily_balance_baselines/i.test(this.query)) {
+      const accountId = Number(this.values[0]);
+      const localDate = String(this.values[1]);
+      const existing = this.database.baselines.find((item) => item.account_id === accountId && item.local_date === localDate);
+      if (existing) {
+        existing.baseline_balance = Number(this.values[2]);
+        existing.captured_at = Number(this.values[3]);
+        existing.updated_at = Number(this.values[5]);
+        return { success: true, meta: { changes: 1, rows_written: 1, last_row_id: existing.id } };
+      }
+
+      const row: MemoryBaselineRow = {
+        id: this.database.nextBaselineId++,
+        account_id: accountId,
+        local_date: localDate,
+        baseline_balance: Number(this.values[2]),
+        captured_at: Number(this.values[3]),
+        created_at: Number(this.values[4]),
+        updated_at: Number(this.values[5])
+      };
+      this.database.baselines.push(row);
+      return { success: true, meta: { changes: 1, rows_written: 1, last_row_id: row.id } };
+    }
+
+    if (/INSERT INTO public_checkin_logs/i.test(this.query)) {
+      const row: MemoryLogRow = {
+        id: this.database.nextLogId++,
+        account_id: Number(this.values[0]),
+        triggered_by: this.values[1] as MemoryLogRow['triggered_by'],
+        status: this.values[2] as MemoryLogRow['status'],
+        reward: this.values[3] == null ? null : Number(this.values[3]),
+        reward_note: this.values[4] == null ? null : String(this.values[4]),
+        error_message: this.values[5] == null ? null : String(this.values[5]),
+        executed_at: Number(this.values[6])
+      };
+      this.database.logs.push(row);
+      return { success: true, meta: { changes: 1, rows_written: 1, last_row_id: row.id } };
+    }
+
+    if (/UPDATE public_checkin_accounts\s+SET balance = \?/i.test(this.query)) {
+      const accountId = Number(this.values[3]);
+      const row = this.database.accounts.find((item) => item.id === accountId);
+      if (row) {
+        row.balance = Number(this.values[0]);
+        row.balance_updated_at = Number(this.values[1]);
+        row.last_error = null;
+        row.status = 'active';
+        row.updated_at = Number(this.values[2]);
+      }
+      return { success: true, meta: { changes: row ? 1 : 0, rows_written: row ? 1 : 0 } };
+    }
+
+    if (/UPDATE public_checkin_accounts\s+SET last_error = \?/i.test(this.query)) {
+      const accountId = Number(this.values[3]);
+      const row = this.database.accounts.find((item) => item.id === accountId);
+      if (row) {
+        row.last_error = this.values[0] == null ? null : String(this.values[0]);
+        if (this.values[1] != null) {
+          row.status = this.values[1] as MemoryAccountRow['status'];
+        }
+        row.updated_at = Number(this.values[2]);
+      }
+      return { success: true, meta: { changes: row ? 1 : 0, rows_written: row ? 1 : 0 } };
+    }
+
     if (/UPDATE public_checkin_announcements\s+SET title = \?/i.test(this.query)) {
       const row = this.database.announcements.find((item) => item.id === Number(this.values[5]));
       if (row) {
@@ -222,10 +327,14 @@ class PublicCheckinMemoryD1Database implements D1Database {
   readonly sites: MemorySiteRow[] = [];
   readonly accounts: MemoryAccountRow[] = [];
   readonly announcements: MemoryAnnouncementRow[] = [];
+  readonly baselines: MemoryBaselineRow[] = [];
+  readonly logs: MemoryLogRow[] = [];
   readonly settings = new Map<string, string>();
   nextSiteId = 1;
   nextAccountId = 1;
   nextAnnouncementId = 1;
+  nextBaselineId = 1;
+  nextLogId = 1;
 
   prepare(query: string): D1PreparedStatement {
     return new PublicCheckinMemoryStatement(this, query);
@@ -304,6 +413,68 @@ async function seedPublicCheckinAccount(db: PublicCheckinMemoryD1Database, siteI
   return { siteId: resolvedSiteId, accountId };
 }
 
+async function withFakeNow<T>(timestampSeconds: number, callback: () => Promise<T> | T): Promise<T> {
+  const originalNow = Date.now;
+  Date.now = () => timestampSeconds * 1000;
+  try {
+    return await callback();
+  } finally {
+    Date.now = originalNow;
+  }
+}
+
+function setMemoryAccountBalance(
+  db: PublicCheckinMemoryD1Database,
+  accountId: number,
+  balance: number,
+  updatedAt: number
+): void {
+  const account = db.accounts.find((item) => item.id === accountId);
+  if (!account) throw new Error(`Missing account ${accountId}`);
+  account.balance = balance;
+  account.balance_updated_at = updatedAt;
+  account.status = 'active';
+  account.last_error = null;
+  account.updated_at = updatedAt;
+}
+
+function addMemoryBaseline(
+  db: PublicCheckinMemoryD1Database,
+  accountId: number,
+  localDate: string,
+  balance: number,
+  capturedAt: number
+): void {
+  db.baselines.push({
+    id: db.nextBaselineId++,
+    account_id: accountId,
+    local_date: localDate,
+    baseline_balance: balance,
+    captured_at: capturedAt,
+    created_at: capturedAt,
+    updated_at: capturedAt
+  });
+}
+
+function addMemoryLog(
+  db: PublicCheckinMemoryD1Database,
+  accountId: number,
+  reward: number | null,
+  executedAt: number,
+  status: MemoryLogRow['status'] = 'success'
+): void {
+  db.logs.push({
+    id: db.nextLogId++,
+    account_id: accountId,
+    triggered_by: 'manual',
+    status,
+    reward,
+    reward_note: null,
+    error_message: null,
+    executed_at: executedAt
+  });
+}
+
 test('normalizes raw headers into a safe Cookie header', () => {
   const cookie = publicCheckinTestHooks.normalizeCookieHeader(`
     Host: example.test
@@ -366,6 +537,207 @@ test('infers checkin reward from positive balance delta', () => {
   assert.equal(publicCheckinTestHooks.inferPublicCheckinRewardFromBalanceDelta(null, 18.50), null);
   assert.equal(publicCheckinTestHooks.inferPublicCheckinRewardFromBalanceDelta(18.00, Number.NaN), null);
   assert.equal(publicCheckinTestHooks.inferPublicCheckinRewardFromBalanceDelta(0.1, 0.3), 0.2);
+});
+
+test('formats local dates with the configured public checkin timezone', () => {
+  const timestamp = Date.UTC(2026, 5, 23, 16, 30, 0) / 1000;
+
+  assert.equal(publicCheckinTestHooks.formatZonedLocalDate(timestamp, 'Asia/Shanghai'), '2026-06-24');
+  assert.equal(publicCheckinTestHooks.formatZonedLocalDate(timestamp, 'UTC'), '2026-06-23');
+});
+
+test('resolves daily balance display state for reward priority and later usage', () => {
+  assert.deepEqual(
+    publicCheckinTestHooks.resolveDailyBalanceDisplayState({
+      baselineBalance: null,
+      currentBalance: 95,
+      balanceUpdatedAt: 1000,
+      todayRewardTotal: 0,
+      latestPositiveReward: null
+    }),
+    { mode: 'none', amount: null }
+  );
+
+  assert.deepEqual(
+    publicCheckinTestHooks.resolveDailyBalanceDisplayState({
+      baselineBalance: 100,
+      currentBalance: 95,
+      balanceUpdatedAt: 1000,
+      todayRewardTotal: 0,
+      latestPositiveReward: null
+    }),
+    { mode: 'usage', amount: 5 }
+  );
+
+  assert.deepEqual(
+    publicCheckinTestHooks.resolveDailyBalanceDisplayState({
+      baselineBalance: 100,
+      currentBalance: 105,
+      balanceUpdatedAt: 1090,
+      todayRewardTotal: 10,
+      latestPositiveReward: { account_id: 1, reward: 10, executed_at: 1100 }
+    }),
+    { mode: 'reward', amount: 10 }
+  );
+
+  assert.deepEqual(
+    publicCheckinTestHooks.resolveDailyBalanceDisplayState({
+      baselineBalance: 100,
+      currentBalance: 100,
+      balanceUpdatedAt: 1200,
+      todayRewardTotal: 10,
+      latestPositiveReward: { account_id: 1, reward: 10, executed_at: 1100 }
+    }),
+    { mode: 'usage', amount: 10 }
+  );
+
+  assert.deepEqual(
+    publicCheckinTestHooks.resolveDailyBalanceDisplayState({
+      baselineBalance: 100,
+      currentBalance: 110,
+      balanceUpdatedAt: 1200,
+      todayRewardTotal: 10,
+      latestPositiveReward: { account_id: 1, reward: 10, executed_at: 1100 }
+    }),
+    { mode: 'reward', amount: 10 }
+  );
+});
+
+test('lists daily usage when a same-day baseline exists and no checkin reward has run', async () => {
+  const { db, cleanup } = await createPublicCheckinDb();
+  const now = Date.UTC(2026, 5, 24, 4, 0, 0) / 1000;
+
+  try {
+    const { accountId } = await seedPublicCheckinAccount(db);
+    addMemoryBaseline(db, accountId, '2026-06-24', 100, now - 3600);
+    setMemoryAccountBalance(db, accountId, 95, now);
+
+    await withFakeNow(now, async () => {
+      const accounts = await publicCheckinTestHooks.listAccounts(db);
+      assert.equal(accounts[0].dailyBalanceDisplayMode, 'usage');
+      assert.equal(accounts[0].dailyBalanceDisplayAmount, 5);
+    });
+  } finally {
+    await cleanup();
+  }
+});
+
+test('keeps the reward visible right after checkin, then switches to usage after later balance refresh', async () => {
+  const { db, cleanup } = await createPublicCheckinDb();
+  const now = Date.UTC(2026, 5, 24, 4, 0, 0) / 1000;
+  const rewardAt = now - 60;
+
+  try {
+    const { accountId } = await seedPublicCheckinAccount(db);
+    addMemoryBaseline(db, accountId, '2026-06-24', 100, now - 3600);
+    addMemoryLog(db, accountId, 10, rewardAt);
+
+    setMemoryAccountBalance(db, accountId, 105, rewardAt - 1);
+    await withFakeNow(now, async () => {
+      const accounts = await publicCheckinTestHooks.listAccounts(db);
+      assert.equal(accounts[0].dailyBalanceDisplayMode, 'reward');
+      assert.equal(accounts[0].dailyBalanceDisplayAmount, 10);
+    });
+
+    setMemoryAccountBalance(db, accountId, 100, now);
+    await withFakeNow(now, async () => {
+      const accounts = await publicCheckinTestHooks.listAccounts(db);
+      assert.equal(accounts[0].dailyBalanceDisplayMode, 'usage');
+      assert.equal(accounts[0].dailyBalanceDisplayAmount, 10);
+    });
+  } finally {
+    await cleanup();
+  }
+});
+
+test('hides daily balance helper without a same-day baseline and after day rollover', async () => {
+  const { db, cleanup } = await createPublicCheckinDb();
+  const now = Date.UTC(2026, 5, 24, 4, 0, 0) / 1000;
+
+  try {
+    const { accountId } = await seedPublicCheckinAccount(db);
+    addMemoryBaseline(db, accountId, '2026-06-23', 100, now - 86400);
+    addMemoryLog(db, accountId, 10, now - 86400);
+    setMemoryAccountBalance(db, accountId, 95, now);
+
+    await withFakeNow(now, async () => {
+      const accounts = await publicCheckinTestHooks.listAccounts(db);
+      assert.equal(accounts[0].dailyBalanceDisplayMode, 'none');
+      assert.equal(accounts[0].dailyBalanceDisplayAmount, null);
+    });
+  } finally {
+    await cleanup();
+  }
+});
+
+test('manual balance refresh does not create a missing daily baseline', async () => {
+  const { db, cleanup } = await createPublicCheckinDb();
+  const now = Date.UTC(2026, 5, 24, 4, 0, 0) / 1000;
+
+  publicCheckinTestHooks.setAdapterOverride(() => ({
+    getBalance: async () => ({ success: true, balance: 88 })
+  } as ReturnType<typeof publicCheckinTestHooks.createAdapter>));
+
+  try {
+    const { accountId } = await seedPublicCheckinAccount(db);
+    await withFakeNow(now, async () => {
+      const result = await publicCheckinTestHooks.refreshBalanceForAccount(db, accountId);
+      assert.equal(result.success, true);
+      assert.equal(result.balance, 88);
+    });
+
+    assert.equal(db.baselines.length, 0);
+    assert.equal(db.accounts.find((item) => item.id === accountId)?.balance, 88);
+  } finally {
+    publicCheckinTestHooks.setAdapterOverride(null);
+    await cleanup();
+  }
+});
+
+test('daily baseline capture stores only successful balance pulls for the local date', async () => {
+  const { db, cleanup } = await createPublicCheckinDb();
+  const now = Date.UTC(2026, 5, 23, 16, 5, 0) / 1000;
+  const originalWarn = console.warn;
+  let calls = 0;
+
+  console.warn = () => {};
+  publicCheckinTestHooks.setAdapterOverride(() => ({
+    getBalance: async () => {
+      calls += 1;
+      return calls === 1
+        ? { success: true, balance: 100 }
+        : { success: false, errorMessage: 'upstream failed' };
+    }
+  } as ReturnType<typeof publicCheckinTestHooks.createAdapter>));
+
+  try {
+    const first = await seedPublicCheckinAccount(db);
+    const second = await seedPublicCheckinAccount(db);
+
+    await withFakeNow(now, async () => {
+      await publicCheckinTestHooks.captureDailyBalanceBaselines(db, 'Asia/Shanghai');
+    });
+
+    assert.equal(calls, 2);
+    assert.deepEqual(
+      db.baselines.map((item) => ({
+        account_id: item.account_id,
+        local_date: item.local_date,
+        baseline_balance: item.baseline_balance
+      })),
+      [{
+        account_id: first.accountId,
+        local_date: '2026-06-24',
+        baseline_balance: 100
+      }]
+    );
+    assert.equal(db.accounts.find((item) => item.id === first.accountId)?.balance, 100);
+    assert.equal(db.accounts.find((item) => item.id === second.accountId)?.balance, null);
+  } finally {
+    console.warn = originalWarn;
+    publicCheckinTestHooks.setAdapterOverride(null);
+    await cleanup();
+  }
 });
 
 test('carries successful checkin balance details for notifications', () => {

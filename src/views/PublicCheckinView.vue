@@ -84,8 +84,13 @@
                 <td>
                   <div class="account-balance-cell">
                     <strong :title="formatMoney(account.balance)">{{ formatCompactMoney(account.balance) }}</strong>
-                    <span :class="{ 'is-positive': Boolean(account.lastCheckinReward && account.lastCheckinReward > 0) }">
-                      {{ formatSignedMoney(account.lastCheckinReward) }}
+                    <span
+                      v-if="hasDailyBalanceDisplay(account)"
+                      class="account-balance-cell__daily"
+                      :class="dailyBalanceDisplayClass(account)"
+                      :title="dailyBalanceDisplayTitle(account)"
+                    >
+                      {{ formatDailyBalanceDisplay(account) }}
                     </span>
                   </div>
                 </td>
@@ -732,10 +737,31 @@ function statusTagType(value: PublicCheckinStatus): 'success' | 'warning' | 'err
   return 'warning';
 }
 
-function formatSignedMoney(value: number | null | undefined): string {
-  if (typeof value !== 'number' || Number.isNaN(value)) return '+0.00';
-  const absolute = Math.abs(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return `${value < 0 ? '-' : '+'}${absolute}`;
+function hasDailyBalanceDisplay(account: PublicCheckinAccount): boolean {
+  const amount = account.dailyBalanceDisplayAmount;
+  return account.dailyBalanceDisplayMode !== 'none'
+    && typeof amount === 'number'
+    && Number.isFinite(amount)
+    && amount > 0;
+}
+
+function formatDailyBalanceDisplay(account: PublicCheckinAccount): string {
+  if (!hasDailyBalanceDisplay(account)) return '';
+  const amount = Math.abs(account.dailyBalanceDisplayAmount || 0);
+  const sign = account.dailyBalanceDisplayMode === 'usage' ? '-' : '+';
+  return `${sign}${formatMoney(amount)}`;
+}
+
+function dailyBalanceDisplayTitle(account: PublicCheckinAccount): string {
+  if (account.dailyBalanceDisplayMode === 'usage') return '今日已用';
+  if (account.dailyBalanceDisplayMode === 'reward') return '今日签到奖励';
+  return '';
+}
+
+function dailyBalanceDisplayClass(account: PublicCheckinAccount): string {
+  if (account.dailyBalanceDisplayMode === 'usage') return 'is-usage';
+  if (account.dailyBalanceDisplayMode === 'reward') return 'is-reward';
+  return '';
 }
 
 function formatAnnouncementTime(value: number | null | undefined): string {
@@ -1429,15 +1455,19 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-.account-balance-cell span {
+.account-balance-cell__daily {
   color: #9ca3af;
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
   line-height: 16px;
 }
 
-.account-balance-cell span.is-positive {
+.account-balance-cell__daily.is-reward {
   color: #16a34a;
+}
+
+.account-balance-cell__daily.is-usage {
+  color: #dc2626;
 }
 
 .auto-checkin-badge {
