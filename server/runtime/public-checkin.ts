@@ -1111,6 +1111,129 @@ function mergeSetCookieValues(cookie: string, setCookieHeaders: string[]): strin
   return merged;
 }
 
+function isTurnstileTokenMissingMessage(message: string): boolean {
+  return /turnstile.*(token|response).*(空|缺失|required|missing|empty)|cf-turnstile-response/i.test(message);
+}
+
+function appendTurnstileToRequestPath(requestPath: string, token: string): string {
+  const url = new URL(requestPath, 'https://public-checkin.local');
+  url.searchParams.set('turnstile', token);
+  return `${url.pathname}${url.search}`;
+}
+
+function withTurnstileRequestBody(body: string | undefined, token: string): string | undefined {
+  if (!body) return body;
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return body;
+    return JSON.stringify({ ...parsed, turnstile: token });
+  } catch {
+    return body;
+  }
+}
+
+function getYesCaptchaClientKey(): string {
+  return (process.env.YESCAPTCHA_CLIENT_KEY || process.env.YES_CAPTCHA_CLIENT_KEY || '').trim();
+}
+
+function getYesCaptchaApiBaseUrl(): string {
+  return (process.env.YESCAPTCHA_API_BASE_URL || 'https://api.yescaptcha.com').replace(/\/+$/, '');
+}
+
+function getYesCaptchaTimeoutMs(): number {
+  const value = Number(process.env.YESCAPTCHA_TIMEOUT_MS || 120_000);
+  return Number.isFinite(value) && value > 0 ? value : 120_000;
+}
+
+function getYesCaptchaPollIntervalMs(): number {
+  const value = Number(process.env.YESCAPTCHA_POLL_INTERVAL_MS || 3_000);
+  return Number.isFinite(value) && value > 0 ? value : 3_000;
+}
+
+async function postYesCaptchaJson(pathname: string, payload: unknown, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  const response = await fetch(`${getYesCaptchaApiBaseUrl()}${pathname}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal
+  });
+  const text = await response.text();
+  let parsed: unknown = null;
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    throw new Error(`YesCaptcha 返回的内容不是 JSON：${text.slice(0, 120)}`);
+  }
+  const record = asRecord(parsed);
+  if (!response.ok) {
+    throw new Error(asString(record.errorDescription || record.message).trim() || `YesCaptcha HTTP ${response.status}`);
+  }
+  return record;
+}
+
+function extractYesCaptchaTurnstileToken(payload: unknown): string {
+  const solution = asRecord(asRecord(payload).solution);
+  return asString(solution.token || solution.gRecaptchaResponse || solution.g_recaptcha_response).trim();
+}
+
+async function solveYesCaptchaTurnstileToken(siteUrl: string, siteKey: string): Promise<string> {
+  const clientKey = getYesCaptchaClientKey();
+  if (!clientKey) {
+    throw new Error('YesCaptcha 未配置：请在环境变量 YESCAPTCHA_CLIENT_KEY 中填写 clientKey');
+  }
+  if (!siteKey) {
+    throw new Error('站点未返回 Turnstile site key');
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), getYesCaptchaTimeoutMs());
+  try {
+    const createPayload: Record<string, unknown> = {
+      clientKey,
+      task: {
+        type: 'TurnstileTaskProxyless',
+        websiteURL: normalizeUrl(siteUrl),
+        websiteKey: siteKey
+      }
+    };
+    const softId = Number(process.env.YESCAPTCHA_SOFT_ID || 0);
+    if (Number.isFinite(softId) && softId > 0) {
+      (createPayload.task as Record<string, unknown>).softID = Math.trunc(softId);
+    }
+
+    const created = await postYesCaptchaJson('/createTask', createPayload, controller.signal);
+    if (Number(created.errorId) !== 0) {
+      throw new Error(asString(created.errorDescription || created.errorCode).trim() || 'YesCaptcha 创建 Turnstile 任务失败');
+    }
+    const taskId = asString(created.taskId).trim();
+    if (!taskId) {
+      throw new Error('YesCaptcha 未返回 taskId');
+    }
+
+    const deadline = Date.now() + getYesCaptchaTimeoutMs();
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, getYesCaptchaPollIntervalMs()));
+      const result = await postYesCaptchaJson('/getTaskResult', { clientKey, taskId }, controller.signal);
+      if (Number(result.errorId) !== 0) {
+        throw new Error(asString(result.errorDescription || result.errorCode).trim() || 'YesCaptcha 获取 Turnstile 结果失败');
+      }
+      if (result.status === 'ready') {
+        const token = extractYesCaptchaTurnstileToken(result);
+        if (!token) throw new Error('YesCaptcha 结果中没有 Turnstile token');
+        return token;
+      }
+    }
+    throw new Error('YesCaptcha Turnstile 任务超时');
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('YesCaptcha Turnstile 请求超时');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function getProxyDispatcher(proxyUrl: string): Dispatcher {
   const resolved = getProxyUrl(proxyUrl);
   const parsed = new URL(resolved);
@@ -1177,24 +1300,46 @@ class PublicCheckinAdapter {
     const errors: string[] = [];
 
     for (const attempt of attempts) {
-      try {
-        const payload = await this.fetchJson<Record<string, unknown>>(attempt.path, {
-          method: 'POST',
-          body: attempt.body,
-          headers: this.buildAuthHeaders(credential)
-        });
-        const message = this.responseMessage(payload) || '签到成功';
-        if (payload.success === true || this.isAlreadyCheckedIn(message)) {
-          const data = asRecord(payload.data);
-          return {
-            success: true,
-            reward: parsePublicCheckinRewardAmount(data.reward) ?? parsePublicCheckinRewardAmount(payload.data) ?? parsePublicCheckinRewardAmount(message),
-            rewardNote: message
-          };
+      let turnstileToken = '';
+      for (let retry = 0; retry < 2; retry += 1) {
+        try {
+          const requestPath = turnstileToken
+            ? appendTurnstileToRequestPath(attempt.path, turnstileToken)
+            : attempt.path;
+          const payload = await this.fetchJson<Record<string, unknown>>(requestPath, {
+            method: 'POST',
+            body: turnstileToken ? withTurnstileRequestBody(attempt.body, turnstileToken) : attempt.body,
+            headers: this.buildAuthHeaders(credential)
+          });
+          const message = this.responseMessage(payload) || '签到成功';
+          if (payload.success === true || this.isAlreadyCheckedIn(message)) {
+            const data = asRecord(payload.data);
+            return {
+              success: true,
+              reward: parsePublicCheckinRewardAmount(data.reward) ?? parsePublicCheckinRewardAmount(payload.data) ?? parsePublicCheckinRewardAmount(message),
+              rewardNote: message
+            };
+          }
+          if (!turnstileToken && isTurnstileTokenMissingMessage(message)) {
+            turnstileToken = await this.resolveTurnstileToken();
+            continue;
+          }
+          errors.push(message || `${attempt.path} 签到失败`);
+          break;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : `${attempt.path} 签到请求失败`;
+          if (!turnstileToken && isTurnstileTokenMissingMessage(message)) {
+            try {
+              turnstileToken = await this.resolveTurnstileToken();
+              continue;
+            } catch (turnstileError) {
+              errors.push(turnstileError instanceof Error ? turnstileError.message : 'Turnstile token 获取失败');
+              break;
+            }
+          }
+          errors.push(message);
+          break;
         }
-        errors.push(message || `${attempt.path} 签到失败`);
-      } catch (error) {
-        errors.push(error instanceof Error ? error.message : `${attempt.path} 签到请求失败`);
       }
     }
 
@@ -1317,6 +1462,17 @@ class PublicCheckinAdapter {
       };
     }
     return {};
+  }
+
+  protected async resolveTurnstileToken(): Promise<string> {
+    const status = await this.fetchJson<Record<string, unknown>>('/api/status');
+    const data = asRecord(status.data);
+    const siteKey = asString(data.turnstile_site_key || data.TurnstileSiteKey).trim();
+    const enabled = data.turnstile_check === true || data.TurnstileCheckEnabled === true || Boolean(siteKey);
+    if (!enabled) {
+      throw new Error('站点要求 Turnstile token，但 /api/status 未启用 Turnstile');
+    }
+    return solveYesCaptchaTurnstileToken(this.siteUrl, siteKey);
   }
 
   private buildPlatformUserHeaders(platformUserId?: number): Record<string, string> {
@@ -3102,6 +3258,10 @@ export const publicCheckinTestHooks = {
   toStoredPublicCheckinPlatform,
   getProxyUrl,
   mergeSetCookieValues,
+  isTurnstileTokenMissingMessage,
+  appendTurnstileToRequestPath,
+  withTurnstileRequestBody,
+  extractYesCaptchaTurnstileToken,
   createAdapter,
   encryptCredential,
   decryptCredentialText,
