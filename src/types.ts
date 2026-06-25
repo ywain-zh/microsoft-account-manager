@@ -74,6 +74,10 @@ export interface SystemProxyConfig {
   proxyUrl: string;
 }
 
+export interface YesCaptchaConfig {
+  clientKey: string;
+}
+
 export interface SystemProxyTestResult {
   ok: boolean;
   message: string;

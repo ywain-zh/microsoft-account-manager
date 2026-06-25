@@ -87,6 +87,11 @@ class PublicCheckinMemoryStatement implements D1PreparedStatement {
   }
 
   async first<T>(): Promise<T | null> {
+    if (/SELECT value FROM app_settings WHERE key = \? LIMIT 1/i.test(this.query)) {
+      const value = this.database.appSettings.get(String(this.values[0]));
+      return value == null ? null : { value } as T;
+    }
+
     if (/FROM public_checkin_accounts a\s+INNER JOIN public_checkin_sites s/i.test(this.query)) {
       const accountIdMatch = /WHERE a\.id = \?/i.test(this.query);
       const siteIdMatch = /WHERE a\.site_id = \?/i.test(this.query);
@@ -325,6 +330,11 @@ class PublicCheckinMemoryStatement implements D1PreparedStatement {
       return { success: true, meta: { changes: 1, rows_written: 1 } };
     }
 
+    if (/INSERT INTO app_settings/i.test(this.query)) {
+      this.database.appSettings.set(String(this.values[0]), String(this.values[1]));
+      return { success: true, meta: { changes: 1, rows_written: 1 } };
+    }
+
     throw new Error(`Unsupported run query: ${this.query}`);
   }
 }
@@ -336,6 +346,7 @@ class PublicCheckinMemoryD1Database implements D1Database {
   readonly baselines: MemoryBaselineRow[] = [];
   readonly logs: MemoryLogRow[] = [];
   readonly settings = new Map<string, string>();
+  readonly appSettings = new Map<string, string>();
   nextSiteId = 1;
   nextAccountId = 1;
   nextAnnouncementId = 1;
@@ -1032,6 +1043,62 @@ test('detects and appends Turnstile checkin tokens', () => {
     publicCheckinTestHooks.extractYesCaptchaTurnstileToken({ solution: { token: 'solved' } }),
     'solved'
   );
+});
+
+test('stores YesCaptcha client key as a plain system config', async () => {
+  const db = new PublicCheckinMemoryD1Database();
+  const previousKey = process.env.YESCAPTCHA_CLIENT_KEY;
+  const previousCompatKey = process.env.YES_CAPTCHA_CLIENT_KEY;
+  delete process.env.YESCAPTCHA_CLIENT_KEY;
+  delete process.env.YES_CAPTCHA_CLIENT_KEY;
+
+  try {
+    const initial = await publicCheckinTestHooks.getYesCaptchaConfig(db);
+    assert.equal(initial.clientKey, '');
+
+    const saved = await publicCheckinTestHooks.updateYesCaptchaConfig(db, { clientKey: 'yes-client-key-123' });
+    assert.equal(saved.clientKey, 'yes-client-key-123');
+    assert.equal(await publicCheckinTestHooks.getConfiguredYesCaptchaClientKey(db), 'yes-client-key-123');
+
+    const stored = db.appSettings.get('yescaptcha_config') || '';
+    assert.equal(stored, '{"clientKey":"yes-client-key-123"}');
+
+    await publicCheckinTestHooks.updateYesCaptchaConfig(db, { clientKey: '' });
+    assert.equal(await publicCheckinTestHooks.getConfiguredYesCaptchaClientKey(db), '');
+  } finally {
+    if (previousKey === undefined) {
+      delete process.env.YESCAPTCHA_CLIENT_KEY;
+    } else {
+      process.env.YESCAPTCHA_CLIENT_KEY = previousKey;
+    }
+    if (previousCompatKey === undefined) {
+      delete process.env.YES_CAPTCHA_CLIENT_KEY;
+    } else {
+      process.env.YES_CAPTCHA_CLIENT_KEY = previousCompatKey;
+    }
+  }
+});
+
+test('YesCaptcha config route reads and writes plain client key', async () => {
+  const db = new PublicCheckinMemoryD1Database();
+  const app = new Hono<{ Bindings: { DB: D1Database } }>();
+  registerPublicCheckinRoutes(app);
+
+  const saved = await app.request(
+    'http://localhost/api/system/yescaptcha-config',
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientKey: 'plain-client-key' })
+    },
+    { DB: db }
+  );
+  assert.equal(saved.status, 200);
+  assert.deepEqual(await saved.json(), { item: { clientKey: 'plain-client-key' } });
+
+  const loaded = await app.request('http://localhost/api/system/yescaptcha-config', {}, { DB: db });
+  assert.equal(loaded.status, 200);
+  assert.deepEqual(await loaded.json(), { item: { clientKey: 'plain-client-key' } });
 });
 
 test('retries checkin with solved Turnstile token when upstream requires it', async () => {

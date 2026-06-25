@@ -165,6 +165,10 @@ interface PublicCheckinSettings {
   announcementPollingIntervalMinutes: 15 | 30 | 60;
 }
 
+interface YesCaptchaConfig {
+  clientKey: string;
+}
+
 type PublicCheckinAnnouncementRow = {
   id: number;
   site_id: number;
@@ -209,6 +213,10 @@ const DEFAULT_SETTINGS: PublicCheckinSettings = {
   announcementPollingIntervalMinutes: 30
 };
 const SYSTEM_PROXY_CONFIG_KEY = 'system_proxy_config';
+const YESCAPTCHA_CONFIG_KEY = 'yescaptcha_config';
+const DEFAULT_YESCAPTCHA_CONFIG: YesCaptchaConfig = {
+  clientKey: ''
+};
 const DEFAULT_PUBLIC_CHECKIN_MODEL_CACHE_TTL_MS = 60_000;
 const ANNOUNCEMENT_POLLING_INTERVALS = [15, 30, 60] as const;
 
@@ -523,6 +531,14 @@ async function getAppSetting(db: D1Database, key: string): Promise<string | null
   return row?.value ?? null;
 }
 
+async function setAppSetting(db: D1Database, key: string, value: string): Promise<void> {
+  await dbRun(db, `
+    INSERT INTO app_settings (key, value, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+  `, [key, value]);
+}
+
 async function getSystemProxyUrl(db: D1Database): Promise<string> {
   const value = await getAppSetting(db, SYSTEM_PROXY_CONFIG_KEY);
   if (!value) return '';
@@ -532,6 +548,45 @@ async function getSystemProxyUrl(db: D1Database): Promise<string> {
   } catch {
     return '';
   }
+}
+
+function normalizeYesCaptchaConfig(input: unknown): YesCaptchaConfig {
+  const record = asRecord(input);
+  return {
+    clientKey: asString(record.clientKey).trim()
+  };
+}
+
+function validateYesCaptchaClientKey(clientKey: string): void {
+  if (!clientKey) return;
+  if (clientKey.length > 512) {
+    throw new HTTPException(400, { message: 'YesCaptcha clientKey 长度不能超过 512 个字符' });
+  }
+  if (/\s/.test(clientKey)) {
+    throw new HTTPException(400, { message: 'YesCaptcha clientKey 不能包含空白字符' });
+  }
+}
+
+async function getYesCaptchaConfig(db: D1Database): Promise<YesCaptchaConfig> {
+  const value = await getAppSetting(db, YESCAPTCHA_CONFIG_KEY);
+  if (!value) return DEFAULT_YESCAPTCHA_CONFIG;
+  try {
+    return normalizeYesCaptchaConfig(JSON.parse(value));
+  } catch {
+    return DEFAULT_YESCAPTCHA_CONFIG;
+  }
+}
+
+async function updateYesCaptchaConfig(db: D1Database, input: unknown): Promise<YesCaptchaConfig> {
+  const next = normalizeYesCaptchaConfig(input);
+  validateYesCaptchaClientKey(next.clientKey);
+  await setAppSetting(db, YESCAPTCHA_CONFIG_KEY, JSON.stringify(next));
+  return next;
+}
+
+async function getConfiguredYesCaptchaClientKey(db: D1Database): Promise<string> {
+  const config = await getYesCaptchaConfig(db);
+  return config.clientKey || getEnvYesCaptchaClientKey();
 }
 
 async function createAdapterForAccount(
@@ -544,7 +599,8 @@ async function createAdapterForAccount(
   const factory = adapterOverride ?? createAdapter;
   return factory(platform, siteUrl, {
     useProxy,
-    proxyUrl: useProxy ? await getSystemProxyUrl(db) : ''
+    proxyUrl: useProxy ? await getSystemProxyUrl(db) : '',
+    yesCaptchaClientKey: await getConfiguredYesCaptchaClientKey(db)
   }, siteName);
 }
 
@@ -1084,6 +1140,7 @@ type RawResponse = {
 type AdapterOptions = {
   useProxy?: boolean;
   proxyUrl?: string;
+  yesCaptchaClientKey?: string;
 };
 
 const proxyAgentCache = new Map<string, ProxyAgent>();
@@ -1132,7 +1189,7 @@ function withTurnstileRequestBody(body: string | undefined, token: string): stri
   }
 }
 
-function getYesCaptchaClientKey(): string {
+function getEnvYesCaptchaClientKey(): string {
   return (process.env.YESCAPTCHA_CLIENT_KEY || process.env.YES_CAPTCHA_CLIENT_KEY || '').trim();
 }
 
@@ -1176,10 +1233,10 @@ function extractYesCaptchaTurnstileToken(payload: unknown): string {
   return asString(solution.token || solution.gRecaptchaResponse || solution.g_recaptcha_response).trim();
 }
 
-async function solveYesCaptchaTurnstileToken(siteUrl: string, siteKey: string): Promise<string> {
-  const clientKey = getYesCaptchaClientKey();
+async function solveYesCaptchaTurnstileToken(siteUrl: string, siteKey: string, configuredClientKey = ''): Promise<string> {
+  const clientKey = configuredClientKey.trim() || getEnvYesCaptchaClientKey();
   if (!clientKey) {
-    throw new Error('YesCaptcha 未配置：请在环境变量 YESCAPTCHA_CLIENT_KEY 中填写 clientKey');
+    throw new Error('YesCaptcha 未配置：请在系统设置的接口鉴权页填写 clientKey，或在环境变量 YESCAPTCHA_CLIENT_KEY 中配置');
   }
   if (!siteKey) {
     throw new Error('站点未返回 Turnstile site key');
@@ -1263,11 +1320,13 @@ class PublicCheckinAdapter {
   protected readonly siteUrl: string;
   protected readonly useProxy: boolean;
   protected readonly proxyUrl: string;
+  protected readonly yesCaptchaClientKey: string;
 
   constructor(siteUrl: string, options: AdapterOptions = {}) {
     this.siteUrl = normalizeUrl(siteUrl);
     this.useProxy = options.useProxy === true;
     this.proxyUrl = options.proxyUrl?.trim() || '';
+    this.yesCaptchaClientKey = options.yesCaptchaClientKey?.trim() || '';
   }
 
   async login(username: string, password: string): Promise<LoginResult> {
@@ -1472,7 +1531,7 @@ class PublicCheckinAdapter {
     if (!enabled) {
       throw new Error('站点要求 Turnstile token，但 /api/status 未启用 Turnstile');
     }
-    return solveYesCaptchaTurnstileToken(this.siteUrl, siteKey);
+    return solveYesCaptchaTurnstileToken(this.siteUrl, siteKey, this.yesCaptchaClientKey);
   }
 
   private buildPlatformUserHeaders(platformUserId?: number): Record<string, string> {
@@ -3013,6 +3072,9 @@ export function registerPublicCheckinRoutes(app: Hono<any>): void {
   app.post('/api/public-checkin/balance/refresh-all', async (c) => c.json(await refreshBalanceAll(c.env.DB)));
   app.post('/api/public-checkin/balance/refresh/:id', async (c) => c.json(await refreshBalanceForAccount(c.env.DB, routeId(c.req.param('id')))));
 
+  app.get('/api/system/yescaptcha-config', async (c) => c.json({ item: await getYesCaptchaConfig(c.env.DB) }));
+  app.put('/api/system/yescaptcha-config', async (c) => c.json({ item: await updateYesCaptchaConfig(c.env.DB, await readBody(c)) }));
+
   app.get('/api/public-checkin/settings', async (c) => c.json(await getSettings(c.env.DB)));
   app.put('/api/public-checkin/settings', async (c) => {
     const settings = await updateSettings(c.env.DB, await readBody(c));
@@ -3262,6 +3324,9 @@ export const publicCheckinTestHooks = {
   appendTurnstileToRequestPath,
   withTurnstileRequestBody,
   extractYesCaptchaTurnstileToken,
+  getYesCaptchaConfig,
+  updateYesCaptchaConfig,
+  getConfiguredYesCaptchaClientKey,
   createAdapter,
   encryptCredential,
   decryptCredentialText,

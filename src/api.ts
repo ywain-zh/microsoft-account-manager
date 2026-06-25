@@ -46,7 +46,8 @@ import type {
   TranslationConfig,
   TranslationProvider,
   TranslationResponse,
-  TranslationTestResponse
+  TranslationTestResponse,
+  YesCaptchaConfig
 } from './types';
 
 interface ApiError {
@@ -345,6 +346,17 @@ export const api = {
   testSystemProxyConfig(payload: SystemProxyConfig): Promise<{ item: SystemProxyConfig; result: SystemProxyTestResult }> {
     return request<{ item: SystemProxyConfig; result: SystemProxyTestResult }>('/api/system/proxy-config/test', {
       method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  getYesCaptchaConfig(): Promise<{ item: YesCaptchaConfig }> {
+    return request<{ item: YesCaptchaConfig }>('/api/system/yescaptcha-config');
+  },
+
+  updateYesCaptchaConfig(payload: YesCaptchaConfig): Promise<{ item: YesCaptchaConfig }> {
+    return request<{ item: YesCaptchaConfig }>('/api/system/yescaptcha-config', {
+      method: 'PUT',
       body: JSON.stringify(payload)
     });
   },

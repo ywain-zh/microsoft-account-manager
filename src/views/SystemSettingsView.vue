@@ -200,6 +200,32 @@
             <n-button type="primary" :loading="externalApiSaving" @click="saveExternalApiConfig">保存 Key</n-button>
           </div>
         </div>
+
+        <div class="section-title subsection-title">
+          <h3>YesCaptcha</h3>
+          <span>{{ yesCaptchaForm.clientKey ? '已配置' : '未配置' }}</span>
+        </div>
+        <n-alert type="info" :bordered="false" class="backup-alert">
+          该 clientKey 用于公益站签到遇到 Turnstile 时自动获取 token。保存后下一次签到立即生效。
+        </n-alert>
+
+        <div class="external-api-panel">
+          <n-form label-placement="top" autocomplete="off">
+            <n-form-item label="clientKey">
+              <n-input
+                v-model:value="yesCaptchaForm.clientKey"
+                placeholder="请输入 YesCaptcha clientKey"
+                :input-props="yesCaptchaKeyInputProps"
+              />
+            </n-form-item>
+          </n-form>
+
+          <div class="external-api-actions">
+            <n-button :loading="yesCaptchaLoading" @click="loadYesCaptchaConfig">重新载入</n-button>
+            <n-button :disabled="!yesCaptchaForm.clientKey" @click="clearYesCaptchaConfig">清空</n-button>
+            <n-button type="primary" :loading="yesCaptchaSaving" @click="saveYesCaptchaConfig">保存 clientKey</n-button>
+          </div>
+        </div>
       </section>
 
       <section v-if="activeTab === 'proxy'" class="backup-section">
@@ -315,7 +341,8 @@ import type {
   SystemProxyConfig,
   TranslationConfig,
   TranslationProvider,
-  TranslationTestResult
+  TranslationTestResult,
+  YesCaptchaConfig
 } from '../types';
 
 const { message } = createDiscreteApi(['message']);
@@ -337,6 +364,10 @@ const externalApiForm = reactive<ExternalApiConfig>({
   mailApiToken: ''
 });
 
+const yesCaptchaForm = reactive<YesCaptchaConfig>({
+  clientKey: ''
+});
+
 const proxyForm = reactive<SystemProxyConfig>({
   proxyUrl: ''
 });
@@ -356,6 +387,8 @@ const loading = ref(false);
 const saving = ref(false);
 const externalApiLoading = ref(false);
 const externalApiSaving = ref(false);
+const yesCaptchaLoading = ref(false);
+const yesCaptchaSaving = ref(false);
 const proxyLoading = ref(false);
 const proxySaving = ref(false);
 const proxyTesting = ref(false);
@@ -397,6 +430,14 @@ const deeplxKeyInputProps = {
 
 const externalApiKeyInputProps = {
   name: 'external-mail-api-token',
+  autocomplete: 'new-password',
+  spellcheck: false,
+  'data-lpignore': 'true',
+  'data-1p-ignore': 'true'
+};
+
+const yesCaptchaKeyInputProps = {
+  name: 'yescaptcha-client-key',
   autocomplete: 'new-password',
   spellcheck: false,
   'data-lpignore': 'true',
@@ -481,6 +522,7 @@ const telegramStatusLabel = computed(() => {
 onMounted(() => {
   void loadConfig();
   void loadExternalApiConfig();
+  void loadYesCaptchaConfig();
   void loadProxyConfig();
   void loadNotificationConfig();
   restoreBackupJob();
@@ -542,6 +584,38 @@ async function saveExternalApiConfig(): Promise<void> {
   } finally {
     externalApiSaving.value = false;
   }
+}
+
+async function loadYesCaptchaConfig(): Promise<void> {
+  yesCaptchaLoading.value = true;
+  try {
+    const { item } = await api.getYesCaptchaConfig();
+    yesCaptchaForm.clientKey = item.clientKey;
+  } catch (error) {
+    message.error(getErrorMessage(error));
+  } finally {
+    yesCaptchaLoading.value = false;
+  }
+}
+
+async function saveYesCaptchaConfig(): Promise<void> {
+  yesCaptchaSaving.value = true;
+  try {
+    const { item } = await api.updateYesCaptchaConfig({
+      clientKey: yesCaptchaForm.clientKey.trim()
+    });
+    yesCaptchaForm.clientKey = item.clientKey;
+    message.success(yesCaptchaForm.clientKey ? 'YesCaptcha clientKey 已保存' : 'YesCaptcha clientKey 已清空');
+  } catch (error) {
+    message.error(getErrorMessage(error));
+  } finally {
+    yesCaptchaSaving.value = false;
+  }
+}
+
+function clearYesCaptchaConfig(): void {
+  yesCaptchaForm.clientKey = '';
+  void saveYesCaptchaConfig();
 }
 
 async function loadProxyConfig(): Promise<void> {
@@ -971,6 +1045,10 @@ function getErrorMessage(error: unknown): string {
   align-items: center;
   gap: 10px;
   margin-bottom: 14px;
+}
+
+.subsection-title {
+  margin-top: 8px;
 }
 
 .section-title h3 {
