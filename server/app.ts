@@ -14,6 +14,7 @@ import {
   getSystemBackupJob,
   startSystemBackup
 } from './runtime/system-backup.js';
+import { registerLinuxDoMailRoutes } from './runtime/linuxdo-mail.js';
 import { registerNotificationRoutes } from './runtime/notifications.js';
 import { registerPublicCheckinRoutes } from './runtime/public-checkin.js';
 import {
@@ -709,6 +710,7 @@ app.post('/api/auth/login', async (c) => {
 
 registerPublicCheckinRoutes(app);
 registerNotificationRoutes(app);
+registerLinuxDoMailRoutes(app);
 
 
 app.get('/auth/microsoft', async (c) => {

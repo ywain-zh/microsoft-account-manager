@@ -13,6 +13,11 @@ export const consoleNavigation: ConsoleNavItem[] = [
     path: '/services/cloud-mail/accounts'
   },
   {
+    key: 'linuxdo-mail',
+    label: 'Linux DO 邮箱',
+    path: '/services/linuxdo-mail'
+  },
+  {
     key: 'microsoft-mail',
     label: '微软邮箱',
     path: '/services/microsoft-mail/accounts'

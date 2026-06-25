@@ -46,6 +46,16 @@ const router = createRouter({
           }
         },
         {
+          path: 'services/linuxdo-mail',
+          name: 'linuxdo-mail',
+          component: () => import('./views/LinuxDoMailView.vue'),
+          meta: {
+            requiresAuth: true,
+            title: 'Linux DO 邮箱',
+            description: '连接 Linux DO 邮箱，读取收件箱并发送基础邮件。'
+          }
+        },
+        {
           path: 'services/sub2api/checker',
           name: 'sub2api-checker',
           component: () => import('./views/Sub2ApiCheckerView.vue'),

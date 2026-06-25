@@ -24,6 +24,27 @@
                 stroke-width="1.7"
               />
             </svg>
+            <svg v-else-if="item.key === 'linuxdo-mail'" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M4.75 7.25h14.5v10.5H4.75z"
+                stroke="currentColor"
+                stroke-linejoin="round"
+                stroke-width="1.7"
+              />
+              <path
+                d="m5.25 8 6.75 5 6.75-5"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.7"
+              />
+              <path
+                d="M8.25 5.25h7.5"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-width="1.7"
+              />
+            </svg>
             <svg v-else-if="item.key === 'sub2api'" viewBox="0 0 24 24" fill="none">
               <path
                 d="M12 4.5v3"

@@ -7,6 +7,9 @@
   },
   "dependencies": {
     "better-sqlite3": "11.10.0",
+    "imapflow": "1.4.2",
+    "mailparser": "3.9.12",
+    "nodemailer": "9.0.1",
     "undici": "8.5.0"
   }
 }

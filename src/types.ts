@@ -541,6 +541,51 @@ export interface CloudMailMessagesResponse {
   messages: AccountMailItem[];
 }
 
+export interface LinuxDoMailConfig {
+  email: string;
+  displayName: string;
+  imapHost: string;
+  imapPort: number;
+  smtpHost: string;
+  smtpPort: number;
+  useSystemProxy: boolean;
+  authToken?: string;
+  tokenConfigured: boolean;
+  updatedAt: string | null;
+}
+
+export interface LinuxDoMailConnectionCheck {
+  ok: boolean;
+  message: string;
+}
+
+export interface LinuxDoMailConnectionTestResponse {
+  ok: boolean;
+  useSystemProxy: boolean;
+  proxyConfigured: boolean;
+  imap: LinuxDoMailConnectionCheck;
+  smtp: LinuxDoMailConnectionCheck;
+}
+
+export interface LinuxDoMailMessagesResponse {
+  account: string;
+  messages: AccountMailItem[];
+}
+
+export interface LinuxDoMailSendPayload {
+  to: string;
+  cc?: string;
+  bcc?: string;
+  subject: string;
+  text?: string;
+  html?: string;
+}
+
+export interface LinuxDoMailSendResponse {
+  ok: true;
+  messageId: string;
+}
+
 export interface AuthUser {
   username: string;
 }

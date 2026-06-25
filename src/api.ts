@@ -16,6 +16,11 @@ import type {
   ExternalApiConfig,
   IngestConfig,
   ImportResult,
+  LinuxDoMailConfig,
+  LinuxDoMailConnectionTestResponse,
+  LinuxDoMailMessagesResponse,
+  LinuxDoMailSendPayload,
+  LinuxDoMailSendResponse,
   MailGptValidityService,
   MailFetchMode,
   GptPlanFilter,
@@ -425,6 +430,42 @@ export const api = {
   updateCloudMailConfig(payload: CloudMailConfig): Promise<{ item: CloudMailConfig }> {
     return request<{ item: CloudMailConfig }>('/api/cloud-mail/config', {
       method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  getLinuxDoMailConfig(): Promise<{ item: LinuxDoMailConfig }> {
+    return request<{ item: LinuxDoMailConfig }>('/api/linuxdo-mail/config');
+  },
+
+  updateLinuxDoMailConfig(payload: LinuxDoMailConfig): Promise<{ item: LinuxDoMailConfig }> {
+    return request<{ item: LinuxDoMailConfig }>('/api/linuxdo-mail/config', {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  testLinuxDoMailConnection(payload?: LinuxDoMailConfig): Promise<LinuxDoMailConnectionTestResponse> {
+    return request<LinuxDoMailConnectionTestResponse>('/api/linuxdo-mail/test-connection', {
+      method: 'POST',
+      body: JSON.stringify(payload ?? {})
+    });
+  },
+
+  getLinuxDoMailMessages(limit = 30): Promise<LinuxDoMailMessagesResponse> {
+    return request<LinuxDoMailMessagesResponse>(`/api/linuxdo-mail/messages${buildQuery({ limit })}`);
+  },
+
+  markLinuxDoMailMessageAsRead(messageId: string): Promise<{ ok: true }> {
+    return request<{ ok: true }>('/api/linuxdo-mail/messages/read', {
+      method: 'POST',
+      body: JSON.stringify({ messageId })
+    });
+  },
+
+  sendLinuxDoMail(payload: LinuxDoMailSendPayload): Promise<LinuxDoMailSendResponse> {
+    return request<LinuxDoMailSendResponse>('/api/linuxdo-mail/send', {
+      method: 'POST',
       body: JSON.stringify(payload)
     });
   },
