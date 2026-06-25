@@ -139,6 +139,9 @@ class PublicCheckinMemoryStatement implements D1PreparedStatement {
 
     if (/FROM public_checkin_logs/i.test(this.query)) {
       let results = this.database.logs.slice();
+      if (/account_id = \?/i.test(this.query)) {
+        results = results.filter((item) => item.account_id === Number(this.values[0]));
+      }
       if (/status = 'success'/i.test(this.query)) {
         results = results.filter((item) => item.status === 'success');
       }
@@ -229,6 +232,9 @@ class PublicCheckinMemoryStatement implements D1PreparedStatement {
       const localDate = String(this.values[1]);
       const existing = this.database.baselines.find((item) => item.account_id === accountId && item.local_date === localDate);
       if (existing) {
+        if (/DO NOTHING/i.test(this.query)) {
+          return { success: true, meta: { changes: 0, rows_written: 0, last_row_id: existing.id } };
+        }
         existing.baseline_balance = Number(this.values[2]);
         existing.captured_at = Number(this.values[3]);
         existing.updated_at = Number(this.values[5]);
@@ -670,7 +676,7 @@ test('hides daily balance helper without a same-day baseline and after day rollo
   }
 });
 
-test('manual balance refresh does not create a missing daily baseline', async () => {
+test('manual balance refresh recovers a missing daily baseline', async () => {
   const { db, cleanup } = await createPublicCheckinDb();
   const now = Date.UTC(2026, 5, 24, 4, 0, 0) / 1000;
 
@@ -686,8 +692,87 @@ test('manual balance refresh does not create a missing daily baseline', async ()
       assert.equal(result.balance, 88);
     });
 
-    assert.equal(db.baselines.length, 0);
+    assert.deepEqual(
+      db.baselines.map((item) => ({
+        account_id: item.account_id,
+        local_date: item.local_date,
+        baseline_balance: item.baseline_balance
+      })),
+      [{
+        account_id: accountId,
+        local_date: '2026-06-24',
+        baseline_balance: 88
+      }]
+    );
     assert.equal(db.accounts.find((item) => item.id === accountId)?.balance, 88);
+  } finally {
+    publicCheckinTestHooks.setAdapterOverride(null);
+    await cleanup();
+  }
+});
+
+test('recovered baseline subtracts earlier same-day rewards before future usage', async () => {
+  const { db, cleanup } = await createPublicCheckinDb();
+  const rewardAt = Date.UTC(2026, 5, 24, 2, 0, 0) / 1000;
+  const recoveryAt = Date.UTC(2026, 5, 24, 4, 0, 0) / 1000;
+  const laterAt = Date.UTC(2026, 5, 24, 5, 0, 0) / 1000;
+
+  publicCheckinTestHooks.setAdapterOverride(() => ({
+    getBalance: async () => ({ success: true, balance: 110 })
+  } as ReturnType<typeof publicCheckinTestHooks.createAdapter>));
+
+  try {
+    const { accountId } = await seedPublicCheckinAccount(db);
+    addMemoryLog(db, accountId, 10, rewardAt);
+
+    await withFakeNow(recoveryAt, async () => {
+      const result = await publicCheckinTestHooks.refreshBalanceForAccount(db, accountId);
+      assert.equal(result.success, true);
+    });
+
+    assert.equal(db.baselines[0].baseline_balance, 100);
+    await withFakeNow(recoveryAt, async () => {
+      const accounts = await publicCheckinTestHooks.listAccounts(db);
+      assert.equal(accounts[0].dailyBalanceDisplayMode, 'reward');
+      assert.equal(accounts[0].dailyBalanceDisplayAmount, 10);
+    });
+
+    setMemoryAccountBalance(db, accountId, 105, laterAt);
+    await withFakeNow(laterAt, async () => {
+      const accounts = await publicCheckinTestHooks.listAccounts(db);
+      assert.equal(accounts[0].dailyBalanceDisplayMode, 'usage');
+      assert.equal(accounts[0].dailyBalanceDisplayAmount, 5);
+    });
+  } finally {
+    publicCheckinTestHooks.setAdapterOverride(null);
+    await cleanup();
+  }
+});
+
+test('recovered baseline does not overwrite an existing midnight baseline', async () => {
+  const { db, cleanup } = await createPublicCheckinDb();
+  const now = Date.UTC(2026, 5, 24, 4, 0, 0) / 1000;
+
+  publicCheckinTestHooks.setAdapterOverride(() => ({
+    getBalance: async () => ({ success: true, balance: 95 })
+  } as ReturnType<typeof publicCheckinTestHooks.createAdapter>));
+
+  try {
+    const { accountId } = await seedPublicCheckinAccount(db);
+    addMemoryBaseline(db, accountId, '2026-06-24', 100, now - 3600);
+
+    await withFakeNow(now, async () => {
+      const result = await publicCheckinTestHooks.refreshBalanceForAccount(db, accountId);
+      assert.equal(result.success, true);
+    });
+
+    assert.equal(db.baselines.length, 1);
+    assert.equal(db.baselines[0].baseline_balance, 100);
+    await withFakeNow(now, async () => {
+      const accounts = await publicCheckinTestHooks.listAccounts(db);
+      assert.equal(accounts[0].dailyBalanceDisplayMode, 'usage');
+      assert.equal(accounts[0].dailyBalanceDisplayAmount, 5);
+    });
   } finally {
     publicCheckinTestHooks.setAdapterOverride(null);
     await cleanup();
@@ -929,6 +1014,47 @@ test('merges shield Set-Cookie values into existing cookie header', () => {
     cdn_sec_tc: 'cdn',
     acw_sc__v2: 'newv2'
   });
+});
+
+test('detects and appends Turnstile checkin tokens', () => {
+  assert.equal(publicCheckinTestHooks.isTurnstileTokenMissingMessage('Turnstile token 为空'), true);
+  assert.equal(publicCheckinTestHooks.isTurnstileTokenMissingMessage('turnstile token missing'), true);
+  assert.equal(publicCheckinTestHooks.isTurnstileTokenMissingMessage('签到失败'), false);
+  assert.equal(
+    publicCheckinTestHooks.appendTurnstileToRequestPath('/api/user/sign?foo=bar', 'token-value'),
+    '/api/user/sign?foo=bar&turnstile=token-value'
+  );
+  assert.equal(
+    publicCheckinTestHooks.withTurnstileRequestBody('{}', 'token-value'),
+    '{"turnstile":"token-value"}'
+  );
+  assert.equal(
+    publicCheckinTestHooks.extractYesCaptchaTurnstileToken({ solution: { token: 'solved' } }),
+    'solved'
+  );
+});
+
+test('retries checkin with solved Turnstile token when upstream requires it', async () => {
+  const adapter = publicCheckinTestHooks.createAdapter('new-api', 'https://ioll.pp.ua', {});
+  const calls: Array<{ path: string; body?: string }> = [];
+  (adapter as unknown as { resolveTurnstileToken: () => Promise<string> }).resolveTurnstileToken = async () => 'solved-token';
+  (adapter as unknown as {
+    fetchJson: (path: string, init: { body?: string }) => Promise<Record<string, unknown>>;
+  }).fetchJson = async (path, init) => {
+    calls.push({ path, body: init.body });
+    if (!path.includes('turnstile=solved-token')) {
+      return { success: false, message: 'Turnstile token 为空' };
+    }
+    return { success: true, message: '签到成功，获得 25 额度', data: { reward: 25 } };
+  };
+
+  const result = await adapter.checkin({ type: 'access_token', accessToken: 'sk-test' });
+
+  assert.equal(result.success, true);
+  assert.equal(result.reward, 25);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].path, '/api/user/checkin');
+  assert.equal(calls[1].path, '/api/user/checkin?turnstile=solved-token');
 });
 
 test('infers Any Router platform from name or URL', () => {

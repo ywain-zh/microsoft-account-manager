@@ -1556,6 +1556,32 @@ async function listTodayRewardTotalsForDate(
   return totals;
 }
 
+async function getTodayRewardTotalForAccount(
+  db: D1Database,
+  accountId: number,
+  localDate: string,
+  timezone: string
+): Promise<number> {
+  const rows = await dbAll<{ reward: number | null; executed_at: number }>(db, `
+    SELECT
+      reward,
+      executed_at
+    FROM public_checkin_logs
+    WHERE account_id = ?
+      AND status = 'success'
+      AND reward IS NOT NULL
+      AND reward > 0
+  `, [accountId]);
+  let total = 0;
+  for (const row of rows) {
+    if (formatZonedLocalDate(Number(row.executed_at), timezone) !== localDate) {
+      continue;
+    }
+    total += Number(row.reward || 0);
+  }
+  return Math.round(total * 1_000_000) / 1_000_000;
+}
+
 async function listLatestPositiveRewardsForDate(
   db: D1Database,
   localDate: string,
@@ -1611,6 +1637,27 @@ async function upsertDailyBalanceBaseline(
       baseline_balance = excluded.baseline_balance,
       captured_at = excluded.captured_at,
       updated_at = excluded.updated_at
+  `, [accountId, localDate, baselineBalance, capturedAt, capturedAt, capturedAt]);
+}
+
+async function insertDailyBalanceBaselineIfMissing(
+  db: D1Database,
+  accountId: number,
+  localDate: string,
+  baselineBalance: number,
+  capturedAt: number
+): Promise<void> {
+  await dbRun(db, `
+    INSERT INTO public_checkin_daily_balance_baselines (
+      account_id,
+      local_date,
+      baseline_balance,
+      captured_at,
+      created_at,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(account_id, local_date) DO NOTHING
   `, [accountId, localDate, baselineBalance, capturedAt, capturedAt, capturedAt]);
 }
 
@@ -2067,7 +2114,7 @@ async function refreshBalanceForAccount(
   db: D1Database,
   accountId: number,
   options: {
-    baselineMode?: 'none' | 'capture';
+    baselineMode?: 'none' | 'capture' | 'recover';
     timezone?: string;
     localDate?: string;
   } = {}
@@ -2088,7 +2135,7 @@ async function refreshBalanceForAccount(
   }));
   const now = unixNow();
   if (result.success && typeof result.balance === 'number') {
-    const baselineMode = options.baselineMode ?? 'none';
+    const baselineMode = options.baselineMode ?? 'recover';
     await dbRun(db, `
       UPDATE public_checkin_accounts
       SET balance = ?, balance_updated_at = ?, last_error = NULL, status = 'active', updated_at = ?
@@ -2098,6 +2145,12 @@ async function refreshBalanceForAccount(
       const timezone = options.timezone ?? (await getSettings(db)).timezone;
       const localDate = options.localDate ?? formatZonedLocalDate(now, timezone);
       await upsertDailyBalanceBaseline(db, accountId, localDate, result.balance, now);
+    } else if (baselineMode === 'recover') {
+      const timezone = options.timezone ?? (await getSettings(db)).timezone;
+      const localDate = options.localDate ?? formatZonedLocalDate(now, timezone);
+      const todayRewardTotal = await getTodayRewardTotalForAccount(db, accountId, localDate, timezone);
+      const recoveredBaseline = Math.round((result.balance - todayRewardTotal) * 1_000_000) / 1_000_000;
+      await insertDailyBalanceBaselineIfMissing(db, accountId, localDate, recoveredBaseline, now);
     }
     return result;
   }
