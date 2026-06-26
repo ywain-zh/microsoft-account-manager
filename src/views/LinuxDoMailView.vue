@@ -8,38 +8,54 @@
       <div class="gmail-workspace">
         <aside class="gmail-folder-rail">
           <div class="gmail-account-chip">
-            <span class="gmail-account-dot" aria-hidden="true"></span>
-            <div>
-              <strong>{{ configForm.email || 'Linux DO Mail' }}</strong>
-              <small>{{ configStatusText }}</small>
+            <div class="gmail-account-main">
+              <span class="gmail-account-dot" aria-hidden="true"></span>
+              <div class="gmail-account-copy">
+                <strong>{{ configForm.email || 'Linux DO Mail' }}</strong>
+                <small>{{ configStatusText }}</small>
+              </div>
             </div>
           </div>
 
-          <button
-            class="gmail-folder-link"
-            :class="{ active: activeFolder === 'inbox' }"
-            type="button"
-            @click="setActiveFolder('inbox')"
-          >
-            <span class="gmail-folder-icon" aria-hidden="true">
-              <InboxGlyph />
-            </span>
-            <span>收件箱</span>
-            <strong>{{ mailItems.length }}</strong>
-          </button>
+          <div class="gmail-rail-action-card">
+            <button
+              class="gmail-rail-compose-button"
+              type="button"
+              :disabled="!isConfigured"
+              @click="openCompose"
+            >
+              <span aria-hidden="true">
+                <SendGlyph />
+              </span>
+              <strong>写邮件</strong>
+            </button>
 
-          <button
-            class="gmail-folder-link"
-            :class="{ active: activeFolder === 'sent' }"
-            type="button"
-            @click="setActiveFolder('sent')"
-          >
-            <span class="gmail-folder-icon" aria-hidden="true">
-              <SentFolderGlyph />
-            </span>
-            <span>发件箱</span>
-            <strong>{{ sentItems.length }}</strong>
-          </button>
+            <button
+              class="gmail-folder-link"
+              :class="{ active: activeFolder === 'inbox' }"
+              type="button"
+              @click="setActiveFolder('inbox')"
+            >
+              <span class="gmail-folder-icon" aria-hidden="true">
+                <InboxGlyph />
+              </span>
+              <span>收件箱</span>
+              <strong>{{ mailItems.length }}</strong>
+            </button>
+
+            <button
+              class="gmail-folder-link"
+              :class="{ active: activeFolder === 'sent' }"
+              type="button"
+              @click="setActiveFolder('sent')"
+            >
+              <span class="gmail-folder-icon" aria-hidden="true">
+                <SentFolderGlyph />
+              </span>
+              <span>发件箱</span>
+              <strong>{{ sentItems.length }}</strong>
+            </button>
+          </div>
         </aside>
 
         <section class="gmail-mail-panel">
@@ -74,12 +90,6 @@
               >
                 <GearGlyph />
               </button>
-              <n-button type="primary" :disabled="!isConfigured" @click="openCompose">
-                <template #icon>
-                  <SendGlyph />
-                </template>
-                发件
-              </n-button>
             </div>
           </header>
 
@@ -131,7 +141,7 @@
             <div v-if="sentItems.length === 0" class="gmail-empty-state">
               <strong>发件箱为空</strong>
               <p>发送成功的邮件会暂时显示在这里。</p>
-              <n-button type="primary" :disabled="!isConfigured" @click="openCompose">发件</n-button>
+              <n-button type="primary" :disabled="!isConfigured" @click="openCompose">写邮件</n-button>
             </div>
             <template v-else>
               <div
@@ -878,14 +888,27 @@ function formatDate(value: string | null): string {
 }
 
 .gmail-account-chip {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0 14px 12px;
+  display: grid;
+  gap: 12px;
+  margin: 0 8px 12px;
   padding: 12px;
   border-radius: 8px;
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 251, 255, 0.96)),
+    #ffffff;
+  border: 1px solid #dbe5f1;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.05);
+}
+
+.gmail-account-main {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.gmail-account-copy {
+  min-width: 0;
 }
 
 .gmail-account-dot {
@@ -919,23 +942,86 @@ function formatDate(value: string | null): string {
   line-height: 1.35;
 }
 
+.gmail-rail-action-card {
+  display: grid;
+  gap: 6px;
+  margin: 0 8px 12px;
+  padding: 8px;
+  border: 1px solid #dbe5f1;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.04);
+}
+
+.gmail-rail-compose-button,
 .gmail-folder-link {
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  min-height: 36px;
-  margin-right: 8px;
-  padding: 0 14px 0 20px;
-  border: 0;
-  border-radius: 0 18px 18px 0;
-  background: transparent;
-  color: #3c4043;
+  min-height: 40px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0 14px;
+  border-radius: 8px;
   font: inherit;
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
   text-align: left;
   cursor: pointer;
+}
+
+.gmail-folder-link {
+  border: 1px solid transparent;
+  background: transparent;
+  color: #3c4043;
+}
+
+.gmail-rail-compose-button {
+  margin: 0;
+  border: 1px solid #16a34a;
+  background: #16a34a;
+  color: #ffffff;
+  box-shadow: 0 10px 18px rgba(22, 163, 74, 0.16);
+}
+
+.gmail-rail-compose-button:hover:not(:disabled) {
+  border-color: #15803d;
+  background: #15803d;
+  box-shadow: 0 12px 22px rgba(22, 163, 74, 0.22);
+}
+
+.gmail-rail-compose-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+  box-shadow: none;
+}
+
+.gmail-rail-compose-button > span:first-child,
+.gmail-folder-icon {
+  display: inline-flex;
+  justify-content: center;
+  width: 22px;
+  color: currentColor;
+}
+
+.gmail-rail-compose-button svg {
+  width: 17px;
+  height: 17px;
+}
+
+.gmail-rail-compose-button > strong,
+.gmail-folder-link > span:not(.gmail-folder-icon) {
+  font-size: var(--text-sm);
+  line-height: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gmail-rail-compose-button > strong {
+  font-weight: var(--weight-bold);
 }
 
 .gmail-folder-link:hover,
@@ -950,11 +1036,6 @@ function formatDate(value: string | null): string {
   font-weight: var(--weight-bold);
 }
 
-.gmail-folder-icon {
-  display: inline-flex;
-  color: currentColor;
-}
-
 .gmail-folder-icon svg,
 .gmail-icon-button svg,
 .gmail-search-shell svg {
@@ -966,7 +1047,9 @@ function formatDate(value: string | null): string {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  background: #ffffff;
+  background:
+    linear-gradient(180deg, #fbfdff 0%, #ffffff 150px),
+    #ffffff;
 }
 
 .gmail-topbar {
@@ -1327,9 +1410,14 @@ function formatDate(value: string | null): string {
     margin: 0;
   }
 
+  .gmail-rail-action-card {
+    grid-column: 1 / -1;
+    margin: 0;
+  }
+
   .gmail-folder-link {
     margin: 0;
-    border-radius: 18px;
+    border-radius: 8px;
   }
 }
 
