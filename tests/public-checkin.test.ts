@@ -11,6 +11,17 @@ import {
 process.env.PUBLIC_CHECKIN_ENCRYPTION_KEY =
   '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
+const DEFAULT_PROBE_RATE_LIMIT = {
+  windowSeconds: 60 as const,
+  warningThreshold: 4 as const,
+  blockedThreshold: 5 as const,
+  usedCount: 0,
+  remainingCount: 4,
+  retryAfterSeconds: 0,
+  shouldWarn: false,
+  blocked: false
+};
+
 type MemorySiteRow = {
   id: number;
   name: string;
@@ -880,19 +891,21 @@ test('extracts OpenAI compatible model ids from mixed payloads', () => {
 
 test('builds an empty public checkin model response without throwing', () => {
   assert.deepEqual(
-    publicCheckinTestHooks.buildPublicCheckinModelProbeResponse(7, 'Empty Models', { data: [] }),
+    publicCheckinTestHooks.buildPublicCheckinModelProbeResponse(7, 'Empty Models', { data: [] }, DEFAULT_PROBE_RATE_LIMIT),
     {
       accountId: 7,
       siteName: 'Empty Models',
-      items: []
+      items: [],
+      probeRateLimit: DEFAULT_PROBE_RATE_LIMIT
     }
   );
   assert.deepEqual(
-    publicCheckinTestHooks.buildPublicCheckinModelProbeResponse(8, 'Unknown Shape', { ok: true }),
+    publicCheckinTestHooks.buildPublicCheckinModelProbeResponse(8, 'Unknown Shape', { ok: true }, DEFAULT_PROBE_RATE_LIMIT),
     {
       accountId: 8,
       siteName: 'Unknown Shape',
-      items: []
+      items: [],
+      probeRateLimit: DEFAULT_PROBE_RATE_LIMIT
     }
   );
 });
@@ -901,11 +914,12 @@ test('builds sorted public checkin model response items', () => {
   assert.deepEqual(
     publicCheckinTestHooks.buildPublicCheckinModelProbeResponse(9, 'Mixed Models', {
       data: [{ id: 'claude-3.5-sonnet' }, { id: 'gpt-4.1' }, { id: 'gpt-4' }]
-    }),
+    }, DEFAULT_PROBE_RATE_LIMIT),
     {
       accountId: 9,
       siteName: 'Mixed Models',
-      items: [{ model: 'gpt-4' }, { model: 'gpt-4.1' }, { model: 'claude-3.5-sonnet' }]
+      items: [{ model: 'gpt-4' }, { model: 'gpt-4.1' }, { model: 'claude-3.5-sonnet' }],
+      probeRateLimit: DEFAULT_PROBE_RATE_LIMIT
     }
   );
 });
@@ -1020,6 +1034,63 @@ test('fails model probe when upstream returns success without text', async () =>
   }
 });
 
+test('tracks public checkin model probe rate limit with warning on fourth accepted request', () => {
+  publicCheckinTestHooks.resetProbeRateLimitState();
+  publicCheckinTestHooks.setProbeRateLimitNowOverride(() => 1_000);
+
+  try {
+    assert.deepEqual(publicCheckinTestHooks.readPublicCheckinProbeRateLimit(7), DEFAULT_PROBE_RATE_LIMIT);
+
+    const first = publicCheckinTestHooks.reservePublicCheckinProbeRateLimit(7);
+    assert.equal(first.blocked, false);
+    assert.equal(first.probeRateLimit.usedCount, 1);
+    assert.equal(first.probeRateLimit.remainingCount, 3);
+    assert.equal(first.probeRateLimit.shouldWarn, false);
+    assert.equal(first.probeRateLimit.blocked, false);
+
+    publicCheckinTestHooks.reservePublicCheckinProbeRateLimit(7);
+    publicCheckinTestHooks.reservePublicCheckinProbeRateLimit(7);
+    const fourth = publicCheckinTestHooks.reservePublicCheckinProbeRateLimit(7);
+    assert.equal(fourth.blocked, false);
+    assert.equal(fourth.probeRateLimit.usedCount, 4);
+    assert.equal(fourth.probeRateLimit.remainingCount, 0);
+    assert.equal(fourth.probeRateLimit.shouldWarn, true);
+    assert.equal(fourth.probeRateLimit.blocked, true);
+    assert.equal(fourth.probeRateLimit.retryAfterSeconds, 60);
+
+    const fifth = publicCheckinTestHooks.reservePublicCheckinProbeRateLimit(7);
+    assert.equal(fifth.blocked, true);
+    assert.equal(fifth.probeRateLimit.usedCount, 4);
+    assert.equal(fifth.probeRateLimit.shouldWarn, true);
+    assert.equal(fifth.probeRateLimit.blocked, true);
+  } finally {
+    publicCheckinTestHooks.setProbeRateLimitNowOverride(null);
+    publicCheckinTestHooks.resetProbeRateLimitState();
+  }
+});
+
+test('expires public checkin model probe rate limit after sliding window', () => {
+  let now = 2_000;
+  publicCheckinTestHooks.resetProbeRateLimitState();
+  publicCheckinTestHooks.setProbeRateLimitNowOverride(() => now);
+
+  try {
+    for (let index = 0; index < 4; index += 1) {
+      publicCheckinTestHooks.reservePublicCheckinProbeRateLimit(9);
+    }
+
+    now = 2_061;
+    const current = publicCheckinTestHooks.readPublicCheckinProbeRateLimit(9);
+    assert.equal(current.usedCount, 0);
+    assert.equal(current.remainingCount, 4);
+    assert.equal(current.retryAfterSeconds, 0);
+    assert.equal(current.blocked, false);
+  } finally {
+    publicCheckinTestHooks.setProbeRateLimitNowOverride(null);
+    publicCheckinTestHooks.resetProbeRateLimitState();
+  }
+});
+
 test('public checkin model probe route returns response text for clicked model', async () => {
   const { db, cleanup } = await createPublicCheckinDb();
   const app = new Hono<{ Bindings: { DB: D1Database } }>();
@@ -1059,7 +1130,124 @@ test('public checkin model probe route returns response text for clicked model',
     assert.equal(payload.errorMessage, null);
     assert.equal(typeof payload.latencyMs, 'number');
     assert.equal(typeof payload.checkedAt, 'number');
+    assert.equal(typeof payload.probeRateLimit, 'object');
+    assert.equal((payload.probeRateLimit as Record<string, unknown>).usedCount, 1);
   } finally {
+    publicCheckinTestHooks.resetProbeRateLimitState();
+    publicCheckinTestHooks.setOpenAiCompatibleFetchOverride(null);
+    await cleanup();
+  }
+});
+
+test('public checkin model list route returns probe rate limit snapshot', async () => {
+  const { db, cleanup } = await createPublicCheckinDb();
+  const app = new Hono<{ Bindings: { DB: D1Database } }>();
+  registerPublicCheckinRoutes(app);
+
+  publicCheckinTestHooks.setOpenAiCompatibleFetchOverride(async (url) => {
+    if (url.endsWith('/v1/models')) {
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        headers: new Map([['content-type', 'application/json']]),
+        setCookieHeaders: [],
+        text: JSON.stringify({ data: [{ id: 'gpt-5.4' }] })
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: new Map([['content-type', 'application/json']]),
+      setCookieHeaders: [],
+      text: JSON.stringify({ output_text: 'ok' })
+    };
+  });
+
+  try {
+    const { accountId } = await seedPublicCheckinAccount(db);
+    await app.request(
+      `http://localhost/api/public-checkin/accounts/${accountId}/models/probe`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'gpt-5.4' })
+      },
+      { DB: db }
+    );
+
+    const response = await app.request(
+      `http://localhost/api/public-checkin/accounts/${accountId}/models/test`,
+      { method: 'POST' },
+      { DB: db }
+    );
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as Record<string, unknown>;
+    assert.equal(Array.isArray(payload.items), true);
+    assert.equal((payload.probeRateLimit as Record<string, unknown>).usedCount, 1);
+  } finally {
+    publicCheckinTestHooks.resetProbeRateLimitState();
+    publicCheckinTestHooks.setOpenAiCompatibleFetchOverride(null);
+    await cleanup();
+  }
+});
+
+test('public checkin model probe route blocks fifth request for the same site', async () => {
+  const { db, cleanup } = await createPublicCheckinDb();
+  const app = new Hono<{ Bindings: { DB: D1Database } }>();
+  registerPublicCheckinRoutes(app);
+
+  let callCount = 0;
+  publicCheckinTestHooks.setOpenAiCompatibleFetchOverride(async (_url, init) => {
+    callCount += 1;
+    return {
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: new Map([['content-type', 'application/json']]),
+      setCookieHeaders: [],
+      text: JSON.stringify({
+        output_text: `echo:${JSON.parse(String(init.body || '{}')).model}`
+      })
+    };
+  });
+
+  try {
+    const { siteId, accountId } = await seedPublicCheckinAccount(db);
+    const { accountId: secondAccountId } = await seedPublicCheckinAccount(db, siteId);
+
+    for (const model of ['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5.5']) {
+      const response = await app.request(
+        `http://localhost/api/public-checkin/accounts/${accountId}/models/probe`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model })
+        },
+        { DB: db }
+      );
+      assert.equal(response.status, 200);
+    }
+
+    const blockedResponse = await app.request(
+      `http://localhost/api/public-checkin/accounts/${secondAccountId}/models/probe`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'claude-3.5-sonnet' })
+      },
+      { DB: db }
+    );
+
+    assert.equal(blockedResponse.status, 429);
+    const payload = await blockedResponse.json() as Record<string, unknown>;
+    assert.match(String(payload.message || ''), /第 5 次检测已被禁止/);
+    assert.equal((payload.probeRateLimit as Record<string, unknown>).usedCount, 4);
+    assert.equal(callCount, 4);
+  } finally {
+    publicCheckinTestHooks.resetProbeRateLimitState();
     publicCheckinTestHooks.setOpenAiCompatibleFetchOverride(null);
     await cleanup();
   }

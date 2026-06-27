@@ -325,10 +325,22 @@ export interface PublicCheckinModelProbeItem {
   model: string;
 }
 
+export interface PublicCheckinProbeRateLimit {
+  windowSeconds: 60;
+  warningThreshold: 4;
+  blockedThreshold: 5;
+  usedCount: number;
+  remainingCount: number;
+  retryAfterSeconds: number;
+  shouldWarn: boolean;
+  blocked: boolean;
+}
+
 export interface PublicCheckinModelProbeResponse {
   accountId: number;
   siteName: string;
   items: PublicCheckinModelProbeItem[];
+  probeRateLimit: PublicCheckinProbeRateLimit;
 }
 
 export interface PublicCheckinSingleModelProbeRequest {
@@ -345,6 +357,7 @@ export interface PublicCheckinSingleModelProbeResponse {
   errorMessage: string | null;
   latencyMs: number;
   checkedAt: number;
+  probeRateLimit: PublicCheckinProbeRateLimit;
 }
 
 export interface PublicCheckinBatchResult {

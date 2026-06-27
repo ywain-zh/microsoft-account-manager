@@ -141,10 +141,22 @@ interface PublicCheckinModelProbeItem {
   model: string;
 }
 
+interface PublicCheckinProbeRateLimit {
+  windowSeconds: 60;
+  warningThreshold: 4;
+  blockedThreshold: 5;
+  usedCount: number;
+  remainingCount: number;
+  retryAfterSeconds: number;
+  shouldWarn: boolean;
+  blocked: boolean;
+}
+
 interface PublicCheckinModelProbeResponse {
   accountId: number;
   siteName: string;
   items: PublicCheckinModelProbeItem[];
+  probeRateLimit: PublicCheckinProbeRateLimit;
 }
 
 interface PublicCheckinSingleModelProbeResponse {
@@ -157,6 +169,7 @@ interface PublicCheckinSingleModelProbeResponse {
   errorMessage: string | null;
   latencyMs: number;
   checkedAt: number;
+  probeRateLimit: PublicCheckinProbeRateLimit;
 }
 
 interface PublicCheckinModelCacheEntry {
@@ -230,6 +243,9 @@ const DEFAULT_YESCAPTCHA_CONFIG: YesCaptchaConfig = {
   clientKey: ''
 };
 const DEFAULT_PUBLIC_CHECKIN_MODEL_CACHE_TTL_MS = 60_000;
+const PUBLIC_CHECKIN_MODEL_PROBE_WINDOW_SECONDS = 60 as const;
+const PUBLIC_CHECKIN_MODEL_PROBE_WARNING_THRESHOLD = 4 as const;
+const PUBLIC_CHECKIN_MODEL_PROBE_BLOCKED_THRESHOLD = 5 as const;
 const ANNOUNCEMENT_POLLING_INTERVALS = [15, 30, 60] as const;
 
 const runningTasks = new Set<string>();
@@ -242,9 +258,11 @@ let schedulerDb: D1Database | null = null;
 let schedulerStarted = false;
 const publicCheckinModelCache = new Map<string, PublicCheckinModelCacheEntry>();
 const publicCheckinModelRequests = new Map<string, Promise<PublicCheckinModelProbeResponse>>();
+const publicCheckinProbeRateLimitBySite = new Map<number, number[]>();
 let openAiCompatibleFetchOverride:
   | ((url: string, init: UndiciRequestInit) => Promise<RawResponse>)
   | null = null;
+let publicCheckinProbeRateLimitNowOverride: (() => number) | null = null;
 
 type NotificationsModule = typeof import('./notifications.js');
 let notificationsModulePromise: Promise<NotificationsModule> | null = null;
@@ -2201,13 +2219,99 @@ function sortPublicCheckinModelIds(models: string[]): string[] {
 function buildPublicCheckinModelProbeResponse(
   accountId: number,
   siteName: string,
-  payload: unknown
+  payload: unknown,
+  probeRateLimit: PublicCheckinProbeRateLimit
 ): PublicCheckinModelProbeResponse {
   const sortedModels = sortPublicCheckinModelIds(extractModelIds(payload));
   return {
     accountId,
     siteName,
-    items: sortedModels.map((model) => ({ model }))
+    items: sortedModels.map((model) => ({ model })),
+    probeRateLimit
+  };
+}
+
+function getPublicCheckinProbeRateLimitNowSeconds(): number {
+  const override = publicCheckinProbeRateLimitNowOverride;
+  if (override) {
+    return Math.max(0, Math.floor(override()));
+  }
+  return unixNow();
+}
+
+function prunePublicCheckinProbeRateLimitEntries(siteId: number, now = getPublicCheckinProbeRateLimitNowSeconds()): number[] {
+  const entries = publicCheckinProbeRateLimitBySite.get(siteId) || [];
+  const cutoff = now - PUBLIC_CHECKIN_MODEL_PROBE_WINDOW_SECONDS + 1;
+  const nextEntries = entries.filter((timestamp) => timestamp >= cutoff);
+  if (nextEntries.length > 0) {
+    publicCheckinProbeRateLimitBySite.set(siteId, nextEntries);
+  } else {
+    publicCheckinProbeRateLimitBySite.delete(siteId);
+  }
+  return nextEntries;
+}
+
+function buildPublicCheckinProbeRateLimit(input: {
+  usedCount: number;
+  retryAfterSeconds: number;
+}): PublicCheckinProbeRateLimit {
+  const remainingCount = Math.max(0, PUBLIC_CHECKIN_MODEL_PROBE_WARNING_THRESHOLD - input.usedCount);
+  const shouldWarn = input.usedCount >= PUBLIC_CHECKIN_MODEL_PROBE_WARNING_THRESHOLD;
+  return {
+    windowSeconds: PUBLIC_CHECKIN_MODEL_PROBE_WINDOW_SECONDS,
+    warningThreshold: PUBLIC_CHECKIN_MODEL_PROBE_WARNING_THRESHOLD,
+    blockedThreshold: PUBLIC_CHECKIN_MODEL_PROBE_BLOCKED_THRESHOLD,
+    usedCount: input.usedCount,
+    remainingCount,
+    retryAfterSeconds: Math.max(0, input.retryAfterSeconds),
+    shouldWarn,
+    blocked: shouldWarn
+  };
+}
+
+function readPublicCheckinProbeRateLimit(siteId: number, now = getPublicCheckinProbeRateLimitNowSeconds()): PublicCheckinProbeRateLimit {
+  const entries = prunePublicCheckinProbeRateLimitEntries(siteId, now);
+  const oldest = entries[0];
+  const retryAfterSeconds = oldest == null
+    ? 0
+    : Math.max(0, PUBLIC_CHECKIN_MODEL_PROBE_WINDOW_SECONDS - (now - oldest));
+  return buildPublicCheckinProbeRateLimit({
+    usedCount: entries.length,
+    retryAfterSeconds
+  });
+}
+
+function reservePublicCheckinProbeRateLimit(siteId: number, now = getPublicCheckinProbeRateLimitNowSeconds()): {
+  blocked: boolean;
+  probeRateLimit: PublicCheckinProbeRateLimit;
+} {
+  const entries = prunePublicCheckinProbeRateLimitEntries(siteId, now);
+  if (entries.length >= PUBLIC_CHECKIN_MODEL_PROBE_BLOCKED_THRESHOLD - 1) {
+    const oldest = entries[0];
+    const retryAfterSeconds = oldest == null
+      ? PUBLIC_CHECKIN_MODEL_PROBE_WINDOW_SECONDS
+      : Math.max(1, PUBLIC_CHECKIN_MODEL_PROBE_WINDOW_SECONDS - (now - oldest));
+    return {
+      blocked: true,
+      probeRateLimit: buildPublicCheckinProbeRateLimit({
+        usedCount: entries.length,
+        retryAfterSeconds
+      })
+    };
+  }
+
+  const nextEntries = [...entries, now];
+  publicCheckinProbeRateLimitBySite.set(siteId, nextEntries);
+  const oldest = nextEntries[0];
+  const retryAfterSeconds = oldest == null
+    ? 0
+    : Math.max(0, PUBLIC_CHECKIN_MODEL_PROBE_WINDOW_SECONDS - (now - oldest));
+  return {
+    blocked: false,
+    probeRateLimit: buildPublicCheckinProbeRateLimit({
+      usedCount: nextEntries.length,
+      retryAfterSeconds
+    })
   };
 }
 
@@ -2411,7 +2515,8 @@ function clonePublicCheckinModelProbeResponse(
   return {
     accountId: response.accountId,
     siteName: response.siteName,
-    items: response.items.map((item) => ({ model: item.model }))
+    items: response.items.map((item) => ({ model: item.model })),
+    probeRateLimit: { ...response.probeRateLimit }
   };
 }
 
@@ -2717,6 +2822,7 @@ async function testAccountConnection(db: D1Database, body: unknown): Promise<Bal
 
 async function testAccountModels(db: D1Database, accountId: number): Promise<PublicCheckinModelProbeResponse> {
   const { row, apiKey, proxyUrl } = await requireModelApiKey(db, accountId);
+  const probeRateLimit = readPublicCheckinProbeRateLimit(row.site.id);
   const cacheKey = buildPublicCheckinModelCacheKey({
     accountId,
     siteUrl: row.site.url,
@@ -2747,7 +2853,8 @@ async function testAccountModels(db: D1Database, accountId: number): Promise<Pub
     const response = buildPublicCheckinModelProbeResponse(
       accountId,
       row.site.name,
-      payload
+      payload,
+      probeRateLimit
     );
     if (response.items.length > 0) {
       setCachedPublicCheckinModelProbeResponse(cacheKey, response);
@@ -2780,6 +2887,17 @@ async function probeAccountModel(
   const { model } = readModelProbeInput(body);
   const startedAt = Date.now();
   const checkedAt = unixNow();
+  const limitReservation = reservePublicCheckinProbeRateLimit(row.site.id);
+  if (limitReservation.blocked) {
+    throw new HTTPException(429, {
+      message: `同一站点 1 分钟内第 ${PUBLIC_CHECKIN_MODEL_PROBE_BLOCKED_THRESHOLD} 次检测已被禁止，请 ${limitReservation.probeRateLimit.retryAfterSeconds} 秒后再试`,
+      res: Response.json({
+        message: `同一站点 1 分钟内第 ${PUBLIC_CHECKIN_MODEL_PROBE_BLOCKED_THRESHOLD} 次检测已被禁止，请 ${limitReservation.probeRateLimit.retryAfterSeconds} 秒后再试`,
+        probeRateLimit: limitReservation.probeRateLimit
+      }, { status: 429 })
+    });
+  }
+
   const result = await probeOpenAiCompatibleModel(
     row.site.url,
     apiKey,
@@ -2797,7 +2915,8 @@ async function probeAccountModel(
     responseText: result.success ? result.responseText : null,
     errorMessage: result.success ? null : result.errorMessage,
     latencyMs: Math.max(1, Date.now() - startedAt),
-    checkedAt
+    checkedAt,
+    probeRateLimit: limitReservation.probeRateLimit
   };
 }
 
@@ -3523,6 +3642,8 @@ export const publicCheckinTestHooks = {
   extractModelIds,
   sortPublicCheckinModelIds,
   buildPublicCheckinModelProbeResponse,
+  readPublicCheckinProbeRateLimit,
+  reservePublicCheckinProbeRateLimit,
   extractOpenAiResponseText,
   normalizeOpenAiCompatibleErrorMessage,
   probeOpenAiCompatibleModel,
@@ -3551,5 +3672,11 @@ export const publicCheckinTestHooks = {
   },
   setOpenAiCompatibleFetchOverride(factory: typeof openAiCompatibleFetchOverride) {
     openAiCompatibleFetchOverride = factory;
+  },
+  resetProbeRateLimitState() {
+    publicCheckinProbeRateLimitBySite.clear();
+  },
+  setProbeRateLimitNowOverride(factory: typeof publicCheckinProbeRateLimitNowOverride) {
+    publicCheckinProbeRateLimitNowOverride = factory;
   }
 };

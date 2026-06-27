@@ -35,6 +35,7 @@ import type {
   PublicCheckinBatchResult,
   PublicCheckinLogResponse,
   PublicCheckinModelProbeResponse,
+  PublicCheckinProbeRateLimit,
   PublicCheckinSingleModelProbeRequest,
   PublicCheckinSingleModelProbeResponse,
   PublicCheckinSettings,
@@ -61,6 +62,10 @@ interface ApiError {
   message?: string;
 }
 
+interface PublicCheckinModelProbeApiError extends ApiError {
+  probeRateLimit?: PublicCheckinProbeRateLimit;
+}
+
 interface DownloadResponse {
   blob: Blob;
   filename: string;
@@ -70,6 +75,16 @@ export class UnauthorizedError extends Error {
   constructor(message = '未登录或登录已过期') {
     super(message);
     this.name = 'UnauthorizedError';
+  }
+}
+
+export class PublicCheckinProbeRateLimitError extends Error {
+  probeRateLimit: PublicCheckinProbeRateLimit;
+
+  constructor(message: string, probeRateLimit: PublicCheckinProbeRateLimit) {
+    super(message);
+    this.name = 'PublicCheckinProbeRateLimitError';
+    this.probeRateLimit = probeRateLimit;
   }
 }
 
@@ -90,6 +105,36 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const message = payload.message ?? `请求失败 (${response.status})`;
     if (response.status === 401) {
       throw new UnauthorizedError(message);
+    }
+    throw new Error(message);
+  }
+
+  return payload;
+}
+
+async function requestPublicCheckinModelProbe(
+  path: string,
+  init: RequestInit = {}
+): Promise<PublicCheckinSingleModelProbeResponse> {
+  const headers = new Headers(init.headers);
+  if (init.body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  const response = await fetch(path, {
+    ...init,
+    headers,
+    credentials: 'same-origin'
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as PublicCheckinSingleModelProbeResponse & PublicCheckinModelProbeApiError;
+  if (!response.ok) {
+    const message = payload.message ?? `请求失败 (${response.status})`;
+    if (response.status === 401) {
+      throw new UnauthorizedError(message);
+    }
+    if (response.status === 429 && payload.probeRateLimit) {
+      throw new PublicCheckinProbeRateLimitError(message, payload.probeRateLimit);
     }
     throw new Error(message);
   }
@@ -527,7 +572,7 @@ export const api = {
   },
 
   probePublicCheckinModel(id: number, payload: PublicCheckinSingleModelProbeRequest): Promise<PublicCheckinSingleModelProbeResponse> {
-    return request<PublicCheckinSingleModelProbeResponse>(`/api/public-checkin/accounts/${id}/models/probe`, {
+    return requestPublicCheckinModelProbe(`/api/public-checkin/accounts/${id}/models/probe`, {
       method: 'POST',
       body: JSON.stringify(payload)
     });

@@ -437,6 +437,7 @@
         <div class="models-summary">
           <span>共 {{ modelProbeItems.length }} 个模型</span>
           <span v-if="modelsLoading" class="models-summary-loading">正在读取...</span>
+          <span v-else-if="isCurrentSiteProbeBlocked" class="models-summary-cooldown">{{ modelsCooldownText }}</span>
         </div>
 
         <div v-if="modelsLoading && modelProbeItems.length === 0" class="models-loading-list">
@@ -524,7 +525,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, reactive, ref, watch } from 'vue';
+import { computed, h, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import {
   NButton,
   NCheckbox,
@@ -542,7 +543,7 @@ import {
   type DataTableColumns
 } from 'naive-ui';
 import SecretInput from '../components/SecretInput.vue';
-import { api } from '../api';
+import { PublicCheckinProbeRateLimitError, api } from '../api';
 import { usePublicCheckinConsole } from '../state/public-checkin-console';
 import { renderPublicCheckinAnnouncementContent } from '../utils/public-checkin-announcements';
 import type {
@@ -550,6 +551,7 @@ import type {
   PublicCheckinAnnouncement,
   PublicCheckinLog,
   PublicCheckinModelProbeItem,
+  PublicCheckinProbeRateLimit,
   PublicCheckinSingleModelProbeResponse,
   PublicCheckinStatus,
   PublicCheckinSettings
@@ -605,10 +607,13 @@ const modelsLoading = ref(false);
 const modelsModalSiteName = ref('');
 const modelProbeItems = ref<PublicCheckinModelProbeItem[]>([]);
 const modelsModalAccountId = ref<number | null>(null);
+const modelsModalSiteId = ref<number | null>(null);
 const activeModelProbeName = ref('');
 const activeModelProbeLoading = ref(false);
 const activeModelProbePanel = ref<PublicCheckinSingleModelProbeResponse | null>(null);
 const modelProbeResults = ref<Record<string, PublicCheckinSingleModelProbeResponse>>({});
+const siteProbeRateLimits = ref<Record<number, PublicCheckinProbeRateLimit>>({});
+const currentProbeCooldownSeconds = ref(0);
 const expandedAnnouncementIds = ref<Set<number>>(new Set());
 const accountPage = ref(1);
 const accountPageSize = 12;
@@ -617,6 +622,7 @@ const logPageSize = 10;
 const announcementCache = new Map<number, PublicCheckinAnnouncement[]>();
 let announcementSessionId = 0;
 let announcementSyncedSessionId: number | null = null;
+let modelProbeCooldownTimer: ReturnType<typeof setInterval> | null = null;
 
 const accountSiteNameInputProps = {
   autocomplete: 'off',
@@ -706,6 +712,16 @@ const pagedAccounts = computed(() => {
 const logPageCount = computed(() => Math.max(1, Math.ceil(logs.total / logPageSize)));
 type PublicCheckinBusyAction = NonNullable<typeof busyAccountAction.value>;
 const modelsModalTitle = computed(() => modelsModalSiteName.value ? `模型管理 · ${modelsModalSiteName.value}` : '模型管理');
+const activeSiteProbeRateLimit = computed(() => {
+  const siteId = modelsModalSiteId.value;
+  if (!siteId) return null;
+  return siteProbeRateLimits.value[siteId] || null;
+});
+const isCurrentSiteProbeBlocked = computed(() => Boolean(activeSiteProbeRateLimit.value?.blocked && currentProbeCooldownSeconds.value > 0));
+const modelsCooldownText = computed(() => {
+  if (!isCurrentSiteProbeBlocked.value) return '';
+  return `${currentProbeCooldownSeconds.value} 秒后可再试`;
+});
 const announcementsModalTitle = computed(() => {
   const siteName = announcementModalAccount.value?.site.name;
   return siteName ? `公益站公告 · ${siteName}` : '公益站公告';
@@ -904,12 +920,15 @@ function isAccountActionLoading(accountId: number, action: PublicCheckinBusyActi
 function resetModelsModalState(): void {
   modelsLoading.value = false;
   modelsModalAccountId.value = null;
+  modelsModalSiteId.value = null;
   modelsModalSiteName.value = '';
   modelProbeItems.value = [];
   activeModelProbeName.value = '';
   activeModelProbeLoading.value = false;
   activeModelProbePanel.value = null;
   modelProbeResults.value = {};
+  currentProbeCooldownSeconds.value = 0;
+  stopProbeCooldownTimer();
 }
 
 function isModelProbeLoading(model: string): boolean {
@@ -917,13 +936,81 @@ function isModelProbeLoading(model: string): boolean {
 }
 
 function isAnotherModelProbeRunning(model: string): boolean {
-  return activeModelProbeLoading.value && activeModelProbeName.value !== model;
+  return isCurrentSiteProbeBlocked.value || (activeModelProbeLoading.value && activeModelProbeName.value !== model);
 }
 
 function modelRowClass(model: string): string {
   const result = modelProbeResults.value[model];
   if (!result) return 'is-idle';
   return result.success ? 'is-success' : 'is-failed';
+}
+
+function toProbeRateLimit(input?: Partial<PublicCheckinProbeRateLimit> | null): PublicCheckinProbeRateLimit {
+  return {
+    windowSeconds: 60,
+    warningThreshold: 4,
+    blockedThreshold: 5,
+    usedCount: Number(input?.usedCount || 0),
+    remainingCount: Math.max(0, Number(input?.remainingCount ?? 4)),
+    retryAfterSeconds: Math.max(0, Number(input?.retryAfterSeconds || 0)),
+    shouldWarn: input?.shouldWarn === true,
+    blocked: input?.blocked === true
+  };
+}
+
+function stopProbeCooldownTimer(): void {
+  if (modelProbeCooldownTimer) {
+    clearInterval(modelProbeCooldownTimer);
+    modelProbeCooldownTimer = null;
+  }
+}
+
+function syncProbeCooldownClock(): void {
+  const rateLimit = activeSiteProbeRateLimit.value;
+  if (!rateLimit?.blocked || rateLimit.retryAfterSeconds <= 0) {
+    currentProbeCooldownSeconds.value = 0;
+    stopProbeCooldownTimer();
+    return;
+  }
+
+  currentProbeCooldownSeconds.value = rateLimit.retryAfterSeconds;
+  if (modelProbeCooldownTimer) {
+    return;
+  }
+
+  modelProbeCooldownTimer = setInterval(() => {
+    if (currentProbeCooldownSeconds.value <= 1) {
+      currentProbeCooldownSeconds.value = 0;
+      const siteId = modelsModalSiteId.value;
+      if (siteId && siteProbeRateLimits.value[siteId]) {
+        siteProbeRateLimits.value = {
+          ...siteProbeRateLimits.value,
+          [siteId]: {
+            ...siteProbeRateLimits.value[siteId],
+            blocked: false,
+            shouldWarn: false,
+            retryAfterSeconds: 0,
+            remainingCount: 4
+          }
+        };
+      }
+      stopProbeCooldownTimer();
+      return;
+    }
+    currentProbeCooldownSeconds.value -= 1;
+  }, 1000);
+}
+
+function applySiteProbeRateLimit(siteId: number | null, input?: Partial<PublicCheckinProbeRateLimit> | null): void {
+  if (!siteId || !input) {
+    syncProbeCooldownClock();
+    return;
+  }
+  siteProbeRateLimits.value = {
+    ...siteProbeRateLimits.value,
+    [siteId]: toProbeRateLimit(input)
+  };
+  syncProbeCooldownClock();
 }
 
 function resetAccountForm(): void {
@@ -992,6 +1079,7 @@ async function openModelsModal(account: PublicCheckinAccount): Promise<void> {
   resetModelsModalState();
   const requestedAccountId = account.id;
   modelsModalAccountId.value = account.id;
+  modelsModalSiteId.value = account.siteId;
   modelsModalSiteName.value = account.site.name;
   modelsModalVisible.value = true;
   modelsLoading.value = true;
@@ -1003,6 +1091,7 @@ async function openModelsModal(account: PublicCheckinAccount): Promise<void> {
     }
     modelsModalSiteName.value = result.siteName;
     modelProbeItems.value = result.items;
+    applySiteProbeRateLimit(account.siteId, toProbeRateLimit(result.probeRateLimit));
   } catch (error) {
     if (modelsModalAccountId.value === requestedAccountId) {
       modelsModalVisible.value = false;
@@ -1016,11 +1105,12 @@ async function openModelsModal(account: PublicCheckinAccount): Promise<void> {
 }
 
 async function runModelProbe(model: string): Promise<void> {
-  if (!modelsModalAccountId.value || activeModelProbeLoading.value) {
+  if (!modelsModalAccountId.value || activeModelProbeLoading.value || isCurrentSiteProbeBlocked.value) {
     return;
   }
 
   const currentAccountId = modelsModalAccountId.value;
+  const currentSiteId = modelsModalSiteId.value;
   activeModelProbeName.value = model;
   activeModelProbeLoading.value = true;
   activeModelProbePanel.value = {
@@ -1032,7 +1122,8 @@ async function runModelProbe(model: string): Promise<void> {
     responseText: null,
     errorMessage: '',
     latencyMs: 0,
-    checkedAt: 0
+    checkedAt: 0,
+    probeRateLimit: activeSiteProbeRateLimit.value || toProbeRateLimit()
   };
 
   try {
@@ -1040,13 +1131,26 @@ async function runModelProbe(model: string): Promise<void> {
     if (modelsModalAccountId.value !== currentAccountId || activeModelProbeName.value !== model || !modelsModalVisible.value) {
       return;
     }
+    const normalizedResult: PublicCheckinSingleModelProbeResponse = {
+      ...result,
+      probeRateLimit: toProbeRateLimit(result.probeRateLimit)
+    };
+    applySiteProbeRateLimit(currentSiteId, normalizedResult.probeRateLimit);
     modelProbeResults.value = {
       ...modelProbeResults.value,
-      [model]: result
+      [model]: normalizedResult
     };
-    activeModelProbePanel.value = result;
+    activeModelProbePanel.value = normalizedResult;
+    if (normalizedResult.probeRateLimit.shouldWarn) {
+      message.warning(`同一站点 1 分钟内已达到第 4 次检测，${normalizedResult.probeRateLimit.retryAfterSeconds} 秒后可再试`);
+    }
   } catch (error) {
     if (modelsModalAccountId.value !== currentAccountId || activeModelProbeName.value !== model || !modelsModalVisible.value) {
+      return;
+    }
+    if (error instanceof PublicCheckinProbeRateLimitError) {
+      applySiteProbeRateLimit(currentSiteId, error.probeRateLimit);
+      message.error(error.message);
       return;
     }
     const failureResult: PublicCheckinSingleModelProbeResponse = {
@@ -1058,7 +1162,8 @@ async function runModelProbe(model: string): Promise<void> {
       responseText: null,
       errorMessage: toErrorMessage(error, '检测失败'),
       latencyMs: 0,
-      checkedAt: Math.floor(Date.now() / 1000)
+      checkedAt: Math.floor(Date.now() / 1000),
+      probeRateLimit: activeSiteProbeRateLimit.value || toProbeRateLimit()
     };
     modelProbeResults.value = {
       ...modelProbeResults.value,
@@ -1121,6 +1226,10 @@ watch(modelsModalVisible, (visible) => {
   if (!visible) {
     resetModelsModalState();
   }
+});
+
+watch(activeSiteProbeRateLimit, () => {
+  syncProbeCooldownClock();
 });
 
 async function loadAnnouncementsFromStore(account: PublicCheckinAccount, sessionId: number, showLoading: boolean): Promise<void> {
@@ -1296,6 +1405,10 @@ async function submitSettings(): Promise<void> {
 
 onMounted(() => {
   void loadInitialData();
+});
+
+onBeforeUnmount(() => {
+  stopProbeCooldownTimer();
 });
 </script>
 
@@ -2303,6 +2416,10 @@ onMounted(() => {
 
 .models-summary-loading {
   color: #7c3aed;
+}
+
+.models-summary-cooldown {
+  color: #b45309;
 }
 
 .models-loading-list,
