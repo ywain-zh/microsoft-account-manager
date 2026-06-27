@@ -35,6 +35,8 @@ import type {
   PublicCheckinBatchResult,
   PublicCheckinLogResponse,
   PublicCheckinModelProbeResponse,
+  PublicCheckinSingleModelProbeRequest,
+  PublicCheckinSingleModelProbeResponse,
   PublicCheckinSettings,
   PublicCheckinSite,
   PublicCheckinStats,
@@ -521,6 +523,13 @@ export const api = {
   testPublicCheckinModels(id: number): Promise<PublicCheckinModelProbeResponse> {
     return request<PublicCheckinModelProbeResponse>(`/api/public-checkin/accounts/${id}/models/test`, {
       method: 'POST'
+    });
+  },
+
+  probePublicCheckinModel(id: number, payload: PublicCheckinSingleModelProbeRequest): Promise<PublicCheckinSingleModelProbeResponse> {
+    return request<PublicCheckinSingleModelProbeResponse>(`/api/public-checkin/accounts/${id}/models/probe`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
     });
   },
 

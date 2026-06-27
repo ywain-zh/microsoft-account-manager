@@ -201,15 +201,15 @@ class PublicCheckinMemoryStatement implements D1PreparedStatement {
         label: String(this.values[1]),
         credential_type: this.values[2] as MemoryAccountRow['credential_type'],
         credential_data: String(this.values[3]),
-        api_key_data: null,
+        api_key_data: this.values[4] == null ? null : String(this.values[4]),
         balance: null,
         balance_updated_at: null,
         checkin_enabled: 1,
         use_proxy: 0,
         status: 'active',
         last_error: null,
-        created_at: Number(this.values[4]),
-        updated_at: Number(this.values[5])
+        created_at: Number(this.values[5]),
+        updated_at: Number(this.values[6])
       };
       this.database.accounts.push(row);
       return { success: true, meta: { changes: 1, rows_written: 1, last_row_id: row.id } };
@@ -412,20 +412,22 @@ async function seedPublicCheckinAccount(db: PublicCheckinMemoryD1Database, siteI
     type: 'access_token',
     accessToken: 'sk-test'
   }));
+  const apiKey = publicCheckinTestHooks.encryptCredential('sk-model-test');
   const accountId = Number((await db.prepare(`
     INSERT INTO public_checkin_accounts (
       site_id,
       label,
       credential_type,
       credential_data,
+      api_key_data,
       checkin_enabled,
       use_proxy,
       status,
       created_at,
       updated_at
     )
-    VALUES (?, ?, ?, ?, 1, 0, 'active', ?, ?)
-  `).bind(resolvedSiteId, `测试账号 ${now}`, 'access_token', credential, now, now).run()).meta.last_row_id);
+    VALUES (?, ?, ?, ?, ?, 1, 0, 'active', ?, ?)
+  `).bind(resolvedSiteId, `测试账号 ${now}`, 'access_token', credential, apiKey, now, now).run()).meta.last_row_id);
 
   return { siteId: resolvedSiteId, accountId };
 }
@@ -906,6 +908,184 @@ test('builds sorted public checkin model response items', () => {
       items: [{ model: 'gpt-4' }, { model: 'gpt-4.1' }, { model: 'claude-3.5-sonnet' }]
     }
   );
+});
+
+test('extracts text from OpenAI responses payloads', () => {
+  assert.equal(
+    publicCheckinTestHooks.extractOpenAiResponseText({
+      output_text: 'Hi from top level'
+    }),
+    'Hi from top level'
+  );
+  assert.equal(
+    publicCheckinTestHooks.extractOpenAiResponseText({
+      output: [
+        {
+          content: [
+            { type: 'output_text', text: 'Hi from content' }
+          ]
+        }
+      ]
+    }),
+    'Hi from content'
+  );
+});
+
+test('normalizes upstream OpenAI-compatible errors', () => {
+  assert.equal(
+    publicCheckinTestHooks.normalizeOpenAiCompatibleErrorMessage({
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+      headers: new Map(),
+      setCookieHeaders: [],
+      text: '{"error":{"message":"model not found"}}'
+    }),
+    'model not found'
+  );
+  assert.equal(
+    publicCheckinTestHooks.normalizeOpenAiCompatibleErrorMessage({
+      ok: false,
+      status: 502,
+      statusText: 'Bad Gateway',
+      headers: new Map(),
+      setCookieHeaders: [],
+      text: 'upstream exploded'
+    }),
+    'upstream exploded'
+  );
+});
+
+test('probes a specific OpenAI-compatible model with the clicked model name', async () => {
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  publicCheckinTestHooks.setOpenAiCompatibleFetchOverride(async (url, init) => {
+    calls.push({
+      url,
+      body: JSON.parse(String(init.body || '{}')) as Record<string, unknown>
+    });
+    return {
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: new Map([['content-type', 'application/json']]),
+      setCookieHeaders: [],
+      text: JSON.stringify({ output_text: 'Hi! How can I help you today?' })
+    };
+  });
+
+  try {
+    const result = await publicCheckinTestHooks.probeOpenAiCompatibleModel(
+      'https://public.example.test',
+      'sk-model-test',
+      'claude-3.5-sonnet',
+      false,
+      ''
+    );
+
+    assert.equal(result.success, true);
+    assert.equal(result.responseText, 'Hi! How can I help you today?');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, 'https://public.example.test/v1/responses');
+    assert.equal(calls[0].body.model, 'claude-3.5-sonnet');
+    assert.equal(calls[0].body.input, 'Hi');
+  } finally {
+    publicCheckinTestHooks.setOpenAiCompatibleFetchOverride(null);
+  }
+});
+
+test('fails model probe when upstream returns success without text', async () => {
+  publicCheckinTestHooks.setOpenAiCompatibleFetchOverride(async () => ({
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    headers: new Map([['content-type', 'application/json']]),
+    setCookieHeaders: [],
+    text: JSON.stringify({ output: [] })
+  }));
+
+  try {
+    const result = await publicCheckinTestHooks.probeOpenAiCompatibleModel(
+      'https://public.example.test',
+      'sk-model-test',
+      'gpt-5.5',
+      false,
+      ''
+    );
+    assert.deepEqual(result, {
+      success: false,
+      errorMessage: '接口返回成功，但没有可识别的文本回复'
+    });
+  } finally {
+    publicCheckinTestHooks.setOpenAiCompatibleFetchOverride(null);
+  }
+});
+
+test('public checkin model probe route returns response text for clicked model', async () => {
+  const { db, cleanup } = await createPublicCheckinDb();
+  const app = new Hono<{ Bindings: { DB: D1Database } }>();
+  registerPublicCheckinRoutes(app);
+
+  publicCheckinTestHooks.setOpenAiCompatibleFetchOverride(async (_url, init) => ({
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    headers: new Map([['content-type', 'application/json']]),
+    setCookieHeaders: [],
+    text: JSON.stringify({
+      output_text: `echo:${JSON.parse(String(init.body || '{}')).model}`
+    })
+  }));
+
+  try {
+    const { accountId } = await seedPublicCheckinAccount(db);
+    const response = await app.request(
+      `http://localhost/api/public-checkin/accounts/${accountId}/models/probe`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'gemini-2.5-pro' })
+      },
+      { DB: db }
+    );
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as Record<string, unknown>;
+    assert.equal(payload.accountId, accountId);
+    assert.equal(payload.siteName, '测试公益站');
+    assert.equal(payload.model, 'gemini-2.5-pro');
+    assert.equal(payload.success, true);
+    assert.equal(payload.prompt, 'Hi');
+    assert.equal(payload.responseText, 'echo:gemini-2.5-pro');
+    assert.equal(payload.errorMessage, null);
+    assert.equal(typeof payload.latencyMs, 'number');
+    assert.equal(typeof payload.checkedAt, 'number');
+  } finally {
+    publicCheckinTestHooks.setOpenAiCompatibleFetchOverride(null);
+    await cleanup();
+  }
+});
+
+test('public checkin model probe route validates model name', async () => {
+  const { db, cleanup } = await createPublicCheckinDb();
+  const app = new Hono<{ Bindings: { DB: D1Database } }>();
+  registerPublicCheckinRoutes(app);
+
+  try {
+    const { accountId } = await seedPublicCheckinAccount(db);
+    const response = await app.request(
+      `http://localhost/api/public-checkin/accounts/${accountId}/models/probe`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: '   ' })
+      },
+      { DB: db }
+    );
+
+    assert.equal(response.status, 400);
+  } finally {
+    await cleanup();
+  }
 });
 
 test('sorts public checkin models by vendor priority then natural order', () => {

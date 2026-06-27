@@ -147,6 +147,18 @@ interface PublicCheckinModelProbeResponse {
   items: PublicCheckinModelProbeItem[];
 }
 
+interface PublicCheckinSingleModelProbeResponse {
+  accountId: number;
+  siteName: string;
+  model: string;
+  success: boolean;
+  prompt: string;
+  responseText: string | null;
+  errorMessage: string | null;
+  latencyMs: number;
+  checkedAt: number;
+}
+
 interface PublicCheckinModelCacheEntry {
   expiresAt: number;
   response: PublicCheckinModelProbeResponse;
@@ -230,6 +242,9 @@ let schedulerDb: D1Database | null = null;
 let schedulerStarted = false;
 const publicCheckinModelCache = new Map<string, PublicCheckinModelCacheEntry>();
 const publicCheckinModelRequests = new Map<string, Promise<PublicCheckinModelProbeResponse>>();
+let openAiCompatibleFetchOverride:
+  | ((url: string, init: UndiciRequestInit) => Promise<RawResponse>)
+  | null = null;
 
 type NotificationsModule = typeof import('./notifications.js');
 let notificationsModulePromise: Promise<NotificationsModule> | null = null;
@@ -2196,6 +2211,86 @@ function buildPublicCheckinModelProbeResponse(
   };
 }
 
+function extractOpenAiResponseText(payload: unknown): string {
+  const record = asRecord(payload);
+  const topLevel = asString(record.output_text).trim();
+  if (topLevel) {
+    return topLevel;
+  }
+
+  const outputs = Array.isArray(record.output) ? record.output : [];
+  for (const output of outputs) {
+    const outputRecord = asRecord(output);
+    const contents = Array.isArray(outputRecord.content) ? outputRecord.content : [];
+    for (const content of contents) {
+      const contentRecord = asRecord(content);
+      const text = asString(contentRecord.text).trim();
+      if (text) {
+        return text;
+      }
+      const nestedText = asString(asRecord(contentRecord.text).value).trim();
+      if (nestedText) {
+        return nestedText;
+      }
+    }
+  }
+
+  return '';
+}
+
+function normalizeOpenAiCompatibleErrorMessage(response: RawResponse): string {
+  const jsonMessage = (() => {
+    try {
+      const payload = response.text ? JSON.parse(response.text) : null;
+      const record = asRecord(payload);
+      const error = asRecord(record.error);
+      return asString(record.message || error.message).trim();
+    } catch {
+      return '';
+    }
+  })();
+  if (jsonMessage) {
+    return jsonMessage;
+  }
+
+  const rawText = response.text.trim();
+  if (rawText) {
+    return rawText.slice(0, 300);
+  }
+
+  return `HTTP ${response.status}: ${response.statusText || 'Request Failed'}`;
+}
+
+async function requestOpenAiCompatibleRaw(
+  siteUrl: string,
+  apiKey: string,
+  requestPath: string,
+  init: RequestInit,
+  useProxy: boolean,
+  proxyUrl: string
+): Promise<RawResponse> {
+  const requestInit: UndiciRequestInit = {
+    method: init.method,
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+      ...(init.headers as Record<string, string> | undefined)
+    },
+    body: init.body === null ? undefined : (init.body as UndiciRequestInit['body']),
+    dispatcher: useProxy ? getProxyDispatcher(proxyUrl) : undefined,
+    signal: init.signal as AbortSignal | undefined
+  };
+
+  if (openAiCompatibleFetchOverride) {
+    return openAiCompatibleFetchOverride(buildOpenAiCompatibleUrl(siteUrl, requestPath), requestInit);
+  }
+
+  const response = await fetch(buildOpenAiCompatibleUrl(siteUrl, requestPath), {
+    ...requestInit
+  });
+  return toRawResponse(response);
+}
+
 async function requestOpenAiCompatibleJson(
   siteUrl: string,
   apiKey: string,
@@ -2208,27 +2303,82 @@ async function requestOpenAiCompatibleJson(
   const timeoutId = setTimeout(() => controller.abort(), 15000);
 
   try {
-    const requestInit: UndiciRequestInit = {
-      method: init.method,
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-        ...(init.headers as Record<string, string> | undefined)
-      },
-      body: init.body === null ? undefined : (init.body as UndiciRequestInit['body']),
-      dispatcher: useProxy ? getProxyDispatcher(proxyUrl) : undefined,
+    const response = await requestOpenAiCompatibleRaw(siteUrl, apiKey, requestPath, {
+      ...init,
       signal: controller.signal
-    };
-
-    const response = await fetch(buildOpenAiCompatibleUrl(siteUrl, requestPath), {
-      ...requestInit
-    });
-    return parseJsonResponsePayload<unknown>(await toRawResponse(response));
+    }, useProxy, proxyUrl);
+    return parseJsonResponsePayload<unknown>(response);
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
       throw new Error('请求超时');
     }
     throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function probeOpenAiCompatibleModel(
+  siteUrl: string,
+  apiKey: string,
+  model: string,
+  useProxy: boolean,
+  proxyUrl: string
+): Promise<{ success: true; responseText: string } | { success: false; errorMessage: string }> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const response = await requestOpenAiCompatibleRaw(siteUrl, apiKey, '/v1/responses', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model,
+        input: 'Hi',
+        max_output_tokens: 32
+      }),
+      signal: controller.signal
+    }, useProxy, proxyUrl);
+
+    if (!response.ok) {
+      return {
+        success: false,
+        errorMessage: normalizeOpenAiCompatibleErrorMessage(response)
+      };
+    }
+
+    let payload: unknown = null;
+    try {
+      payload = response.text ? JSON.parse(response.text) : null;
+    } catch {
+      return {
+        success: false,
+        errorMessage: `站点返回的内容不是 JSON：${response.text.slice(0, 120)}`
+      };
+    }
+
+    const responseText = extractOpenAiResponseText(payload);
+    if (!responseText) {
+      return {
+        success: false,
+        errorMessage: '接口返回成功，但没有可识别的文本回复'
+      };
+    }
+
+    return {
+      success: true,
+      responseText
+    };
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, errorMessage: '请求超时' };
+    }
+    return {
+      success: false,
+      errorMessage: error instanceof Error ? error.message : '请求失败'
+    };
   } finally {
     clearTimeout(timeoutId);
   }
@@ -2611,6 +2761,44 @@ async function testAccountModels(db: D1Database, accountId: number): Promise<Pub
   } finally {
     publicCheckinModelRequests.delete(cacheKey);
   }
+}
+
+function readModelProbeInput(body: unknown): { model: string } {
+  const model = asString(asRecord(body).model).trim();
+  if (!model) {
+    throw new HTTPException(400, { message: '模型名称不能为空' });
+  }
+  return { model };
+}
+
+async function probeAccountModel(
+  db: D1Database,
+  accountId: number,
+  body: unknown
+): Promise<PublicCheckinSingleModelProbeResponse> {
+  const { row, apiKey, proxyUrl } = await requireModelApiKey(db, accountId);
+  const { model } = readModelProbeInput(body);
+  const startedAt = Date.now();
+  const checkedAt = unixNow();
+  const result = await probeOpenAiCompatibleModel(
+    row.site.url,
+    apiKey,
+    model,
+    row.account.use_proxy === 1,
+    proxyUrl
+  );
+
+  return {
+    accountId,
+    siteName: row.site.name,
+    model,
+    success: result.success,
+    prompt: 'Hi',
+    responseText: result.success ? result.responseText : null,
+    errorMessage: result.success ? null : result.errorMessage,
+    latencyMs: Math.max(1, Date.now() - startedAt),
+    checkedAt
+  };
 }
 
 function describeCookieDiagnostics(credential: PublicCheckinCredential, useProxy: boolean): string {
@@ -3041,6 +3229,7 @@ export function registerPublicCheckinRoutes(app: Hono<any>): void {
   });
   app.post('/api/public-checkin/accounts/:id/test', async (c) => c.json(await refreshBalanceForAccount(c.env.DB, routeId(c.req.param('id')))));
   app.post('/api/public-checkin/accounts/:id/models/test', async (c) => c.json(await testAccountModels(c.env.DB, routeId(c.req.param('id')))));
+  app.post('/api/public-checkin/accounts/:id/models/probe', async (c) => c.json(await probeAccountModel(c.env.DB, routeId(c.req.param('id')), await readBody(c))));
   app.get('/api/public-checkin/accounts/:id/announcements', async (c) => {
     return c.json(await listAnnouncementsForAccount(c.env.DB, routeId(c.req.param('id'))));
   });
@@ -3334,6 +3523,9 @@ export const publicCheckinTestHooks = {
   extractModelIds,
   sortPublicCheckinModelIds,
   buildPublicCheckinModelProbeResponse,
+  extractOpenAiResponseText,
+  normalizeOpenAiCompatibleErrorMessage,
+  probeOpenAiCompatibleModel,
   solveAcwScV2,
   parseJsonResponsePayload,
   parseBalancePayload,
@@ -3356,5 +3548,8 @@ export const publicCheckinTestHooks = {
   },
   setAnnouncementNotificationSenderOverride(factory: typeof announcementNotificationSenderOverride) {
     announcementNotificationSenderOverride = factory;
+  },
+  setOpenAiCompatibleFetchOverride(factory: typeof openAiCompatibleFetchOverride) {
+    openAiCompatibleFetchOverride = factory;
   }
 };

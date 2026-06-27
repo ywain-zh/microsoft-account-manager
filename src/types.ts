@@ -331,6 +331,22 @@ export interface PublicCheckinModelProbeResponse {
   items: PublicCheckinModelProbeItem[];
 }
 
+export interface PublicCheckinSingleModelProbeRequest {
+  model: string;
+}
+
+export interface PublicCheckinSingleModelProbeResponse {
+  accountId: number;
+  siteName: string;
+  model: string;
+  success: boolean;
+  prompt: string;
+  responseText: string | null;
+  errorMessage: string | null;
+  latencyMs: number;
+  checkedAt: number;
+}
+
 export interface PublicCheckinBatchResult {
   accountId: number;
   label?: string;

@@ -448,10 +448,66 @@
         </div>
 
         <div v-else class="models-list">
-          <div v-for="item in modelProbeItems" :key="item.model" class="model-row is-ok">
-            <div class="model-row-main">
-              <span class="model-row-indicator"></span>
-              <span class="model-row-name">{{ item.model }}</span>
+          <div
+            v-for="item in modelProbeItems"
+            :key="item.model"
+            class="model-entry"
+          >
+            <div class="model-row" :class="modelRowClass(item.model)">
+              <div class="model-row-main">
+                <span class="model-row-indicator"></span>
+                <span class="model-row-name">{{ item.model }}</span>
+              </div>
+              <div class="model-row-actions">
+                <span
+                  v-if="modelProbeResults[item.model]"
+                  class="model-probe-status"
+                  :class="modelProbeResults[item.model]?.success ? 'is-success' : 'is-failed'"
+                >
+                  {{ modelProbeResults[item.model]?.success ? '成功' : '失败' }}
+                </span>
+                <n-button
+                  size="small"
+                  secondary
+                  type="primary"
+                  :loading="isModelProbeLoading(item.model)"
+                  :disabled="isAnotherModelProbeRunning(item.model)"
+                  @click="runModelProbe(item.model)"
+                >
+                  {{ modelProbeResults[item.model] ? '重试' : '检测' }}
+                </n-button>
+              </div>
+            </div>
+
+            <div v-if="activeModelProbeName === item.model && activeModelProbePanel" class="model-probe-panel">
+              <div class="model-probe-log">
+                <div class="model-probe-line">
+                  <span class="model-probe-label">开始检测站点：</span>
+                  <span class="model-probe-value">{{ activeModelProbePanel.siteName }}</span>
+                </div>
+                <div class="model-probe-line">
+                  <span class="model-probe-label">已选模型：</span>
+                  <span class="model-probe-value">{{ activeModelProbePanel.model }}</span>
+                </div>
+                <div class="model-probe-line">
+                  <span class="model-probe-label">发送测试消息：</span>
+                  <span class="model-probe-value">"{{ activeModelProbePanel.prompt }}"</span>
+                </div>
+                <div v-if="activeModelProbeLoading" class="model-probe-line is-muted">
+                  正在等待模型响应...
+                </div>
+                <template v-else>
+                  <div class="model-probe-line">
+                    <span class="model-probe-label">{{ activeModelProbePanel.success ? '响应：' : '失败：' }}</span>
+                  </div>
+                  <pre class="model-probe-response">{{ activeModelProbePanel.success ? activeModelProbePanel.responseText : activeModelProbePanel.errorMessage }}</pre>
+                  <div class="model-probe-divider"></div>
+                  <div class="model-probe-footer" :class="activeModelProbePanel.success ? 'is-success' : 'is-failed'">
+                    <span>{{ activeModelProbePanel.success ? '检测完成' : '检测失败' }}</span>
+                    <span>{{ activeModelProbePanel.latencyMs }} ms</span>
+                  </div>
+                </template>
+              </div>
             </div>
           </div>
         </div>
@@ -459,7 +515,7 @@
       <template #footer>
         <div class="modal-footer">
           <div class="modal-footer-actions">
-            <n-button @click="modelsModalVisible = false">关闭</n-button>
+            <n-button @click="closeModelsModal">关闭</n-button>
           </div>
         </div>
       </template>
@@ -468,7 +524,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, reactive, ref } from 'vue';
+import { computed, h, onMounted, reactive, ref, watch } from 'vue';
 import {
   NButton,
   NCheckbox,
@@ -494,6 +550,7 @@ import type {
   PublicCheckinAnnouncement,
   PublicCheckinLog,
   PublicCheckinModelProbeItem,
+  PublicCheckinSingleModelProbeResponse,
   PublicCheckinStatus,
   PublicCheckinSettings
 } from '../types';
@@ -547,6 +604,11 @@ const announcementError = ref('');
 const modelsLoading = ref(false);
 const modelsModalSiteName = ref('');
 const modelProbeItems = ref<PublicCheckinModelProbeItem[]>([]);
+const modelsModalAccountId = ref<number | null>(null);
+const activeModelProbeName = ref('');
+const activeModelProbeLoading = ref(false);
+const activeModelProbePanel = ref<PublicCheckinSingleModelProbeResponse | null>(null);
+const modelProbeResults = ref<Record<string, PublicCheckinSingleModelProbeResponse>>({});
 const expandedAnnouncementIds = ref<Set<number>>(new Set());
 const accountPage = ref(1);
 const accountPageSize = 12;
@@ -839,6 +901,31 @@ function isAccountActionLoading(accountId: number, action: PublicCheckinBusyActi
   return busyAccountId.value === accountId && busyAccountAction.value === action;
 }
 
+function resetModelsModalState(): void {
+  modelsLoading.value = false;
+  modelsModalAccountId.value = null;
+  modelsModalSiteName.value = '';
+  modelProbeItems.value = [];
+  activeModelProbeName.value = '';
+  activeModelProbeLoading.value = false;
+  activeModelProbePanel.value = null;
+  modelProbeResults.value = {};
+}
+
+function isModelProbeLoading(model: string): boolean {
+  return activeModelProbeLoading.value && activeModelProbeName.value === model;
+}
+
+function isAnotherModelProbeRunning(model: string): boolean {
+  return activeModelProbeLoading.value && activeModelProbeName.value !== model;
+}
+
+function modelRowClass(model: string): string {
+  const result = modelProbeResults.value[model];
+  if (!result) return 'is-idle';
+  return result.success ? 'is-success' : 'is-failed';
+}
+
 function resetAccountForm(): void {
   accountForm.siteName = '';
   accountForm.siteUrl = '';
@@ -902,20 +989,86 @@ async function openModelsModal(account: PublicCheckinAccount): Promise<void> {
     return;
   }
 
+  resetModelsModalState();
+  const requestedAccountId = account.id;
+  modelsModalAccountId.value = account.id;
   modelsModalSiteName.value = account.site.name;
-  modelProbeItems.value = [];
   modelsModalVisible.value = true;
   modelsLoading.value = true;
 
   try {
     const result = await testAccountModels(account.id);
+    if (modelsModalAccountId.value !== requestedAccountId || !modelsModalVisible.value) {
+      return;
+    }
     modelsModalSiteName.value = result.siteName;
     modelProbeItems.value = result.items;
   } catch (error) {
-    modelsModalVisible.value = false;
+    if (modelsModalAccountId.value === requestedAccountId) {
+      modelsModalVisible.value = false;
+    }
     handleApiError(error);
   } finally {
-    modelsLoading.value = false;
+    if (modelsModalAccountId.value === requestedAccountId || !modelsModalVisible.value) {
+      modelsLoading.value = false;
+    }
+  }
+}
+
+async function runModelProbe(model: string): Promise<void> {
+  if (!modelsModalAccountId.value || activeModelProbeLoading.value) {
+    return;
+  }
+
+  const currentAccountId = modelsModalAccountId.value;
+  activeModelProbeName.value = model;
+  activeModelProbeLoading.value = true;
+  activeModelProbePanel.value = {
+    accountId: currentAccountId,
+    siteName: modelsModalSiteName.value,
+    model,
+    success: false,
+    prompt: 'Hi',
+    responseText: null,
+    errorMessage: '',
+    latencyMs: 0,
+    checkedAt: 0
+  };
+
+  try {
+    const result = await api.probePublicCheckinModel(currentAccountId, { model });
+    if (modelsModalAccountId.value !== currentAccountId || activeModelProbeName.value !== model || !modelsModalVisible.value) {
+      return;
+    }
+    modelProbeResults.value = {
+      ...modelProbeResults.value,
+      [model]: result
+    };
+    activeModelProbePanel.value = result;
+  } catch (error) {
+    if (modelsModalAccountId.value !== currentAccountId || activeModelProbeName.value !== model || !modelsModalVisible.value) {
+      return;
+    }
+    const failureResult: PublicCheckinSingleModelProbeResponse = {
+      accountId: currentAccountId,
+      siteName: modelsModalSiteName.value,
+      model,
+      success: false,
+      prompt: 'Hi',
+      responseText: null,
+      errorMessage: toErrorMessage(error, '检测失败'),
+      latencyMs: 0,
+      checkedAt: Math.floor(Date.now() / 1000)
+    };
+    modelProbeResults.value = {
+      ...modelProbeResults.value,
+      [model]: failureResult
+    };
+    activeModelProbePanel.value = failureResult;
+  } finally {
+    if (activeModelProbeName.value === model) {
+      activeModelProbeLoading.value = false;
+    }
   }
 }
 
@@ -958,6 +1111,17 @@ async function openLogModal(): Promise<void> {
   logModalVisible.value = true;
   await refreshLogs();
 }
+
+function closeModelsModal(): void {
+  modelsModalVisible.value = false;
+  resetModelsModalState();
+}
+
+watch(modelsModalVisible, (visible) => {
+  if (!visible) {
+    resetModelsModalState();
+  }
+});
 
 async function loadAnnouncementsFromStore(account: PublicCheckinAccount, sessionId: number, showLoading: boolean): Promise<void> {
   if (showLoading) {
@@ -2159,6 +2323,12 @@ onMounted(() => {
   animation: models-skeleton-shimmer 1.2s linear infinite;
 }
 
+.model-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .model-row {
   display: flex;
   align-items: center;
@@ -2175,9 +2345,14 @@ onMounted(() => {
   transform: translateY(-1px);
 }
 
-.model-row.is-ok {
+.model-row.is-success {
   border-color: #dcfce7;
   box-shadow: 0 10px 18px rgba(16, 185, 129, 0.08);
+}
+
+.model-row.is-failed {
+  border-color: #fecaca;
+  box-shadow: 0 10px 18px rgba(239, 68, 68, 0.08);
 }
 
 .model-row-main {
@@ -2195,8 +2370,16 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
-.model-row.is-ok .model-row-indicator {
+.model-row.is-success .model-row-indicator {
   color: #10b981;
+}
+
+.model-row.is-failed .model-row-indicator {
+  color: #ef4444;
+}
+
+.model-row.is-idle .model-row-indicator {
+  color: #94a3b8;
 }
 
 .model-row-name {
@@ -2207,6 +2390,92 @@ onMounted(() => {
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.model-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.model-probe-status {
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.model-probe-status.is-success {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.model-probe-status.is-failed {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.model-probe-panel {
+  border-radius: 14px;
+  background: #101828;
+  padding: 16px;
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.12);
+}
+
+.model-probe-log {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: #dbeafe;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.model-probe-line {
+  color: #cbd5e1;
+}
+
+.model-probe-line.is-muted {
+  color: #94a3b8;
+}
+
+.model-probe-label {
+  color: #93c5fd;
+}
+
+.model-probe-value {
+  color: #f8fafc;
+}
+
+.model-probe-response {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #86efac;
+}
+
+.model-probe-divider {
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.model-probe-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-weight: 700;
+}
+
+.model-probe-footer.is-success {
+  color: #4ade80;
+}
+
+.model-probe-footer.is-failed {
+  color: #fca5a5;
 }
 
 @keyframes models-skeleton-shimmer {
