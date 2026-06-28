@@ -246,6 +246,64 @@ const DEFAULT_PUBLIC_CHECKIN_MODEL_CACHE_TTL_MS = 60_000;
 const PUBLIC_CHECKIN_MODEL_PROBE_WINDOW_SECONDS = 60 as const;
 const PUBLIC_CHECKIN_MODEL_PROBE_WARNING_THRESHOLD = 4 as const;
 const PUBLIC_CHECKIN_MODEL_PROBE_BLOCKED_THRESHOLD = 5 as const;
+const PUBLIC_CHECKIN_MODEL_PROBE_PROMPTS = [
+  '你会什么？',
+  '你可以帮我干嘛？',
+  '今天天气怎么样？',
+  '你能聊天吗？',
+  '你能听懂中文吗？',
+  '你有什么功能？',
+  '你会讲笑话吗？',
+  '你喜欢聊什么话题？',
+  '今天适合做什么？',
+  '你能回答问题吗？',
+  '你会思考吗？',
+  '你能陪我聊两句吗？',
+  '你觉得今天怎么样？',
+  '你能说一句鼓励的话吗？',
+  '你知道现在是什么时候吗？',
+  '我们随便聊聊吧。',
+  '你平时都怎么聊天？',
+  '你觉得什么事情有意思？',
+  '你能说一句轻松的话吗？',
+  '你现在能正常回复吗？',
+  '太阳从哪个方向升起？',
+  '水的沸点是多少度？',
+  '一年有几个月？',
+  '地球上最大的海洋是哪个？',
+  '人类有几颗牙齿？',
+  '光速大约是多少？',
+  '最小的行星是哪个？',
+  'DNA的全称是什么？',
+  '15乘以7等于多少？',
+  '100的平方根是多少？',
+  '如果一个三角形两个角分别是60度和80度，第三个角是多少度？',
+  '质数是什么意思？',
+  '0.5等于几分之几？',
+  '1到10的和是多少？',
+  '苹果用英语怎么说？',
+  'Bonjour是哪国语言？',
+  '把这句话翻译成英文：我今天很开心。',
+  '迅速的近义词是什么？',
+  '写一个含有月亮的句子。',
+  'UNESCO是什么的缩写？',
+  '鸡和蛋哪个先出现？',
+  '为什么天空是蓝色的？',
+  '冰比水轻还是重？',
+  '如果所有猫都是动物，小花是猫，那小花是动物吗？',
+  '镜子里的左右为什么是反的？',
+  '给我想一个公司名字，主营业务是卖咖啡。',
+  '用一句话描述秋天。',
+  '给孤独造个句。',
+  '帮我起一个好听的女孩名字。',
+  '写一句励志的话。',
+  '怎么快速去除衣服上的红酒渍？',
+  '每天喝多少水比较健康？',
+  '感冒了应该多吃什么？',
+  '番茄炒鸡蛋需要哪些食材？',
+  '如何判断一个西瓜是否熟了？'
+] as const;
+const DEFAULT_PUBLIC_CHECKIN_MODEL_PROBE_PROMPT = PUBLIC_CHECKIN_MODEL_PROBE_PROMPTS[0];
 const ANNOUNCEMENT_POLLING_INTERVALS = [15, 30, 60] as const;
 
 const runningTasks = new Set<string>();
@@ -2426,6 +2484,7 @@ async function probeOpenAiCompatibleModel(
   siteUrl: string,
   apiKey: string,
   model: string,
+  prompt: string,
   useProxy: boolean,
   proxyUrl: string
 ): Promise<{ success: true; responseText: string } | { success: false; errorMessage: string }> {
@@ -2440,7 +2499,7 @@ async function probeOpenAiCompatibleModel(
       },
       body: JSON.stringify({
         model,
-        input: 'Hi',
+        input: prompt,
         max_output_tokens: 32
       }),
       signal: controller.signal
@@ -2878,6 +2937,11 @@ function readModelProbeInput(body: unknown): { model: string } {
   return { model };
 }
 
+function pickPublicCheckinModelProbePrompt(): string {
+  const index = Math.floor(Math.random() * PUBLIC_CHECKIN_MODEL_PROBE_PROMPTS.length);
+  return PUBLIC_CHECKIN_MODEL_PROBE_PROMPTS[index] || DEFAULT_PUBLIC_CHECKIN_MODEL_PROBE_PROMPT;
+}
+
 async function probeAccountModel(
   db: D1Database,
   accountId: number,
@@ -2898,10 +2962,12 @@ async function probeAccountModel(
     });
   }
 
+  const prompt = pickPublicCheckinModelProbePrompt();
   const result = await probeOpenAiCompatibleModel(
     row.site.url,
     apiKey,
     model,
+    prompt,
     row.account.use_proxy === 1,
     proxyUrl
   );
@@ -2911,7 +2977,7 @@ async function probeAccountModel(
     siteName: row.site.name,
     model,
     success: result.success,
-    prompt: 'Hi',
+    prompt,
     responseText: result.success ? result.responseText : null,
     errorMessage: result.success ? null : result.errorMessage,
     latencyMs: Math.max(1, Date.now() - startedAt),
@@ -3642,8 +3708,11 @@ export const publicCheckinTestHooks = {
   extractModelIds,
   sortPublicCheckinModelIds,
   buildPublicCheckinModelProbeResponse,
+  publicCheckinModelProbePrompts: PUBLIC_CHECKIN_MODEL_PROBE_PROMPTS,
+  defaultPublicCheckinModelProbePrompt: DEFAULT_PUBLIC_CHECKIN_MODEL_PROBE_PROMPT,
   readPublicCheckinProbeRateLimit,
   reservePublicCheckinProbeRateLimit,
+  pickPublicCheckinModelProbePrompt,
   extractOpenAiResponseText,
   normalizeOpenAiCompatibleErrorMessage,
   probeOpenAiCompatibleModel,

@@ -992,6 +992,7 @@ test('probes a specific OpenAI-compatible model with the clicked model name', as
       'https://public.example.test',
       'sk-model-test',
       'claude-3.5-sonnet',
+      '你能聊天吗？',
       false,
       ''
     );
@@ -1001,7 +1002,7 @@ test('probes a specific OpenAI-compatible model with the clicked model name', as
     assert.equal(calls.length, 1);
     assert.equal(calls[0].url, 'https://public.example.test/v1/responses');
     assert.equal(calls[0].body.model, 'claude-3.5-sonnet');
-    assert.equal(calls[0].body.input, 'Hi');
+    assert.equal(calls[0].body.input, '你能聊天吗？');
   } finally {
     publicCheckinTestHooks.setOpenAiCompatibleFetchOverride(null);
   }
@@ -1022,6 +1023,7 @@ test('fails model probe when upstream returns success without text', async () =>
       'https://public.example.test',
       'sk-model-test',
       'gpt-5.5',
+      '你能回答问题吗？',
       false,
       ''
     );
@@ -1096,16 +1098,20 @@ test('public checkin model probe route returns response text for clicked model',
   const app = new Hono<{ Bindings: { DB: D1Database } }>();
   registerPublicCheckinRoutes(app);
 
-  publicCheckinTestHooks.setOpenAiCompatibleFetchOverride(async (_url, init) => ({
-    ok: true,
-    status: 200,
-    statusText: 'OK',
-    headers: new Map([['content-type', 'application/json']]),
-    setCookieHeaders: [],
-    text: JSON.stringify({
-      output_text: `echo:${JSON.parse(String(init.body || '{}')).model}`
-    })
-  }));
+  let probeBody: Record<string, unknown> | null = null;
+  publicCheckinTestHooks.setOpenAiCompatibleFetchOverride(async (_url, init) => {
+    probeBody = JSON.parse(String(init.body || '{}')) as Record<string, unknown>;
+    return {
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: new Map([['content-type', 'application/json']]),
+      setCookieHeaders: [],
+      text: JSON.stringify({
+        output_text: `echo:${probeBody.model}`
+      })
+    };
+  });
 
   try {
     const { accountId } = await seedPublicCheckinAccount(db);
@@ -1125,7 +1131,10 @@ test('public checkin model probe route returns response text for clicked model',
     assert.equal(payload.siteName, '测试公益站');
     assert.equal(payload.model, 'gemini-2.5-pro');
     assert.equal(payload.success, true);
-    assert.equal(payload.prompt, 'Hi');
+    assert.ok(probeBody);
+    assert.equal(probeBody.model, 'gemini-2.5-pro');
+    assert.equal(payload.prompt, probeBody.input);
+    assert.equal(publicCheckinTestHooks.publicCheckinModelProbePrompts.includes(String(probeBody.input)), true);
     assert.equal(payload.responseText, 'echo:gemini-2.5-pro');
     assert.equal(payload.errorMessage, null);
     assert.equal(typeof payload.latencyMs, 'number');

@@ -64,32 +64,32 @@
               <span aria-hidden="true">
                 <SearchGlyph />
               </span>
-              <div>
+              <div class="gmail-search-copy">
                 <strong>{{ activeFolderTitle }}</strong>
                 <small>{{ activeFolderSubtitle }}</small>
               </div>
-            </div>
 
-            <div class="gmail-topbar-actions">
-              <button
-                class="gmail-icon-button"
-                type="button"
-                title="刷新收件箱"
-                aria-label="刷新收件箱"
-                :disabled="!isConfigured || mailLoading"
-                @click="refreshMessages()"
-              >
-                <RefreshGlyph />
-              </button>
-              <button
-                class="gmail-icon-button"
-                type="button"
-                title="配置邮箱"
-                aria-label="配置邮箱"
-                @click="openConfig"
-              >
-                <GearGlyph />
-              </button>
+              <div class="gmail-topbar-actions">
+                <button
+                  class="gmail-icon-button"
+                  type="button"
+                  title="刷新收件箱"
+                  aria-label="刷新收件箱"
+                  :disabled="!isConfigured || mailLoading"
+                  @click="refreshMessages()"
+                >
+                  <RefreshGlyph />
+                </button>
+                <button
+                  class="gmail-icon-button"
+                  type="button"
+                  title="配置邮箱"
+                  aria-label="配置邮箱"
+                  @click="openConfig"
+                >
+                  <GearGlyph />
+                </button>
+              </div>
             </div>
           </header>
 
@@ -1055,8 +1055,8 @@ function formatDate(value: string | null): string {
 .gmail-topbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  justify-content: flex-start;
+  gap: 12px;
   min-height: 72px;
   padding: 14px 20px;
   border-bottom: 1px solid #e8eaed;
@@ -1077,6 +1077,11 @@ function formatDate(value: string | null): string {
 
 .gmail-search-shell > span {
   display: inline-flex;
+  flex: none;
+}
+
+.gmail-search-copy {
+  min-width: 0;
   flex: none;
 }
 
@@ -1103,7 +1108,7 @@ function formatDate(value: string | null): string {
 .gmail-topbar-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 4px;
   flex: none;
 }
 
@@ -1432,7 +1437,7 @@ function formatDate(value: string | null): string {
   }
 
   .gmail-topbar-actions {
-    justify-content: flex-end;
+    justify-content: flex-start;
   }
 
   .gmail-message-row {
