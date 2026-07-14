@@ -23,11 +23,6 @@ export const consoleNavigation: ConsoleNavItem[] = [
     path: '/services/microsoft-mail/accounts'
   },
   {
-    key: 'sub2api',
-    label: 'Sub2API 检测',
-    path: '/services/sub2api/checker'
-  },
-  {
     key: 'public-checkin',
     label: '公益站签到',
     path: '/services/sub2api/public-checkin'

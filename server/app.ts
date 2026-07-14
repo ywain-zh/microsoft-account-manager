@@ -73,12 +73,6 @@ interface AccountRow {
   mailFetchScope: MailFetchScopeKey | null;
   mailFetchErrorCode: string | null;
   mailFetchStrategyUpdatedAt: string | null;
-  gptValidityStatus: MailGptValidityStatus | null;
-  gptValidityMessage: string | null;
-  gptValidityAccountId: number | null;
-  gptValidityAccountName: string | null;
-  gptValidityPlanType: Sub2ApiPlanType | null;
-  gptValidityCheckedAt: string | null;
 }
 
 interface AccountAliasRow {
@@ -174,7 +168,6 @@ interface CloudMailAccountItem {
   activeTime: string | null;
   createTime: string | null;
   remark: string | null;
-  gptValidity: Sub2ApiGptValidityResponse | null;
 }
 
 interface CloudMailRemarkRow {
@@ -194,12 +187,6 @@ interface CloudMailAccountCacheRow {
   createTime: string | null;
   syncedAt: string | null;
   remark: string | null;
-  gptValidityStatus: MailGptValidityStatus | null;
-  gptValidityMessage: string | null;
-  gptValidityAccountId: number | null;
-  gptValidityAccountName: string | null;
-  gptValidityPlanType: Sub2ApiPlanType | null;
-  gptValidityCheckedAt: string | null;
 }
 
 interface CloudMailListResponse {
@@ -577,6 +564,8 @@ const DEFAULT_CLOUD_MAIL_CONFIG: CloudMailConfig = {
 
 const SUB2API_CONFIG_KEY = 'sub2api_config';
 const DEFAULT_SUB2API_TEST_MODEL = 'gpt-5.5';
+const SUB2API_CHECKER_REMOVED_MESSAGE = 'Sub2API 检测功能已移除';
+const SUB2API_GPT_FEATURE_REMOVED_MESSAGE = 'Sub2API GPT 有效检测和导出功能已移除';
 const SUB2API_PAGE_SIZE = 100;
 
 const DEFAULT_SUB2API_CONFIG: Sub2ApiConfig = {
@@ -636,17 +625,8 @@ const ACCOUNT_SELECT_SQL = `
     a.mail_fetch_provider AS mailFetchProvider,
     a.mail_fetch_scope AS mailFetchScope,
     a.mail_fetch_error_code AS mailFetchErrorCode,
-    a.mail_fetch_strategy_updated_at AS mailFetchStrategyUpdatedAt,
-    gpt.status AS gptValidityStatus,
-    gpt.message AS gptValidityMessage,
-    gpt.sub2api_account_id AS gptValidityAccountId,
-    gpt.sub2api_account_name AS gptValidityAccountName,
-    gpt.plan_type AS gptValidityPlanType,
-    gpt.checked_at AS gptValidityCheckedAt
+    a.mail_fetch_strategy_updated_at AS mailFetchStrategyUpdatedAt
   FROM accounts a
-  LEFT JOIN mail_gpt_validity_status gpt
-    ON gpt.service = 'microsoft'
-   AND gpt.normalized_email = LOWER(TRIM(a.account))
 `;
 
 const textEncoder = new TextEncoder();
@@ -891,8 +871,7 @@ app.post('/api/auth/logout', (c) => {
 });
 app.get('/api/accounts', async (c) => {
   const keyword = (c.req.query('keyword') ?? '').trim();
-  const gptPlan = normalizeGptPlanFilter(c.req.query('gptPlan'));
-  const items = await queryAccountListItems(c.env.DB, keyword, gptPlan);
+  const items = await queryAccountListItems(c.env.DB, keyword);
   return c.json({ items });
 });
 
@@ -900,8 +879,7 @@ app.get('/api/open/accounts', async (c) => {
   await validateMailApiRequest(c);
 
   const keyword = (c.req.query('keyword') ?? '').trim();
-  const gptPlan = normalizeGptPlanFilter(c.req.query('gptPlan'));
-  const items = await queryAccountListItems(c.env.DB, keyword, gptPlan);
+  const items = await queryAccountListItems(c.env.DB, keyword);
   return c.json({ items });
 });
 
@@ -1441,7 +1419,7 @@ app.get('/api/external/microsoft/accounts', async (c) => {
   await validateMailApiRequest(c);
 
   const email = asText(c.req.query('email')).trim();
-  const items = await queryAccountListItems(c.env.DB, email, '');
+  const items = await queryAccountListItems(c.env.DB, email);
   return c.json({
     items: items.map(serializeExternalMicrosoftAccount),
     total: items.length
@@ -1501,8 +1479,7 @@ app.get('/api/external/cloud-mail/accounts', async (c) => {
   const result = await listCloudMailAccounts(c.env.DB, config, {
     page: 1,
     pageSize: 20,
-    keyword: email,
-    gptPlan: ''
+    keyword: email
   });
 
   return c.json(result);
@@ -1652,83 +1629,27 @@ app.put('/api/sub2api/config', async (c) => {
 });
 
 app.get('/api/sub2api/models', async (c) => {
-  const config = await getSub2ApiConfig(c.env.DB);
-  ensureSub2ApiConfigured(config);
-  const items = await listSub2ApiModels(config);
-  return c.json({ items });
+  throwSub2ApiCheckerRemoved();
 });
 
 app.get('/api/sub2api/groups', async (c) => {
-  const config = await getSub2ApiConfig(c.env.DB);
-  ensureSub2ApiConfigured(config);
-  const items = await listSub2ApiGroups(config);
-  return c.json({ items, syncedAt: new Date().toISOString() });
+  throwSub2ApiCheckerRemoved();
 });
 
 app.get('/api/sub2api/accounts/gpt-json-export', async (c) => {
-  const email = normalizeExportEmail(c.req.query('email'));
-  const config = await getSub2ApiConfig(c.env.DB);
-  ensureSub2ApiConfigured(config);
-
-  const rawAccounts = await searchRawSub2ApiAccounts(config, email);
-  const items = await collectSub2ApiGptExportItems(email, rawAccounts);
-
-  if (items.length === 0) {
-    throw new HTTPException(400, { message: `未找到 ${email} 的可导出 GPT 账号凭据` });
-  }
-
-  const filename = `${buildSafeFilenamePrefix(email)}_${new Date().toISOString().slice(0, 10)}.json`;
-  return new Response(JSON.stringify(items, null, 2), {
-    headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-      'Content-Disposition': `attachment; filename="${filename}"`
-    }
-  });
+  throwSub2ApiGptFeatureRemoved();
 });
 
 app.get('/api/sub2api/accounts/access-token', async (c) => {
-  const email = normalizeExportEmail(c.req.query('email'));
-  const config = await getSub2ApiConfig(c.env.DB);
-  ensureSub2ApiConfigured(config);
-
-  const rawAccounts = await searchRawSub2ApiAccounts(config, email);
-  const matchedAccounts = rawAccounts.filter((item) => doesSub2ApiRecordMatchEmail(item, email));
-
-  if (matchedAccounts.length === 0) {
-    throw new HTTPException(400, { message: '未找到这个邮箱的 GPT 账号，请检查邮箱是否填写正确' });
-  }
-
-  const items = await collectSub2ApiGptExportItems(email, matchedAccounts);
-  const accessToken = items.find((item) => item.access_token.trim())?.access_token.trim() ?? '';
-
-  if (!accessToken) {
-    throw new HTTPException(400, { message: '这个邮箱没有可用的 access_token，请先重新导入或刷新 GPT 凭据' });
-  }
-
-  return c.json({ email, accessToken });
+  throwSub2ApiCheckerRemoved();
 });
 
 app.post('/api/sub2api/accounts/gpt-valid-check', async (c) => {
-  const config = await getSub2ApiConfig(c.env.DB);
-  ensureSub2ApiConfigured(config);
-
-  const body = await readJson<{ email?: unknown; modelId?: unknown; service?: unknown }>(c);
-  const email = normalizeExportEmail(body.email);
-  const service = normalizeMailGptValidityService(body.service);
-  const modelId = body.modelId === undefined ? DEFAULT_SUB2API_TEST_MODEL : normalizeSub2ApiModelId(body.modelId);
-  const result = await checkSub2ApiGptValidity(config, email, modelId);
-  await upsertMailGptValidityStatus(c.env.DB, service, result);
-
-  return c.json(result);
+  throwSub2ApiGptFeatureRemoved();
 });
 
 app.post('/api/sub2api/accounts/import-apikey', async (c) => {
-  const config = await getSub2ApiConfig(c.env.DB);
-  ensureSub2ApiConfigured(config);
-
-  const body = await readJson<Sub2ApiImportApiKeyRequest>(c);
-  const result = await importSub2ApiApiKeyAccounts(config, body);
-  return c.json(result);
+  throwSub2ApiCheckerRemoved();
 });
 
 app.get('/api/translation/config', async (c) => {
@@ -1828,168 +1749,11 @@ app.delete('/api/system-backup/jobs/:id', async (c) => {
 });
 
 app.post('/api/sub2api/check', async (c) => {
-  const config = await getSub2ApiConfig(c.env.DB);
-  ensureSub2ApiConfigured(config);
-  const body = await readJson<{ modelId?: unknown; targetGroupName?: unknown }>(c);
-  const modelId = normalizeSub2ApiModelId(body.modelId);
-  const targetGroup = await resolveSub2ApiTargetGroup(config, body.targetGroupName);
-
-  let logCounter = 0;
-  let aborted = false;
-
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const emit = (eventName: 'log' | 'progress' | 'summary' | 'done' | 'error', payload: unknown): void => {
-        if (aborted) {
-          return;
-        }
-
-        controller.enqueue(
-          textEncoder.encode(`event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`)
-        );
-      };
-
-      const emitSummary = (summary: Sub2ApiDetectionSummary): void => {
-        emit('summary', { ...summary });
-      };
-
-      const emitLog = (
-        level: Sub2ApiLogLevel,
-        message: string,
-        account?: Pick<Sub2ApiAccountItem, 'id' | 'name' | 'email'>
-      ): void => {
-        logCounter += 1;
-        const item: Sub2ApiDetectionLogItem = {
-          id: `${Date.now()}-${logCounter}`,
-          timestamp: new Date().toISOString(),
-          level,
-          message,
-          accountId: account?.id ?? null,
-          accountName: account?.name ?? null,
-          accountEmail: account?.email ?? null
-        };
-        emit('log', item);
-      };
-
-      const closeStream = (): void => {
-        if (aborted) {
-          return;
-        }
-        aborted = true;
-        controller.close();
-      };
-
-      const run = async (): Promise<void> => {
-        try {
-          const summary = createDefaultSub2ApiDetectionSummary();
-          emitSummary(summary);
-          emit('progress', {
-            totalAccounts: 0,
-            processedAccounts: 0
-          } as Sub2ApiDetectionProgress);
-
-          emitLog('info', `开始拉取 Sub2API 账号列表，目标分组「${targetGroup.name}」`);
-          const allAccounts = await listAllSub2ApiAccounts(config);
-          const accounts = filterSub2ApiAccountsByGroup(allAccounts, targetGroup.id);
-          summary.totalAccounts = accounts.length;
-          emitSummary(summary);
-          emit('progress', {
-            totalAccounts: summary.totalAccounts,
-            processedAccounts: summary.processedAccounts
-          } as Sub2ApiDetectionProgress);
-
-          if (accounts.length === 0) {
-            emitLog('warning', `目标分组「${targetGroup.name}」下未拉取到任何账号，请检查 Sub2API 账号列表`);
-            emit('done', { summary: { ...summary } });
-            closeStream();
-            return;
-          }
-
-          emitLog('info', `账号列表拉取完成，分组「${targetGroup.name}」共 ${accounts.length} 个账号，开始逐个检测，模型 ${modelId}`);
-
-          for (let index = 0; index < accounts.length; index += 1) {
-            if (aborted) {
-              return;
-            }
-
-            const account = accounts[index];
-            emitLog('info', `[${index + 1}/${accounts.length}] 开始检测 ${account.name}`, account);
-
-            const result = await testSub2ApiAccount(config, account, modelId, (level, message) => {
-              emitLog(level, `[${account.name}] ${message}`, account);
-            });
-            const syncedServices = await syncSub2ApiGptValidityToMatchedMailAccounts(
-              c.env.DB,
-              createGptValidityResponseFromTestResult(account, result)
-            );
-
-            applySub2ApiDetectionResult(summary, result);
-            emitSummary(summary);
-            emit('progress', {
-              totalAccounts: summary.totalAccounts,
-              processedAccounts: summary.processedAccounts,
-              currentAccountId: account.id,
-              currentAccountName: account.name,
-              outcome: result.outcome
-            } as Sub2ApiDetectionProgress);
-
-            emitLog(resolveSub2ApiOutcomeLogLevel(result.outcome), formatSub2ApiResultMessage(result), account);
-            if (syncedServices.length > 0) {
-              emitLog('info', `[${account.name}] 已同步 GPT 状态到 ${syncedServices.join('、')}`, account);
-            }
-          }
-
-          emitLog(
-            'success',
-            `检测完成：总可用 ${summary.availableAccounts}，401 ${summary.unauthorizedAccounts}，额度清空 ${summary.quotaExhaustedAccounts}，异常 ${summary.abnormalAccounts}`
-          );
-          emit('done', { summary: { ...summary } });
-          closeStream();
-        } catch (error) {
-          const message = getErrorMessage(error);
-          emitLog('error', message);
-          emit('error', { message });
-          closeStream();
-        }
-      };
-
-      void run();
-    },
-    cancel() {
-      aborted = true;
-    }
-  });
-
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream; charset=utf-8',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive'
-    }
-  });
+  throwSub2ApiCheckerRemoved();
 });
 
 app.post('/api/sub2api/accounts/batch-delete', async (c) => {
-  const config = await getSub2ApiConfig(c.env.DB);
-  ensureSub2ApiConfigured(config);
-
-  const body = await readJson<{ accountIds?: unknown }>(c);
-  const accountIds = parseAccountIds(body.accountIds);
-
-  if (accountIds.length === 0) {
-    throw new HTTPException(400, { message: '请至少选择一个 401 账号' });
-  }
-
-  const details = await deleteSub2ApiAccounts(config, accountIds);
-  const deleted = details.filter((item) => item.ok).length;
-
-  return c.json({
-    ok: true as const,
-    total: accountIds.length,
-    deleted,
-    skipped: accountIds.length - deleted,
-    details
-  });
+  throwSub2ApiCheckerRemoved();
 });
 
 app.get('/api/cloud-mail/accounts', async (c) => {
@@ -1999,13 +1763,11 @@ app.get('/api/cloud-mail/accounts', async (c) => {
   const page = parsePageNumber(c.req.query('page'), 1);
   const pageSize = parsePageNumber(c.req.query('pageSize'), 20, 1, 100);
   const keyword = asText(c.req.query('keyword')).trim();
-  const gptPlan = normalizeGptPlanFilter(c.req.query('gptPlan'));
 
   const result = await listCloudMailAccounts(c.env.DB, config, {
     page,
     pageSize,
-    keyword,
-    gptPlan
+    keyword
   });
 
   return c.json(result);
@@ -2418,10 +2180,33 @@ function getErrorMessage(error: unknown): string {
   }
 
   if (error instanceof Error) {
-    return error.message || '发生未知错误';
+    const details: string[] = [];
+    let cause: unknown = error.cause;
+    while (cause instanceof Error) {
+      const causeCode = (cause as Error & { code?: unknown }).code;
+      const code = typeof causeCode === 'string' ? causeCode : '';
+      const message = cause.message || '';
+      const detail = [code, message].filter(Boolean).join(' ');
+      if (detail && !details.includes(detail)) {
+        details.push(detail);
+      }
+      cause = cause.cause;
+    }
+    const baseMessage = error.message || '发生未知错误';
+    return details.length > 0 ? `${baseMessage}（${details.join('；')}）` : baseMessage;
   }
 
   return '发生未知错误';
+}
+
+function throwSub2ApiCheckerRemoved(): never {
+  // Sub2API 检测页已下线；历史实现保留在本文件中，避免丢失恢复上下文。
+  throw new HTTPException(410, { message: SUB2API_CHECKER_REMOVED_MESSAGE });
+}
+
+function throwSub2ApiGptFeatureRemoved(): never {
+  // GPT 有效检测和 JSON 导出已下线；历史实现保留在本文件中，避免丢失恢复上下文。
+  throw new HTTPException(410, { message: SUB2API_GPT_FEATURE_REMOVED_MESSAGE });
 }
 
 function toNullableText(value: unknown): string | null {
@@ -5619,8 +5404,7 @@ function toCloudMailAccountItem(input: unknown): CloudMailAccountItem | null {
       row.activeTime ?? row.updateTime ?? row.lastActiveTime ?? row.lastLoginTime ?? row.updatedAt
     ),
     createTime: toNullableText(row.createTime ?? row.createdAt ?? row.createAt ?? row.insertTime),
-    remark: null,
-    gptValidity: null
+    remark: null
   };
 }
 
@@ -5698,15 +5482,10 @@ async function attachCloudMailLocalState(
     db,
     items.map((item) => item.userId)
   );
-  const validity = await queryCloudMailGptValidity(
-    db,
-    items.map((item) => item.email)
-  );
 
   return items.map((item) => ({
     ...item,
-    remark: remarks.get(item.userId) ?? null,
-    gptValidity: validity.get(normalizeGptValidityEmail(item.email)) ?? null
+    remark: remarks.get(item.userId) ?? null
   }));
 }
 
@@ -5762,7 +5541,7 @@ async function findCloudMailAccountByExactEmail(
 async function listCloudMailAccountsFromRemote(
   db: D1Database,
   config: CloudMailConfig,
-  options: { page: number; pageSize: number; keyword: string; gptPlan: GptPlanFilter }
+  options: { page: number; pageSize: number; keyword: string }
 ): Promise<CloudMailListResponse> {
   const page = Math.max(1, options.page);
   const pageSize = Math.max(1, Math.min(options.pageSize, 100));
@@ -5822,12 +5601,8 @@ async function listCloudMailAccountsFromRemote(
 async function listCloudMailAccounts(
   db: D1Database,
   config: CloudMailConfig,
-  options: { page: number; pageSize: number; keyword: string; gptPlan: GptPlanFilter }
+  options: { page: number; pageSize: number; keyword: string }
 ): Promise<CloudMailListResponse> {
-  if (options.gptPlan) {
-    return await listCloudMailAccountCache(db, config, options);
-  }
-
   try {
     return await listCloudMailAccountsFromRemote(db, config, options);
   } catch (error) {
@@ -5859,8 +5634,7 @@ function toCloudMailAccountItemFromCache(row: CloudMailAccountCacheRow): CloudMa
     sendEmailCount: row.sendEmailCount,
     activeTime: row.activeTime,
     createTime: row.createTime,
-    remark: row.remark ?? null,
-    gptValidity: buildGptValidityResponseFromRow(row.email, row)
+    remark: row.remark ?? null
   };
 }
 
@@ -5883,7 +5657,7 @@ async function getCloudMailAccountCacheSyncedAt(db: D1Database, configKey: strin
 async function queryCloudMailAccountCache(
   db: D1Database,
   configKey: string,
-  options: { page: number; pageSize: number; keyword: string; gptPlan: GptPlanFilter }
+  options: { page: number; pageSize: number; keyword: string }
 ): Promise<CloudMailListResponse> {
   const page = Math.max(1, options.page);
   const pageSize = Math.max(1, Math.min(options.pageSize, 100));
@@ -5896,16 +5670,12 @@ async function queryCloudMailAccountCache(
     whereParts.push('LOWER(c.email) LIKE ?');
     bindings.push(`%${keyword}%`);
   }
-  appendGptPlanFilterSql(whereParts, bindings, options.gptPlan);
 
   const whereSql = whereParts.join(' AND ');
   const totalRow = await db
     .prepare(
       `SELECT COUNT(*) AS total
        FROM cloud_mail_account_cache c
-       LEFT JOIN mail_gpt_validity_status gpt
-         ON gpt.service = 'cloud-mail'
-        AND gpt.normalized_email = LOWER(TRIM(c.email))
        WHERE ${whereSql}`
     )
     .bind(...bindings)
@@ -5923,18 +5693,9 @@ async function queryCloudMailAccountCache(
          c.active_time AS activeTime,
          c.create_time AS createTime,
          c.synced_at AS syncedAt,
-         r.remark,
-         gpt.status AS gptValidityStatus,
-         gpt.message AS gptValidityMessage,
-         gpt.sub2api_account_id AS gptValidityAccountId,
-         gpt.sub2api_account_name AS gptValidityAccountName,
-         gpt.plan_type AS gptValidityPlanType,
-         gpt.checked_at AS gptValidityCheckedAt
+         r.remark
        FROM cloud_mail_account_cache c
        LEFT JOIN cloud_mail_account_remarks r ON r.user_id = c.user_id
-       LEFT JOIN mail_gpt_validity_status gpt
-         ON gpt.service = 'cloud-mail'
-        AND gpt.normalized_email = LOWER(TRIM(c.email))
        WHERE ${whereSql}
        ORDER BY COALESCE(c.create_time, '') DESC, c.user_id DESC
        LIMIT ? OFFSET ?`
@@ -5955,7 +5716,7 @@ async function queryCloudMailAccountCache(
 async function listCloudMailAccountCache(
   db: D1Database,
   config: CloudMailConfig,
-  options: { page: number; pageSize: number; keyword: string; gptPlan: GptPlanFilter }
+  options: { page: number; pageSize: number; keyword: string }
 ): Promise<CloudMailListResponse> {
   const configKey = getCloudMailCacheKey(config);
   const cachedTotal = await countCloudMailAccountCache(db, configKey);
@@ -6101,18 +5862,9 @@ async function findCloudMailCachedAccountByUserId(
          c.active_time AS activeTime,
          c.create_time AS createTime,
          c.synced_at AS syncedAt,
-         r.remark,
-         gpt.status AS gptValidityStatus,
-         gpt.message AS gptValidityMessage,
-         gpt.sub2api_account_id AS gptValidityAccountId,
-         gpt.sub2api_account_name AS gptValidityAccountName,
-         gpt.plan_type AS gptValidityPlanType,
-         gpt.checked_at AS gptValidityCheckedAt
+         r.remark
        FROM cloud_mail_account_cache c
        LEFT JOIN cloud_mail_account_remarks r ON r.user_id = c.user_id
-       LEFT JOIN mail_gpt_validity_status gpt
-         ON gpt.service = 'cloud-mail'
-        AND gpt.normalized_email = LOWER(TRIM(c.email))
        WHERE c.config_key = ?
          AND c.user_id = ?
        LIMIT 1`
@@ -6736,7 +6488,6 @@ function buildGptValidityResponseFromRow(
 }
 
 function serializeAccountRow(row: AccountRow): AccountListItem & {
-  gptValidity: Sub2ApiGptValidityResponse | null;
   tokenBaseAt: string | null;
   tokenCountdownDays: number | null;
 } {
@@ -6751,7 +6502,6 @@ function serializeAccountRow(row: AccountRow): AccountListItem & {
     aliases: [],
     aliasCount: 0,
     matchedAlias: null,
-    gptValidity: buildGptValidityResponseFromRow(row.account, row),
     tokenBaseAt,
     tokenCountdownDays: calculateTokenCountdownDays(tokenBaseAt)
   };
@@ -6813,8 +6563,7 @@ function calculateTokenCountdownDays(tokenBaseAt: string | null): number | null 
 
 async function queryAccounts(
   db: D1Database,
-  keyword: string,
-  gptPlan: GptPlanFilter = ''
+  keyword: string
 ): Promise<AccountRow[]> {
   const whereParts: string[] = [];
   const bindings: (string | number)[] = [];
@@ -6833,7 +6582,6 @@ async function queryAccounts(
     )`);
     bindings.push(like, like, like);
   }
-  appendGptPlanFilterSql(whereParts, bindings, gptPlan);
 
   const whereSql = whereParts.length > 0 ? ` WHERE ${whereParts.join(' AND ')}` : '';
   const accountSql = `${ACCOUNT_SELECT_SQL}${whereSql} ORDER BY a.id DESC`;
@@ -6842,24 +6590,18 @@ async function queryAccounts(
   return results ?? [];
 }
 
-async function queryAccountListItems(db: D1Database, keyword: string, gptPlan: GptPlanFilter): Promise<
+async function queryAccountListItems(db: D1Database, keyword: string): Promise<
   Array<AccountListItem & {
-    gptValidity: Sub2ApiGptValidityResponse | null;
     tokenBaseAt: string | null;
     tokenCountdownDays: number | null;
   }>
 > {
-  const accounts = await queryAccounts(db, keyword, '');
+  const accounts = await queryAccounts(db, keyword);
   const accountIds = accounts.map((item) => item.id);
   const aliasesByAccount = await queryAccountAliasMap(db, accountIds);
-  const aliasValidityByEmail = await queryMicrosoftGptValidity(
-    db,
-    Array.from(aliasesByAccount.values()).flat().map((alias) => alias.aliasAccount)
-  );
   const normalizedKeyword = normalizeEmailAddress(keyword);
   const rows: Array<
     AccountListItem & {
-      gptValidity: Sub2ApiGptValidityResponse | null;
       tokenBaseAt: string | null;
       tokenCountdownDays: number | null;
     }
@@ -6873,9 +6615,7 @@ async function queryAccountListItems(db: D1Database, keyword: string, gptPlan: G
       aliases: aliasEmails,
       aliasCount: aliasEmails.length
     };
-    if (matchesGptPlanFilter(primaryRow.gptValidity, gptPlan)) {
-      rows.push(primaryRow);
-    }
+    rows.push(primaryRow);
 
     for (const alias of aliases) {
       if (normalizedKeyword && !alias.aliasAccount.includes(normalizedKeyword)) {
@@ -6892,12 +6632,9 @@ async function queryAccountListItems(db: D1Database, keyword: string, gptPlan: G
         primaryAccountId: account.id,
         primaryAccount: account.account,
         aliasId: alias.id,
-        matchedAlias: alias.aliasAccount,
-        gptValidity: aliasValidityByEmail.get(normalizeGptValidityEmail(alias.aliasAccount)) ?? null
+        matchedAlias: alias.aliasAccount
       };
-      if (matchesGptPlanFilter(aliasRow.gptValidity, gptPlan)) {
-        rows.push(aliasRow);
-      }
+      rows.push(aliasRow);
     }
   }
 
@@ -7287,12 +7024,6 @@ async function fetchAccountAliasByAddress(
          a.mail_fetch_scope AS mailFetchScope,
          a.mail_fetch_error_code AS mailFetchErrorCode,
          a.mail_fetch_strategy_updated_at AS mailFetchStrategyUpdatedAt,
-         gpt.status AS gptValidityStatus,
-         gpt.message AS gptValidityMessage,
-         gpt.sub2api_account_id AS gptValidityAccountId,
-         gpt.sub2api_account_name AS gptValidityAccountName,
-         gpt.plan_type AS gptValidityPlanType,
-         gpt.checked_at AS gptValidityCheckedAt,
          alias.id AS aliasId,
          alias.account_id AS accountId,
          alias.alias_account AS aliasAccount,
@@ -7300,9 +7031,6 @@ async function fetchAccountAliasByAddress(
          alias.created_at AS aliasCreatedAt,
          alias.updated_at AS aliasUpdatedAt
        FROM accounts a
-       LEFT JOIN mail_gpt_validity_status gpt
-         ON gpt.service = 'microsoft'
-        AND gpt.normalized_email = LOWER(TRIM(a.account))
        JOIN account_aliases alias ON alias.account_id = a.id
        WHERE alias.normalized_alias = ?
        ORDER BY alias.id DESC

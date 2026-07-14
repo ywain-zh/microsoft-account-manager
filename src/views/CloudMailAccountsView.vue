@@ -19,17 +19,6 @@
             </n-input>
           </div>
 
-          <div class="list-toolbar-block">
-            <n-select
-              v-model:value="gptPlanFilter"
-              class="gpt-plan-filter-select"
-              size="small"
-              :options="gptPlanFilterOptions"
-              :disabled="!hasConfiguredCloudMail"
-              @update:value="handleGptPlanFilterChange"
-            />
-          </div>
-
           <div class="list-toolbar-block toolbar-button-group toolbar-button-group-iconic">
             <n-tag v-if="checkedRowKeys.length > 0" size="small" class="toolbar-selection-tag" type="warning">
               已选 {{ checkedRowKeys.length }} 条
@@ -381,7 +370,6 @@ import {
   NInput,
   NModal,
   NPagination,
-  NSelect,
   NSpace,
   NSpin,
   NTag,
@@ -390,7 +378,6 @@ import {
 import MailInboxViewer from '../components/MailInboxViewer.vue';
 import SecretInput from '../components/SecretInput.vue';
 import { useCloudMailConsole } from '../state/cloud-mail-console';
-import { GPT_PLAN_FILTER_OPTIONS, resolveGptValidityLabel } from '../utils/gpt-validity';
 import type { CloudMailAccountItem } from '../types';
 
 const SearchGlyph = () =>
@@ -608,7 +595,6 @@ const {
   accountsSyncing,
   mailLoading,
   remarkSaving,
-  gptJsonExportLoading,
   shareLoading,
   shareRegenerating,
   shareRevoking,
@@ -619,7 +605,6 @@ const {
   shareVisible,
   serviceErrorMessage,
   searchKeyword,
-  gptPlanFilter,
   tablePage,
   tablePageSize,
   total,
@@ -661,10 +646,6 @@ const {
   formatDate,
   openMailModal,
   refreshMailInbox,
-  exportSub2ApiGptJson,
-  checkGptValidity,
-  getGptValidityResult,
-  isCheckingGptValidity,
   markMailAsRead
 } = cloudMail;
 
@@ -752,7 +733,6 @@ const shareUrlInputProps = {
 
 const rowKey = (row: CloudMailAccountItem): number => row.userId;
 const SEARCH_DEBOUNCE_MS = 300;
-const gptPlanFilterOptions = GPT_PLAN_FILTER_OPTIONS;
 let searchDebounceTimer: number | null = null;
 
 watch(searchKeyword, () => {
@@ -775,11 +755,6 @@ function scheduleSearch(): void {
 }
 
 function handleSearchInputEnter(): void {
-  clearSearchDebounce();
-  void handleSearch();
-}
-
-function handleGptPlanFilterChange(): void {
   clearSearchDebounce();
   void handleSearch();
 }
@@ -852,39 +827,6 @@ function renderRemarkCell(row: CloudMailAccountItem): ReturnType<typeof h> {
   ]);
 }
 
-function renderGptValidityCell(row: CloudMailAccountItem): ReturnType<typeof h> {
-  const checking = isCheckingGptValidity(row.email);
-  const result = getGptValidityResult(row.email) ?? row.gptValidity;
-  const isValid = result?.valid === true;
-  const isFailed = result && !isValid;
-  const validLabel = resolveGptValidityLabel(result);
-  const title = checking
-    ? `正在检测 ${row.email} 的 GPT 是否有效`
-    : result?.message
-      ? `${result.message}，点击重新检测`
-      : `检测 ${row.email} 的 GPT 是否有效`;
-
-  return h('button', {
-    type: 'button',
-    class: [
-      'gpt-validity-control',
-      isValid ? 'is-valid' : '',
-      isFailed ? 'is-failed' : '',
-      checking ? 'is-checking' : ''
-    ],
-    disabled: checking,
-    title,
-    'aria-label': `检测 ${row.email} 的 GPT 是否有效`,
-    onClick: (event: MouseEvent) => {
-      event.stopPropagation();
-      void checkGptValidity(row.email);
-    }
-  }, [
-    validLabel ? h('span', { class: 'gpt-validity-label' }, validLabel) : null,
-    h('span', { class: 'gpt-validity-refresh' }, [h(RefreshGlyph)])
-  ]);
-}
-
 const columns: DataTableColumns<CloudMailAccountItem> = [
   {
     type: 'selection',
@@ -901,12 +843,6 @@ const columns: DataTableColumns<CloudMailAccountItem> = [
     key: 'remark',
     width: 168,
     render: (row) => renderRemarkCell(row)
-  },
-  {
-    title: 'GPT有效',
-    key: 'gptValidity',
-    width: 96,
-    render: (row) => renderGptValidityCell(row)
   },
   {
     title: '分享',
@@ -937,24 +873,9 @@ const columns: DataTableColumns<CloudMailAccountItem> = [
   {
     title: '操作',
     key: 'actions',
-    width: 112,
+    width: 72,
     render: (row) =>
       h('div', { class: 'action-cell action-cell-compact' }, [
-        h(
-          'button',
-          {
-            type: 'button',
-            class: 'table-action-button',
-            disabled: gptJsonExportLoading.value,
-            title: `导出 ${row.email} 的 GPT JSON`,
-            'aria-label': `导出 ${row.email} 的 GPT JSON`,
-            onClick: (event: MouseEvent) => {
-              event.stopPropagation();
-              void exportSub2ApiGptJson(row.email);
-            }
-          },
-          '导出'
-        ),
         h(
           'button',
           {
@@ -1343,73 +1264,6 @@ onUnmounted(() => {
 :deep(.cloud-mail-account-table .table-action-button:disabled) {
   cursor: not-allowed;
   opacity: 0.62;
-}
-
-:deep(.cloud-mail-account-table .gpt-validity-control) {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  min-width: 32px;
-  height: 28px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 4px;
-  background: #eff6ff;
-  color: #2563eb;
-  cursor: pointer;
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-}
-
-:deep(.cloud-mail-account-table .gpt-validity-control:hover) {
-  background: #dbeafe;
-}
-
-:deep(.cloud-mail-account-table .gpt-validity-control:disabled) {
-  cursor: not-allowed;
-  opacity: 0.62;
-}
-
-:deep(.cloud-mail-account-table .gpt-validity-control.is-valid) {
-  min-width: 82px;
-  background: #dcfce7;
-  color: #15803d;
-}
-
-:deep(.cloud-mail-account-table .gpt-validity-control.is-valid:hover) {
-  background: #bbf7d0;
-  color: #166534;
-}
-
-:deep(.cloud-mail-account-table .gpt-validity-control.is-failed) {
-  background: #fee2e2;
-  color: #dc2626;
-}
-
-:deep(.cloud-mail-account-table .gpt-validity-control.is-failed:hover) {
-  background: #fecaca;
-}
-
-:deep(.cloud-mail-account-table .gpt-validity-refresh) {
-  display: inline-flex;
-  width: 16px;
-  height: 16px;
-}
-
-:deep(.cloud-mail-account-table .gpt-validity-refresh svg) {
-  width: 16px;
-  height: 16px;
-}
-
-:deep(.cloud-mail-account-table .gpt-validity-control.is-checking .gpt-validity-refresh) {
-  animation: gpt-validity-spin 0.8s linear infinite;
-}
-
-@keyframes gpt-validity-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 :deep(.cloud-mail-account-table .table-action-button-danger) {

@@ -13,16 +13,6 @@
             />
           </div>
 
-          <div class="list-toolbar-block">
-            <n-select
-              v-model:value="gptPlanFilter"
-              class="gpt-plan-filter-select"
-              size="small"
-              :options="gptPlanFilterOptions"
-              @update:value="handleGptPlanFilterChange"
-            />
-          </div>
-
           <div class="list-toolbar-block toolbar-button-group">
             <n-button
               size="small"
@@ -429,7 +419,6 @@ import {
   NModal,
   NPagination,
   NProgress,
-  NSelect,
   NSpace,
   NSpin,
   NTag,
@@ -438,7 +427,6 @@ import {
 import MailInboxViewer from '../components/MailInboxViewer.vue';
 import SecretInput from '../components/SecretInput.vue';
 import { useAdminConsole } from '../state/admin-console';
-import { GPT_PLAN_FILTER_OPTIONS, resolveGptValidityLabel } from '../utils/gpt-validity';
 import type { AccountItem } from '../types';
 
 const CopyGlyph = () =>
@@ -481,28 +469,6 @@ const PencilGlyph = () =>
     ]
   );
 
-const RefreshGlyph = () =>
-  h(
-    'svg',
-    { viewBox: '0 0 20 20', fill: 'none', 'aria-hidden': 'true' },
-    [
-      h('path', {
-        d: 'M16 10a6 6 0 1 1-1.76-4.24',
-        stroke: 'currentColor',
-        'stroke-width': '2',
-        'stroke-linecap': 'round',
-        'stroke-linejoin': 'round'
-      }),
-      h('path', {
-        d: 'M16 5.5v3.5h-3.5',
-        stroke: 'currentColor',
-        'stroke-width': '2',
-        'stroke-linecap': 'round',
-        'stroke-linejoin': 'round'
-      })
-    ]
-  );
-
 const AliasGlyph = () =>
   h(
     'svg',
@@ -537,7 +503,6 @@ const router = useRouter();
 const {
   accounts,
   searchKeyword,
-  gptPlanFilter,
   checkedRowKeys,
   tablePageSize,
   tableLoading,
@@ -546,7 +511,6 @@ const {
   importLoading,
   syncLoading,
   batchDeleteLoading,
-  gptJsonExportLoading,
   tokenRefreshProgressVisible,
   tokenRefreshProgressTotal,
   tokenRefreshProgressCurrent,
@@ -597,10 +561,6 @@ const {
   copyAccountValue,
   copyMailAccount,
   refreshMailInbox,
-  exportSub2ApiGptJson,
-  checkGptValidity,
-  getGptValidityResult,
-  isCheckingGptValidity,
   beginMicrosoftOauthLogin,
   consumeMicrosoftOauthResult,
   handleMicrosoftOauthMessage,
@@ -618,7 +578,6 @@ const {
 
 const txtFileInputRef = ref<HTMLInputElement | null>(null);
 const tablePage = ref(1);
-const gptPlanFilterOptions = GPT_PLAN_FILTER_OPTIONS;
 const passwordDrafts = reactive<Record<number, string>>({});
 const passwordSavingIds = ref<number[]>([]);
 const passwordPendingValues = reactive<Record<number, string>>({});
@@ -717,11 +676,6 @@ watch(tablePageSize, () => {
 
 function handleSearch(): void {
   clearSearchDebounce();
-  tablePage.value = 1;
-  void loadAccounts();
-}
-
-function handleGptPlanFilterChange(): void {
   tablePage.value = 1;
   void loadAccounts();
 }
@@ -933,39 +887,6 @@ function renderPasswordCell(row: AccountItem): ReturnType<typeof h> {
   ]);
 }
 
-function renderGptValidityCell(row: AccountItem): ReturnType<typeof h> {
-  const checking = isCheckingGptValidity(row.account);
-  const result = getGptValidityResult(row.account) ?? row.gptValidity;
-  const isValid = result?.valid === true;
-  const isFailed = result && !isValid;
-  const validLabel = resolveGptValidityLabel(result);
-  const title = checking
-    ? `正在检测 ${row.account} 的 GPT 是否有效`
-    : result?.message
-      ? `${result.message}，点击重新检测`
-      : `检测 ${row.account} 的 GPT 是否有效`;
-
-  return h('button', {
-    type: 'button',
-    class: [
-      'gpt-validity-control',
-      isValid ? 'is-valid' : '',
-      isFailed ? 'is-failed' : '',
-      checking ? 'is-checking' : ''
-    ],
-    disabled: checking,
-    title,
-    'aria-label': `检测 ${row.account} 的 GPT 是否有效`,
-    onClick: (event: MouseEvent) => {
-      event.stopPropagation();
-      void checkGptValidity(row.account);
-    }
-  }, [
-    validLabel ? h('span', { class: 'gpt-validity-label' }, validLabel) : null,
-    h('span', { class: 'gpt-validity-refresh' }, [h(RefreshGlyph)])
-  ]);
-}
-
 function renderTokenStatusCell(row: AccountItem): ReturnType<typeof h> {
   if (row.rowType === 'alias') {
     return h(
@@ -1026,12 +947,6 @@ const accountColumns: DataTableColumns<AccountItem> = [
     render: (row) => renderTokenStatusCell(row)
   },
   {
-    title: 'GPT有效',
-    key: 'gptValidity',
-    width: 96,
-    render: (row) => renderGptValidityCell(row)
-  },
-  {
     title: '创建时间',
     key: 'createdAt',
     width: 132,
@@ -1044,23 +959,7 @@ const accountColumns: DataTableColumns<AccountItem> = [
     width: 180,
     render: (row) => {
       const isAlias = row.rowType === 'alias';
-      const actions = [
-        h(
-          'button',
-          {
-            type: 'button',
-            class: 'table-action-button',
-            disabled: gptJsonExportLoading.value,
-            title: `导出 ${row.account} 的 GPT JSON`,
-            'aria-label': `导出 ${row.account} 的 GPT JSON`,
-            onClick: (event: MouseEvent) => {
-              event.stopPropagation();
-              void exportSub2ApiGptJson(row.account);
-            }
-          },
-          '导出'
-        )
-      ];
+      const actions: Array<ReturnType<typeof h>> = [];
 
       if (!isAlias) {
         actions.push(
@@ -1592,73 +1491,6 @@ onUnmounted(() => {
 :deep(.microsoft-account-table .table-alias-button svg) {
   width: 15px;
   height: 15px;
-}
-
-:deep(.microsoft-account-table .gpt-validity-control) {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  min-width: 32px;
-  height: 28px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 4px;
-  background: #eff6ff;
-  color: #2563eb;
-  cursor: pointer;
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-}
-
-:deep(.microsoft-account-table .gpt-validity-control:hover) {
-  background: #dbeafe;
-}
-
-:deep(.microsoft-account-table .gpt-validity-control:disabled) {
-  cursor: not-allowed;
-  opacity: 0.62;
-}
-
-:deep(.microsoft-account-table .gpt-validity-control.is-valid) {
-  min-width: 82px;
-  background: #dcfce7;
-  color: #15803d;
-}
-
-:deep(.microsoft-account-table .gpt-validity-control.is-valid:hover) {
-  background: #bbf7d0;
-  color: #166534;
-}
-
-:deep(.microsoft-account-table .gpt-validity-control.is-failed) {
-  background: #fee2e2;
-  color: #dc2626;
-}
-
-:deep(.microsoft-account-table .gpt-validity-control.is-failed:hover) {
-  background: #fecaca;
-}
-
-:deep(.microsoft-account-table .gpt-validity-refresh) {
-  display: inline-flex;
-  width: 16px;
-  height: 16px;
-}
-
-:deep(.microsoft-account-table .gpt-validity-refresh svg) {
-  width: 16px;
-  height: 16px;
-}
-
-:deep(.microsoft-account-table .gpt-validity-control.is-checking .gpt-validity-refresh) {
-  animation: gpt-validity-spin 0.8s linear infinite;
-}
-
-@keyframes gpt-validity-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 :deep(.list-footer-card) {

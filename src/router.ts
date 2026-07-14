@@ -56,16 +56,6 @@ const router = createRouter({
           }
         },
         {
-          path: 'services/sub2api/checker',
-          name: 'sub2api-checker',
-          component: () => import('./views/Sub2ApiCheckerView.vue'),
-          meta: {
-            requiresAuth: true,
-            title: 'Sub2API 检测',
-            description: '使用管理员 API Key 批量检测 Sub2API 账号并查看实时日志。'
-          }
-        },
-        {
           path: 'services/sub2api/public-checkin',
           name: 'public-checkin',
           component: () => import('./views/PublicCheckinView.vue'),

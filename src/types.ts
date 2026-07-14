@@ -30,7 +30,6 @@ export interface AccountItem {
   mailFetchStrategyUpdatedAt: string | null;
   tokenCountdownDays: number | null;
   tokenBaseAt: string | null;
-  gptValidity: Sub2ApiGptValidityResponse | null;
 }
 
 export interface AccountPayload {
@@ -121,7 +120,6 @@ export interface CloudMailAccountItem {
   activeTime: string | null;
   createTime: string | null;
   remark: string | null;
-  gptValidity: Sub2ApiGptValidityResponse | null;
 }
 
 export interface CloudMailAccountListResponse {
@@ -155,40 +153,6 @@ export interface CloudMailPublicShareInboxResponse {
   account: string;
   messages: AccountMailItem[];
   readonly: true;
-}
-
-export interface Sub2ApiConfig {
-  baseUrl: string;
-  adminApiKey: string;
-  targetGroupName?: string;
-}
-
-export interface Sub2ApiImportApiKeyItemInput {
-  baseUrl: string;
-  apiKey: string;
-  name?: string;
-}
-
-export interface Sub2ApiImportApiKeyRequest {
-  rawText?: string;
-  items?: Sub2ApiImportApiKeyItemInput[];
-  targetGroupName?: string;
-  dryRun?: boolean;
-}
-
-export interface Sub2ApiImportApiKeyResultItem {
-  name: string;
-  baseUrl: string;
-  status: 'created' | 'skipped' | 'failed';
-  message: string;
-}
-
-export interface Sub2ApiImportApiKeyResponse {
-  success: boolean;
-  created: number;
-  skipped: number;
-  failed: number;
-  items: Sub2ApiImportApiKeyResultItem[];
 }
 
 export type PublicCheckinPlatform = 'new-api' | 'one-api' | 'onehub' | 'anyrouter';
@@ -370,29 +334,6 @@ export interface PublicCheckinBatchResult {
   result?: PublicCheckinRunResult;
 }
 
-export interface Sub2ApiGroupItem {
-  id: number | null;
-  name: string;
-}
-
-export interface Sub2ApiGroupsResponse {
-  items: Sub2ApiGroupItem[];
-  syncedAt: string;
-}
-
-export interface Sub2ApiGptValidityResponse {
-  email: string;
-  valid: boolean;
-  status: 'valid' | 'invalid' | 'missing';
-  message: string;
-  accountId: number | null;
-  accountName: string | null;
-  planType: Sub2ApiPlanType;
-  checkedAt: string;
-}
-
-export type MailGptValidityService = 'microsoft' | 'cloud-mail';
-
 export type TranslationProvider = 'openai' | 'deeplx';
 
 export interface TranslationConfig {
@@ -446,62 +387,6 @@ export interface SystemBackupJob {
 
 export interface SystemBackupJobResponse {
   item: SystemBackupJob;
-}
-
-export type Sub2ApiPlanType = 'free' | 'plus' | 'team' | '';
-export type GptPlanFilter = Sub2ApiPlanType | 'empty';
-export type Sub2ApiDetectionOutcome = 'success' | 'quota' | 'unauthorized' | 'timeout' | 'abnormal';
-export type Sub2ApiLogLevel = 'info' | 'success' | 'warning' | 'error';
-
-export interface Sub2ApiDetectionSummary {
-  totalAccounts: number;
-  processedAccounts: number;
-  availableAccounts: number;
-  freeAvailableAccounts: number;
-  plusAvailableAccounts: number;
-  teamAvailableAccounts: number;
-  quotaExhaustedAccounts: number;
-  unauthorizedAccounts: number;
-  abnormalAccounts: number;
-}
-
-export interface Sub2ApiDetectionLogItem {
-  id: string;
-  timestamp: string;
-  level: Sub2ApiLogLevel;
-  message: string;
-  accountId?: number | null;
-  accountName?: string | null;
-  accountEmail?: string | null;
-}
-
-export interface Sub2ApiDetectionProgress {
-  totalAccounts: number;
-  processedAccounts: number;
-  currentAccountId?: number | null;
-  currentAccountName?: string | null;
-  outcome?: Sub2ApiDetectionOutcome;
-}
-
-export interface Sub2ApiDetectedIssueItem {
-  accountId: number;
-  accountName: string | null;
-  accountEmail: string | null;
-  reason: string;
-}
-
-export interface Sub2ApiDeleteAccountDetail {
-  accountId: number;
-  ok: boolean;
-  message: string;
-}
-
-export interface Sub2ApiDeleteAccountsResponse {
-  ok: true;
-  total: number;
-  deleted: number;
-  skipped: number;
-  details: Sub2ApiDeleteAccountDetail[];
 }
 
 export type TokenStatus = 'unknown' | 'valid' | 'invalid';

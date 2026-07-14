@@ -3,17 +3,14 @@ import { createDiscreteApi } from 'naive-ui';
 import { api, UnauthorizedError } from '../api';
 import { copyToClipboard } from '../utils/clipboard';
 import { formatDateTimeBeijing } from '../utils/datetime';
-import { downloadBlob } from '../utils/download';
 import type {
   AccountAliasItem,
   AccountItem,
   AccountMailItem,
   AccountPayload,
   BatchActionResult,
-  GptPlanFilter,
   IngestConfig,
   MailFetchMode,
-  Sub2ApiGptValidityResponse,
   TokenRefreshStreamEvent,
   TokenStatus
 } from '../types';
@@ -102,7 +99,6 @@ let lastMicrosoftOauthEventId = '';
 
 const accounts = ref<AccountItem[]>([]);
 const searchKeyword = ref(readPersistedSearchKeyword());
-const gptPlanFilter = ref<GptPlanFilter>('');
 const checkedRowKeys = ref<number[]>([]);
 const tablePageSize = ref(20);
 
@@ -114,9 +110,6 @@ const remarkSaving = ref(false);
 const saveIngestLoading = ref(false);
 const syncLoading = ref(false);
 const batchDeleteLoading = ref(false);
-const gptJsonExportLoading = ref(false);
-const gptValidityLoadingEmails = ref<string[]>([]);
-const gptValidityResults = ref<Record<string, Sub2ApiGptValidityResponse>>({});
 const tokenRefreshProgressVisible = ref(false);
 const tokenRefreshProgressTotal = ref(0);
 const tokenRefreshProgressCurrent = ref(0);
@@ -315,20 +308,6 @@ function buildRandomAliasForAccount(account: string, existingAliases: AccountAli
   return `${localPart}+${suffix}@${domain}`;
 }
 
-function getGptValidityKey(email: string): string {
-  return email.trim().toLowerCase();
-}
-
-function mergeGptValidityResults(items: AccountItem[]): void {
-  const nextResults = { ...gptValidityResults.value };
-  for (const item of items) {
-    if (item.gptValidity) {
-      nextResults[getGptValidityKey(item.account)] = item.gptValidity;
-    }
-  }
-  gptValidityResults.value = nextResults;
-}
-
 function clearMicrosoftOauthPopupWatch(): void {
   if (typeof window !== 'undefined') {
     if (microsoftOauthPopupPollTimer !== null) {
@@ -365,8 +344,6 @@ function clearSessionState(): void {
   mailMatchedAlias.value = null;
   mailItems.value = [];
   selectedMailId.value = '';
-  gptValidityLoadingEmails.value = [];
-  gptValidityResults.value = {};
   clearCreateForm();
   clearImportForm();
   resetEditForm();
@@ -520,9 +497,8 @@ async function consumeTokenRefreshStream(response: Response): Promise<BatchActio
 async function loadAccounts(): Promise<boolean> {
   tableLoading.value = true;
   try {
-    const response = await api.listAccounts(searchKeyword.value.trim(), gptPlanFilter.value);
+    const response = await api.listAccounts(searchKeyword.value.trim());
     accounts.value = response.items;
-    mergeGptValidityResults(response.items);
     const available = new Set(
       response.items.filter((item) => item.rowType !== 'alias').map((item) => item.id)
     );
@@ -1158,79 +1134,6 @@ async function refreshMailInbox(): Promise<void> {
   await loadMailMessages(mailAccountId.value, mailAccount.value, false);
 }
 
-async function exportSub2ApiGptJson(email: string): Promise<void> {
-  const targetEmail = email.trim();
-  if (!targetEmail || gptJsonExportLoading.value) {
-    return;
-  }
-
-  gptJsonExportLoading.value = true;
-  try {
-    const { blob, filename } = await api.exportSub2ApiGptJson(targetEmail);
-    downloadBlob(blob, filename);
-    message.success('GPT JSON 已开始下载');
-  } catch (error) {
-    handleApiError(error);
-  } finally {
-    gptJsonExportLoading.value = false;
-  }
-}
-
-function getGptValidityResult(email: string): Sub2ApiGptValidityResponse | null {
-  return gptValidityResults.value[getGptValidityKey(email)] ?? null;
-}
-
-function isCheckingGptValidity(email: string): boolean {
-  return gptValidityLoadingEmails.value.includes(getGptValidityKey(email));
-}
-
-function setGptValidityLoading(email: string, loading: boolean): void {
-  const key = getGptValidityKey(email);
-  if (!key) {
-    return;
-  }
-
-  if (loading) {
-    if (!gptValidityLoadingEmails.value.includes(key)) {
-      gptValidityLoadingEmails.value = [...gptValidityLoadingEmails.value, key];
-    }
-    return;
-  }
-
-  gptValidityLoadingEmails.value = gptValidityLoadingEmails.value.filter((item) => item !== key);
-}
-
-async function checkGptValidity(email: string): Promise<void> {
-  const targetEmail = email.trim();
-  if (!targetEmail || isCheckingGptValidity(targetEmail)) {
-    return;
-  }
-
-  setGptValidityLoading(targetEmail, true);
-  try {
-    const response = await api.checkSub2ApiGptValidity({ email: targetEmail, service: 'microsoft' });
-    gptValidityResults.value = {
-      ...gptValidityResults.value,
-      [getGptValidityKey(targetEmail)]: response
-    };
-    accounts.value = accounts.value.map((item) =>
-      getGptValidityKey(item.account) === getGptValidityKey(targetEmail)
-        ? { ...item, gptValidity: response }
-        : item
-    );
-
-    if (response.valid) {
-      message.success(`${targetEmail} GPT 有效`);
-    } else {
-      message.warning(response.message || `${targetEmail} 未检测到有效 GPT`);
-    }
-  } catch (error) {
-    handleApiError(error);
-  } finally {
-    setGptValidityLoading(targetEmail, false);
-  }
-}
-
 async function saveIngestConfig(): Promise<void> {
   saveIngestLoading.value = true;
   try {
@@ -1450,7 +1353,6 @@ export function useAdminConsole() {
     oauthPopupLoading,
     accounts,
     searchKeyword,
-    gptPlanFilter,
     checkedRowKeys,
     tablePageSize,
     tableLoading,
@@ -1461,9 +1363,6 @@ export function useAdminConsole() {
     saveIngestLoading,
     syncLoading,
     batchDeleteLoading,
-    gptJsonExportLoading,
-    gptValidityLoadingEmails,
-    gptValidityResults,
     tokenRefreshProgressVisible,
     tokenRefreshProgressTotal,
     tokenRefreshProgressCurrent,
@@ -1528,10 +1427,6 @@ export function useAdminConsole() {
     copyPasswordValue,
     copyMailAccount,
     refreshMailInbox,
-    exportSub2ApiGptJson,
-    checkGptValidity,
-    getGptValidityResult,
-    isCheckingGptValidity,
     saveIngestConfig,
     beginMicrosoftOauthLogin,
     consumeMicrosoftOauthResult,

@@ -21,9 +21,7 @@ import type {
   LinuxDoMailMessagesResponse,
   LinuxDoMailSendPayload,
   LinuxDoMailSendResponse,
-  MailGptValidityService,
   MailFetchMode,
-  GptPlanFilter,
   NotificationConfig,
   NotificationTestResult,
   OpenAiModelsResponse,
@@ -42,12 +40,6 @@ import type {
   PublicCheckinSite,
   PublicCheckinStats,
   PublicCheckinRunResult,
-  Sub2ApiConfig,
-  Sub2ApiDeleteAccountsResponse,
-  Sub2ApiGptValidityResponse,
-  Sub2ApiGroupsResponse,
-  Sub2ApiImportApiKeyRequest,
-  Sub2ApiImportApiKeyResponse,
   SystemBackupJobResponse,
   SystemProxyConfig,
   SystemProxyTestResult,
@@ -198,7 +190,7 @@ async function requestBlob(path: string, init: RequestInit = {}): Promise<Downlo
 
   return {
     blob: await response.blob(),
-    filename: parseDownloadFilename(response.headers.get('Content-Disposition')) ?? 'sub2api_gpt.json'
+    filename: parseDownloadFilename(response.headers.get('Content-Disposition')) ?? 'download.bin'
   };
 }
 
@@ -270,8 +262,8 @@ export const api = {
     });
   },
 
-  listAccounts(keyword?: string, gptPlan?: GptPlanFilter): Promise<{ items: AccountItem[] }> {
-    return request<{ items: AccountItem[] }>(`/api/accounts${buildQuery({ keyword, gptPlan })}`);
+  listAccounts(keyword?: string): Promise<{ items: AccountItem[] }> {
+    return request<{ items: AccountItem[] }>(`/api/accounts${buildQuery({ keyword })}`);
   },
 
   createAccount(payload: AccountPayload): Promise<{ item: AccountItem }> {
@@ -517,10 +509,6 @@ export const api = {
     });
   },
 
-  getSub2ApiConfig(): Promise<{ item: Sub2ApiConfig }> {
-    return request<{ item: Sub2ApiConfig }>('/api/sub2api/config');
-  },
-
   listPublicCheckinAccounts(): Promise<PublicCheckinAccount[]> {
     return request<PublicCheckinAccount[]>('/api/public-checkin/accounts');
   },
@@ -671,28 +659,6 @@ export const api = {
     });
   },
 
-  updateSub2ApiConfig(payload: Sub2ApiConfig): Promise<{ item: Sub2ApiConfig }> {
-    return request<{ item: Sub2ApiConfig }>('/api/sub2api/config', {
-      method: 'PUT',
-      body: JSON.stringify(payload)
-    });
-  },
-
-  listSub2ApiModels(): Promise<OpenAiModelsResponse> {
-    return request<OpenAiModelsResponse>('/api/sub2api/models');
-  },
-
-  listSub2ApiGroups(): Promise<Sub2ApiGroupsResponse> {
-    return request<Sub2ApiGroupsResponse>('/api/sub2api/groups');
-  },
-
-  importSub2ApiApiKeys(payload: Sub2ApiImportApiKeyRequest): Promise<Sub2ApiImportApiKeyResponse> {
-    return request<Sub2ApiImportApiKeyResponse>('/api/sub2api/accounts/import-apikey', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    });
-  },
-
   getTranslationConfig(): Promise<{ item: TranslationConfig }> {
     return request<{ item: TranslationConfig }>('/api/translation/config');
   },
@@ -758,54 +724,16 @@ export const api = {
     });
   },
 
-  startSub2ApiCheck(payload: { modelId: string; targetGroupName: string }, signal?: AbortSignal): Promise<Response> {
-    return requestStream('/api/sub2api/check', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-      signal
-    });
-  },
-
-  deleteSub2ApiAccounts(payload: { accountIds: number[] }): Promise<Sub2ApiDeleteAccountsResponse> {
-    return request<Sub2ApiDeleteAccountsResponse>('/api/sub2api/accounts/batch-delete', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    });
-  },
-
-  exportSub2ApiGptJson(email: string): Promise<DownloadResponse> {
-    return requestBlob(`/api/sub2api/accounts/gpt-json-export${buildQuery({ email })}`);
-  },
-
-  getSub2ApiGptAccessToken(email: string): Promise<{ email: string; accessToken: string }> {
-    return request<{ email: string; accessToken: string }>(
-      `/api/sub2api/accounts/access-token${buildQuery({ email })}`
-    );
-  },
-
-  checkSub2ApiGptValidity(payload: {
-    email: string;
-    service: MailGptValidityService;
-    modelId?: string;
-  }): Promise<Sub2ApiGptValidityResponse> {
-    return request<Sub2ApiGptValidityResponse>('/api/sub2api/accounts/gpt-valid-check', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    });
-  },
-
   listCloudMailAccounts(payload: {
     page: number;
     pageSize: number;
     keyword?: string;
-    gptPlan?: GptPlanFilter;
   }): Promise<CloudMailAccountListResponse> {
     return request<CloudMailAccountListResponse>(
       `/api/cloud-mail/accounts${buildQuery({
         page: payload.page,
         pageSize: payload.pageSize,
-        keyword: payload.keyword,
-        gptPlan: payload.gptPlan
+        keyword: payload.keyword
       })}`
     );
   },

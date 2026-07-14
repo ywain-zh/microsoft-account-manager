@@ -2,7 +2,6 @@ import { computed, reactive, ref, watch } from 'vue';
 import { createDiscreteApi } from 'naive-ui';
 import { api, UnauthorizedError } from '../api';
 import { copyToClipboard } from '../utils/clipboard';
-import { downloadBlob } from '../utils/download';
 import type {
   AccountMailItem,
   CloudMailAccountItem,
@@ -10,9 +9,7 @@ import type {
   CloudMailConfig,
   CloudMailCreatePayload,
   CloudMailMessagesResponse,
-  CloudMailShareResponse,
-  GptPlanFilter,
-  Sub2ApiGptValidityResponse
+  CloudMailShareResponse
 } from '../types';
 
 const { message } = createDiscreteApi(['message']);
@@ -76,7 +73,6 @@ interface CloudMailAccountsQuery {
   page: number;
   pageSize: number;
   keyword: string;
-  gptPlan: GptPlanFilter;
 }
 
 function createDefaultCloudMailConfig(): CloudMailConfig {
@@ -210,7 +206,7 @@ function removeSessionCacheByPrefix(prefix: string): void {
 
 function getAccountsCacheKey(query: CloudMailAccountsQuery): string {
   return `${CLOUD_MAIL_ACCOUNTS_CACHE_PREFIX}${encodeURIComponent(
-    `${query.page}|${query.pageSize}|${query.keyword.trim().toLowerCase()}|${query.gptPlan}`
+    `${query.page}|${query.pageSize}|${query.keyword.trim().toLowerCase()}`
   )}`;
 }
 
@@ -222,20 +218,6 @@ function getCurrentConfigSyncKey(): string {
 
 function getMessagesCacheKey(email: string): string {
   return `${CLOUD_MAIL_MESSAGES_CACHE_PREFIX}${encodeURIComponent(email.trim().toLowerCase())}`;
-}
-
-function getGptValidityKey(email: string): string {
-  return email.trim().toLowerCase();
-}
-
-function mergeGptValidityResults(items: CloudMailAccountItem[]): void {
-  const nextResults = { ...gptValidityResults.value };
-  for (const item of items) {
-    if (item.gptValidity) {
-      nextResults[getGptValidityKey(item.email)] = item.gptValidity;
-    }
-  }
-  gptValidityResults.value = nextResults;
 }
 
 function clearAccountsCache(): void {
@@ -257,9 +239,6 @@ const accountsSyncing = ref(false);
 const backgroundSyncing = ref(false);
 const mailLoading = ref(false);
 const remarkSaving = ref(false);
-const gptJsonExportLoading = ref(false);
-const gptValidityLoadingEmails = ref<string[]>([]);
-const gptValidityResults = ref<Record<string, Sub2ApiGptValidityResponse>>({});
 const shareLoading = ref(false);
 const shareRegenerating = ref(false);
 const shareRevoking = ref(false);
@@ -272,7 +251,6 @@ const shareVisible = ref(false);
 const serviceErrorMessage = ref('');
 
 const searchKeyword = ref(readPersistedSearchKeyword());
-const gptPlanFilter = ref<GptPlanFilter>('');
 const tablePage = ref(1);
 const tablePageSize = ref(20);
 const total = ref(0);
@@ -449,7 +427,6 @@ function clearTableState(): void {
 
 function assignAccountsResponse(response: CloudMailAccountListResponse): void {
   accounts.value = response.items;
-  mergeGptValidityResults(response.items);
   total.value = response.total;
   checkedRowKeys.value = checkedRowKeys.value.filter((id) => response.items.some((item) => item.userId === id));
   lastAccountsCacheEmpty.value = Boolean(response.cacheEmpty);
@@ -459,8 +436,7 @@ function getCurrentAccountsQuery(): CloudMailAccountsQuery {
   return {
     page: tablePage.value,
     pageSize: tablePageSize.value,
-    keyword: searchKeyword.value.trim(),
-    gptPlan: gptPlanFilter.value
+    keyword: searchKeyword.value.trim()
   };
 }
 
@@ -1039,79 +1015,6 @@ async function refreshMailInbox(): Promise<void> {
   await loadMailMessages(mailAccount.value, false, { force: true });
 }
 
-async function exportSub2ApiGptJson(email: string): Promise<void> {
-  const targetEmail = email.trim();
-  if (!targetEmail || gptJsonExportLoading.value) {
-    return;
-  }
-
-  gptJsonExportLoading.value = true;
-  try {
-    const { blob, filename } = await api.exportSub2ApiGptJson(targetEmail);
-    downloadBlob(blob, filename);
-    message.success('GPT JSON 已开始下载');
-  } catch (error) {
-    handleApiError(error);
-  } finally {
-    gptJsonExportLoading.value = false;
-  }
-}
-
-function getGptValidityResult(email: string): Sub2ApiGptValidityResponse | null {
-  return gptValidityResults.value[getGptValidityKey(email)] ?? null;
-}
-
-function isCheckingGptValidity(email: string): boolean {
-  return gptValidityLoadingEmails.value.includes(getGptValidityKey(email));
-}
-
-function setGptValidityLoading(email: string, loading: boolean): void {
-  const key = getGptValidityKey(email);
-  if (!key) {
-    return;
-  }
-
-  if (loading) {
-    if (!gptValidityLoadingEmails.value.includes(key)) {
-      gptValidityLoadingEmails.value = [...gptValidityLoadingEmails.value, key];
-    }
-    return;
-  }
-
-  gptValidityLoadingEmails.value = gptValidityLoadingEmails.value.filter((item) => item !== key);
-}
-
-async function checkGptValidity(email: string): Promise<void> {
-  const targetEmail = email.trim();
-  if (!targetEmail || isCheckingGptValidity(targetEmail)) {
-    return;
-  }
-
-  setGptValidityLoading(targetEmail, true);
-  try {
-    const response = await api.checkSub2ApiGptValidity({ email: targetEmail, service: 'cloud-mail' });
-    gptValidityResults.value = {
-      ...gptValidityResults.value,
-      [getGptValidityKey(targetEmail)]: response
-    };
-    accounts.value = accounts.value.map((item) =>
-      getGptValidityKey(item.email) === getGptValidityKey(targetEmail)
-        ? { ...item, gptValidity: response }
-        : item
-    );
-
-    if (response.valid) {
-      message.success(`${targetEmail} GPT 有效`);
-    } else {
-      message.warning(response.message || `${targetEmail} 未检测到有效 GPT`);
-    }
-  } catch (error) {
-    handleApiError(error);
-  } finally {
-    setGptValidityLoading(targetEmail, false);
-  }
-}
-
 function formatDate(value: string | null): string {
   if (!value) {
     return '-';
@@ -1145,9 +1048,6 @@ export function useCloudMailConsole() {
     backgroundSyncing,
     mailLoading,
     remarkSaving,
-    gptJsonExportLoading,
-    gptValidityLoadingEmails,
-    gptValidityResults,
     shareLoading,
     shareRegenerating,
     shareRevoking,
@@ -1158,7 +1058,6 @@ export function useCloudMailConsole() {
     shareVisible,
     serviceErrorMessage,
     searchKeyword,
-    gptPlanFilter,
     tablePage,
     tablePageSize,
     total,
@@ -1202,10 +1101,6 @@ export function useCloudMailConsole() {
     copyMailAccount,
     openMailModal,
     refreshMailInbox,
-    exportSub2ApiGptJson,
-    checkGptValidity,
-    getGptValidityResult,
-    isCheckingGptValidity,
     formatDate,
     clearMailState,
     markMailAsRead
