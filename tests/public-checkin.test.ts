@@ -42,6 +42,7 @@ type MemoryAccountRow = {
   balance_updated_at: number | null;
   checkin_enabled: number;
   use_proxy: number;
+  doh_url: string;
   status: 'active' | 'disabled' | 'error';
   last_error: string | null;
   created_at: number;
@@ -217,6 +218,7 @@ class PublicCheckinMemoryStatement implements D1PreparedStatement {
         balance_updated_at: null,
         checkin_enabled: 1,
         use_proxy: 0,
+        doh_url: '',
         status: 'active',
         last_error: null,
         created_at: Number(this.values[5]),
@@ -386,6 +388,7 @@ class PublicCheckinMemoryD1Database implements D1Database {
       balance_updated_at: account.balance_updated_at,
       checkin_enabled: account.checkin_enabled,
       use_proxy: account.use_proxy,
+      doh_url: account.doh_url,
       status: account.status,
       last_error: account.last_error,
       account_created_at: account.created_at,
@@ -433,11 +436,12 @@ async function seedPublicCheckinAccount(db: PublicCheckinMemoryD1Database, siteI
       api_key_data,
       checkin_enabled,
       use_proxy,
+      doh_url,
       status,
       created_at,
       updated_at
     )
-    VALUES (?, ?, ?, ?, ?, 1, 0, 'active', ?, ?)
+    VALUES (?, ?, ?, ?, ?, 1, 0, '', 'active', ?, ?)
   `).bind(resolvedSiteId, `测试账号 ${now}`, 'access_token', credential, apiKey, now, now).run()).meta.last_row_id);
 
   return { siteId: resolvedSiteId, accountId };
@@ -1707,5 +1711,133 @@ test('public checkin settings route saves announcement polling interval', async 
     assert.equal(invalid.status, 400);
   } finally {
     await cleanup();
+  }
+});
+
+test('public checkin doh config validates urls and dispatcher priority', () => {
+  publicCheckinTestHooks.clearDohCaches();
+  assert.equal(publicCheckinTestHooks.validateDohUrl(''), '');
+  assert.equal(
+    publicCheckinTestHooks.validateDohUrl('https://dns.alidns.com/dns-query'),
+    'https://dns.alidns.com/dns-query'
+  );
+  assert.equal(
+    publicCheckinTestHooks.validateDohUrl(' https://doh.360.cn/dns-query '),
+    'https://doh.360.cn/dns-query'
+  );
+
+  assert.throws(
+    () => publicCheckinTestHooks.validateDohUrl('http://dns.alidns.com/dns-query'),
+    /https:\/\//
+  );
+  assert.throws(
+    () => publicCheckinTestHooks.validateDohUrl('not-a-url'),
+    /格式不合法/
+  );
+  assert.throws(
+    () => publicCheckinTestHooks.validateDohUrl('https://' + 'a'.repeat(500)),
+    /500/
+  );
+
+  const proxyDispatcher = publicCheckinTestHooks.resolveRequestDispatcher(true, 'http://127.0.0.1:7890', 'https://dns.alidns.com/dns-query');
+  const dohDispatcher = publicCheckinTestHooks.resolveRequestDispatcher(false, '', 'https://dns.alidns.com/dns-query');
+  const noneDispatcher = publicCheckinTestHooks.resolveRequestDispatcher(false, '', '');
+  assert.ok(proxyDispatcher);
+  assert.ok(dohDispatcher);
+  assert.equal(noneDispatcher, undefined);
+  assert.notEqual(proxyDispatcher, dohDispatcher);
+});
+
+test('public checkin account list exposes dohUrl', async () => {
+  const { db, cleanup } = await createPublicCheckinDb();
+  try {
+    const seeded = await seedPublicCheckinAccount(db);
+    const account = db.accounts.find((item) => item.id === seeded.accountId);
+    assert.ok(account);
+    account.doh_url = 'https://dns.alidns.com/dns-query';
+
+    const accounts = await publicCheckinTestHooks.listAccounts(db as unknown as D1Database);
+    const matched = accounts.find((item) => item.id === seeded.accountId);
+    assert.ok(matched);
+    assert.equal(matched.dohUrl, 'https://dns.alidns.com/dns-query');
+    assert.equal(matched.useProxy, false);
+  } finally {
+    await cleanup();
+  }
+});
+
+test('public checkin doh resolveHostViaDoh uses standard DNS messages and caches', async () => {
+  publicCheckinTestHooks.clearDohCaches();
+  let calls = 0;
+  publicCheckinTestHooks.setDohFetchOverride(async (input, init) => {
+    calls += 1;
+    const url = String(input);
+    assert.match(url, /dns\.alidns\.com/);
+    assert.match(url, /[?&]dns=/);
+    assert.equal((init?.headers as Record<string, string> | undefined)?.Accept, 'application/dns-message');
+    return new Response(Uint8Array.from([
+      0x00, 0x00, 0x81, 0x80, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+      0x07, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65,
+      0x04, 0x74, 0x65, 0x73, 0x74, 0x00, 0x00, 0x01, 0x00, 0x01,
+      0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x78, 0x00, 0x04,
+      0xcb, 0x00, 0x71, 0x0a
+    ]), {
+      status: 200,
+      headers: { 'content-type': 'application/dns-message' }
+    });
+  });
+
+  try {
+    const first = await publicCheckinTestHooks.resolveHostViaDoh('example.test', 'https://dns.alidns.com/dns-query');
+    const second = await publicCheckinTestHooks.resolveHostViaDoh('example.test', 'https://dns.alidns.com/dns-query');
+    assert.deepEqual(first, { address: '203.0.113.10', family: 4 });
+    assert.deepEqual(second, first);
+    assert.equal(calls, 1);
+  } finally {
+    publicCheckinTestHooks.setDohFetchOverride(null);
+    publicCheckinTestHooks.clearDohCaches();
+  }
+});
+
+test('public checkin doh falls back to JSON format and reports missing records', async () => {
+  publicCheckinTestHooks.clearDohCaches();
+  let calls = 0;
+  publicCheckinTestHooks.setDohFetchOverride(async (input) => {
+    calls += 1;
+    const url = new URL(String(input));
+    if (url.searchParams.has('dns')) {
+      return new Response('wire format unsupported', { status: 400 });
+    }
+    assert.equal(url.searchParams.get('name'), 'json.test');
+    return new Response(JSON.stringify({
+      Status: 0,
+      Answer: [
+        { name: 'json.test.', type: 1, TTL: 60, data: '198.51.100.7' }
+      ]
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/dns-json' }
+    });
+  });
+
+  try {
+    const resolved = await publicCheckinTestHooks.resolveHostViaDoh('json.test', 'https://doh.360.cn/dns-query');
+    assert.deepEqual(resolved, { address: '198.51.100.7', family: 4 });
+    assert.equal(calls, 2);
+
+    publicCheckinTestHooks.clearDohCaches();
+    publicCheckinTestHooks.setDohFetchOverride(async (input) => {
+      const url = new URL(String(input));
+      return url.searchParams.has('dns')
+        ? new Response('wire format unsupported', { status: 400 })
+        : new Response(JSON.stringify({ Status: 0, Answer: [] }), { status: 200 });
+    });
+    await assert.rejects(
+      () => publicCheckinTestHooks.resolveHostViaDoh('missing.test', 'https://doh.360.cn/dns-query'),
+      /DoH/
+    );
+  } finally {
+    publicCheckinTestHooks.setDohFetchOverride(null);
+    publicCheckinTestHooks.clearDohCaches();
   }
 });

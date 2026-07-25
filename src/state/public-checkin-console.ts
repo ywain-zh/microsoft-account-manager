@@ -150,6 +150,7 @@ function buildPayload(input: {
   platformUserId: string;
   checkinEnabled: boolean;
   useProxy: boolean;
+  dohUrl: string;
   editing: boolean;
   currentCredentialType?: PublicCheckinCredentialType;
 }): PublicCheckinAccountPayload {
@@ -175,7 +176,8 @@ function buildPayload(input: {
     credential: parsed?.credential || null,
     apiKey: input.apiKey.trim() || null,
     checkinEnabled: input.checkinEnabled,
-    useProxy: input.useProxy
+    useProxy: input.useProxy,
+    dohUrl: input.dohUrl.trim()
   };
 }
 

@@ -572,7 +572,7 @@ export const api = {
     });
   },
 
-  testPublicCheckinConnection(payload: Pick<PublicCheckinAccountPayload, 'siteId' | 'site' | 'credentialType' | 'credential' | 'useProxy'>): Promise<PublicCheckinBalanceResult> {
+  testPublicCheckinConnection(payload: Pick<PublicCheckinAccountPayload, 'siteId' | 'site' | 'credentialType' | 'credential' | 'useProxy' | 'dohUrl'>): Promise<PublicCheckinBalanceResult> {
     return request<PublicCheckinBalanceResult>('/api/public-checkin/accounts/test-connection', {
       method: 'POST',
       body: JSON.stringify(payload)
