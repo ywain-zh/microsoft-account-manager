@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
-import { Agent, fetch, ProxyAgent, type Dispatcher, type RequestInit as UndiciRequestInit } from 'undici';
+import { fetch, ProxyAgent, type Dispatcher, type RequestInit as UndiciRequestInit } from 'undici';
 
 export type PublicCheckinPlatform = 'new-api' | 'one-api' | 'onehub' | 'anyrouter';
 type StoredPublicCheckinPlatform = Exclude<PublicCheckinPlatform, 'anyrouter'>;
@@ -42,7 +42,6 @@ export interface PublicCheckinAccount {
   balanceUpdatedAt: number | null;
   checkinEnabled: boolean;
   useProxy: boolean;
-  dohUrl: string;
   status: PublicCheckinAccountStatus;
   lastError: string | null;
   dailyBalanceDisplayMode: PublicCheckinDailyBalanceDisplayMode;
@@ -90,7 +89,6 @@ type AccountRow = {
   balance_updated_at: number | null;
   checkin_enabled: number;
   use_proxy: number;
-  doh_url: string;
   status: PublicCheckinAccountStatus;
   last_error: string | null;
   created_at: number | null;
@@ -108,7 +106,6 @@ type JoinedAccountRow = {
   balance_updated_at: number | null;
   checkin_enabled: number;
   use_proxy: number;
-  doh_url: string;
   status: PublicCheckinAccountStatus;
   last_error: string | null;
   account_created_at: number | null;
@@ -328,7 +325,6 @@ let publicCheckinProbeRateLimitNowOverride: (() => number) | null = null;
 type NotificationsModule = typeof import('./notifications.js');
 let notificationsModulePromise: Promise<NotificationsModule> | null = null;
 let adapterOverride: ((platform: PublicCheckinPlatform, siteUrl: string, options: AdapterOptions, siteName?: string) => PublicCheckinAdapter) | null = null;
-let dohFetchOverride: ((input: string | URL, init?: UndiciRequestInit) => Promise<Response>) | null = null;
 let announcementNotificationSenderOverride:
   | ((db: D1Database, item: { siteName: string; title: string; content: string; sourceUrl?: string | null; discoveredAt?: number | null }) => Promise<void>)
   | null = null;
@@ -565,7 +561,6 @@ function validateAccountInput(value: unknown, requireCredential: boolean): {
   apiKey: string | null;
   checkinEnabled: boolean;
   useProxy: boolean;
-  dohUrl: string;
   status?: PublicCheckinAccountStatus;
 } {
   const input = asRecord(value);
@@ -591,7 +586,6 @@ function validateAccountInput(value: unknown, requireCredential: boolean): {
     apiKey: apiKeyInput ? normalizeApiKey(apiKeyInput) : null,
     checkinEnabled: asBoolean(input.checkinEnabled, true),
     useProxy: asBoolean(input.useProxy, false),
-    dohUrl: validateDohUrl(input.dohUrl),
     status: input.status === undefined ? undefined : normalizeAccountStatus(input.status)
   };
 }
@@ -691,14 +685,12 @@ async function createAdapterForAccount(
   platform: PublicCheckinPlatform,
   siteUrl: string,
   useProxy: boolean,
-  siteName = '',
-  dohUrl = ''
+  siteName = ''
 ): Promise<PublicCheckinAdapter> {
   const factory = adapterOverride ?? createAdapter;
   return factory(platform, siteUrl, {
     useProxy,
     proxyUrl: useProxy ? await getSystemProxyUrl(db) : '',
-    dohUrl: useProxy ? '' : normalizeDohUrl(dohUrl),
     yesCaptchaClientKey: await getConfiguredYesCaptchaClientKey(db)
   }, siteName);
 }
@@ -987,7 +979,6 @@ function joinedToAccountWithSite(row: JoinedAccountRow): AccountWithSite {
       balance_updated_at: row.balance_updated_at == null ? null : Number(row.balance_updated_at),
       checkin_enabled: Number(row.checkin_enabled),
       use_proxy: Number(row.use_proxy),
-      doh_url: asString(row.doh_url),
       status: row.status,
       last_error: row.last_error,
       created_at: row.account_created_at == null ? null : Number(row.account_created_at),
@@ -1025,7 +1016,6 @@ function toSafeAccount(
     balanceUpdatedAt: account.balance_updated_at == null ? null : Number(account.balance_updated_at),
     checkinEnabled: Number(account.checkin_enabled) === 1,
     useProxy: Number(account.use_proxy) === 1,
-    dohUrl: asString(account.doh_url),
     status: account.status,
     lastError: account.last_error,
     dailyBalanceDisplayMode: dailyBalanceDisplay.mode,
@@ -1241,15 +1231,10 @@ type RawResponse = {
 type AdapterOptions = {
   useProxy?: boolean;
   proxyUrl?: string;
-  dohUrl?: string;
   yesCaptchaClientKey?: string;
 };
 
 const proxyAgentCache = new Map<string, ProxyAgent>();
-const dohAgentCache = new Map<string, Agent>();
-const dohLookupCache = new Map<string, { address: string; family: 4 | 6; expiresAt: number }>();
-const DEFAULT_DOH_TTL_SECONDS = 60;
-const MAX_DOH_URL_LENGTH = 500;
 
 function headerValue(headers: Map<string, string>, key: string): string {
   return headers.get(key.toLowerCase()) || '';
@@ -1411,282 +1396,6 @@ function getProxyDispatcher(proxyUrl: string): Dispatcher {
   return agent;
 }
 
-function normalizeDohUrl(value: unknown): string {
-  return asString(value).trim();
-}
-
-function validateDohUrl(value: unknown): string {
-  const trimmed = normalizeDohUrl(value);
-  if (!trimmed) return '';
-  if (trimmed.length > MAX_DOH_URL_LENGTH) {
-    throw new HTTPException(400, { message: 'DoH 地址长度不能超过 500 个字符' });
-  }
-  let parsed: URL;
-  try {
-    parsed = new URL(trimmed);
-  } catch {
-    throw new HTTPException(400, { message: 'DoH 地址格式不合法' });
-  }
-  if (parsed.protocol !== 'https:') {
-    throw new HTTPException(400, { message: 'DoH 地址必须使用 https://' });
-  }
-  return trimmed;
-}
-
-type DohJsonResponse = {
-  Status?: number;
-  Answer?: Array<{
-    name?: string;
-    type?: number;
-    TTL?: number;
-    data?: string;
-  }>;
-};
-
-type DohResolvedRecord = {
-  address: string;
-  family: 4 | 6;
-  ttlSeconds: number;
-};
-
-function normalizeDohTtl(value: unknown): number {
-  const ttl = Number(value);
-  return Number.isFinite(ttl) && ttl > 0
-    ? Math.min(Math.max(Math.floor(ttl), 1), 300)
-    : DEFAULT_DOH_TTL_SECONDS;
-}
-
-function encodeDohDnsQuery(hostname: string, type: 'A' | 'AAAA'): Uint8Array {
-  const labels = hostname.replace(/\.$/, '').split('.');
-  if (!labels.length || labels.some((label) => !label || Buffer.byteLength(label, 'ascii') > 63)) {
-    throw new Error('DoH 查询主机名不合法：' + hostname);
-  }
-  const encodedLabels = labels.map((label) => Buffer.from(label, 'ascii'));
-  const questionLength = encodedLabels.reduce((total, label) => total + 1 + label.length, 1) + 4;
-  const message = new Uint8Array(12 + questionLength);
-  const view = new DataView(message.buffer);
-  view.setUint16(2, 0x0100);
-  view.setUint16(4, 1);
-
-  let offset = 12;
-  for (const label of encodedLabels) {
-    message[offset] = label.length;
-    message.set(label, offset + 1);
-    offset += 1 + label.length;
-  }
-  message[offset] = 0;
-  offset += 1;
-  view.setUint16(offset, type === 'A' ? 1 : 28);
-  view.setUint16(offset + 2, 1);
-  return message;
-}
-
-function skipDnsMessageName(message: Uint8Array, startOffset: number): number {
-  let offset = startOffset;
-  while (offset < message.length) {
-    const labelLength = message[offset];
-    if ((labelLength & 0xc0) === 0xc0) {
-      if (offset + 1 >= message.length) throw new Error('DoH DNS 响应中的压缩指针不完整');
-      return offset + 2;
-    }
-    if ((labelLength & 0xc0) !== 0) throw new Error('DoH DNS 响应中的域名标签不合法');
-    offset += 1;
-    if (labelLength === 0) return offset;
-    offset += labelLength;
-  }
-  throw new Error('DoH DNS 响应中的域名超出报文范围');
-}
-
-function parseDohDnsMessage(payload: Uint8Array, type: 'A' | 'AAAA'): DohResolvedRecord | null {
-  if (payload.length < 12) throw new Error('DoH DNS 响应过短');
-  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-  const flags = view.getUint16(2);
-  const responseCode = flags & 0x000f;
-  if (responseCode !== 0) throw new Error('DoH 返回 DNS 状态 ' + responseCode);
-  if ((flags & 0x0200) !== 0) throw new Error('DoH DNS 响应被截断');
-
-  const questionCount = view.getUint16(4);
-  const answerCount = view.getUint16(6);
-  let offset = 12;
-  for (let index = 0; index < questionCount; index += 1) {
-    offset = skipDnsMessageName(payload, offset);
-    if (offset + 4 > payload.length) throw new Error('DoH DNS 问题区不完整');
-    offset += 4;
-  }
-
-  const expectedType = type === 'A' ? 1 : 28;
-  for (let index = 0; index < answerCount; index += 1) {
-    offset = skipDnsMessageName(payload, offset);
-    if (offset + 10 > payload.length) throw new Error('DoH DNS 应答区不完整');
-    const recordType = view.getUint16(offset);
-    const recordClass = view.getUint16(offset + 2);
-    const ttlSeconds = normalizeDohTtl(view.getUint32(offset + 4));
-    const dataLength = view.getUint16(offset + 8);
-    const dataOffset = offset + 10;
-    const nextOffset = dataOffset + dataLength;
-    if (nextOffset > payload.length) throw new Error('DoH DNS 记录数据不完整');
-
-    if (recordClass === 1 && recordType === expectedType) {
-      if (recordType === 1 && dataLength === 4) {
-        return {
-          address: Array.from(payload.subarray(dataOffset, nextOffset)).join('.'),
-          family: 4,
-          ttlSeconds
-        };
-      }
-      if (recordType === 28 && dataLength === 16) {
-        const groups = Array.from({ length: 8 }, (_, groupIndex) => view.getUint16(dataOffset + groupIndex * 2).toString(16));
-        return { address: groups.join(':'), family: 6, ttlSeconds };
-      }
-    }
-    offset = nextOffset;
-  }
-  return null;
-}
-
-async function queryDohWireFormat(hostname: string, dohUrl: string, type: 'A' | 'AAAA'): Promise<DohResolvedRecord | null> {
-  const url = new URL(dohUrl);
-  url.searchParams.delete('name');
-  url.searchParams.delete('type');
-  url.searchParams.set('dns', Buffer.from(encodeDohDnsQuery(hostname, type)).toString('base64url'));
-  const requestInit = {
-    method: 'GET',
-    headers: {
-      Accept: 'application/dns-message',
-      'User-Agent': 'Wangyue-DoH/1.0'
-    }
-  } satisfies UndiciRequestInit;
-  const response = dohFetchOverride
-    ? await dohFetchOverride(url, requestInit)
-    : await fetch(url, requestInit);
-  if (!response.ok) throw new Error('HTTP ' + response.status);
-  return parseDohDnsMessage(new Uint8Array(await response.arrayBuffer()), type);
-}
-
-async function queryDohJsonFormat(hostname: string, dohUrl: string, type: 'A' | 'AAAA'): Promise<DohResolvedRecord | null> {
-  const url = new URL(dohUrl);
-  url.searchParams.delete('dns');
-  url.searchParams.set('name', hostname);
-  url.searchParams.set('type', type);
-  const requestInit = {
-    method: 'GET',
-    headers: {
-      Accept: 'application/dns-json',
-      'User-Agent': 'Wangyue-DoH/1.0'
-    }
-  } satisfies UndiciRequestInit;
-  const response = dohFetchOverride
-    ? await dohFetchOverride(url, requestInit)
-    : await fetch(url, requestInit);
-  if (!response.ok) throw new Error('HTTP ' + response.status);
-  const payload = await response.json() as DohJsonResponse;
-  if (typeof payload.Status === 'number' && payload.Status !== 0) {
-    throw new Error('DoH 返回状态 ' + payload.Status);
-  }
-  const expectedType = type === 'A' ? 1 : 28;
-  const answers = Array.isArray(payload.Answer) ? payload.Answer : [];
-  const match = answers.find((item) => Number(item.type) === expectedType && asString(item.data).trim());
-  if (!match) return null;
-  return {
-    address: asString(match.data).trim(),
-    family: type === 'A' ? 4 : 6,
-    ttlSeconds: normalizeDohTtl(match.TTL)
-  };
-}
-
-async function resolveHostViaDoh(hostname: string, dohUrl: string): Promise<{ address: string; family: 4 | 6 }> {
-  const resolvedDoh = normalizeDohUrl(dohUrl);
-  if (!resolvedDoh) {
-    throw new Error('DoH 地址未配置');
-  }
-  if (!hostname || hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
-    throw new Error('不支持通过 DoH 解析主机：' + (hostname || '(空)'));
-  }
-
-  const cacheKey = resolvedDoh + '\0' + hostname;
-  const cached = dohLookupCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    return { address: cached.address, family: cached.family };
-  }
-
-  const queryType = async (type: 'A' | 'AAAA'): Promise<DohResolvedRecord | null> => {
-    let wireError: Error | null = null;
-    try {
-      return await queryDohWireFormat(hostname, resolvedDoh, type);
-    } catch (error) {
-      wireError = error instanceof Error ? error : new Error(String(error));
-    }
-    try {
-      return await queryDohJsonFormat(hostname, resolvedDoh, type);
-    } catch (error) {
-      const jsonError = error instanceof Error ? error : new Error(String(error));
-      throw new Error('DoH 查询失败（标准格式：' + wireError.message + '；JSON 格式：' + jsonError.message + '）');
-    }
-  };
-
-  let lastError: Error | null = null;
-  for (const type of ['A', 'AAAA'] as const) {
-    try {
-      const resolved = await queryType(type);
-      if (!resolved) {
-        lastError = new Error('DoH 未返回 ' + type + ' 记录');
-        continue;
-      }
-      dohLookupCache.set(cacheKey, {
-        address: resolved.address,
-        family: resolved.family,
-        expiresAt: Date.now() + resolved.ttlSeconds * 1000
-      });
-      return { address: resolved.address, family: resolved.family };
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-    }
-  }
-
-  throw new Error(lastError?.message || ('通过 DoH 解析 ' + hostname + ' 失败'));
-}
-
-function getDohDispatcher(dohUrl: string): Dispatcher {
-  const resolved = normalizeDohUrl(dohUrl);
-  if (!resolved) {
-    throw new Error('DoH 地址未配置');
-  }
-  let agent = dohAgentCache.get(resolved);
-  if (!agent) {
-    agent = new Agent({
-      connect: {
-        lookup(hostname, options, callback) {
-          void resolveHostViaDoh(hostname, resolved)
-            .then(({ address, family }) => {
-              if (options && typeof options === 'object' && 'all' in options && options.all) {
-                callback(null, [{ address, family }]);
-                return;
-              }
-              callback(null, address, family);
-            })
-            .catch((error) => {
-              const err = error instanceof Error ? error : new Error(String(error));
-              callback(err as NodeJS.ErrnoException, '', 4);
-            });
-        }
-      }
-    });
-    dohAgentCache.set(resolved, agent);
-  }
-  return agent;
-}
-
-function resolveRequestDispatcher(useProxy: boolean, proxyUrl: string, dohUrl = ''): Dispatcher | undefined {
-  if (useProxy) {
-    return getProxyDispatcher(proxyUrl);
-  }
-  const resolvedDoh = normalizeDohUrl(dohUrl);
-  if (resolvedDoh) {
-    return getDohDispatcher(resolvedDoh);
-  }
-  return undefined;
-}
-
 async function toRawResponse(response: Awaited<ReturnType<typeof fetch>>): Promise<RawResponse> {
   return {
     ok: response.ok,
@@ -1702,14 +1411,12 @@ class PublicCheckinAdapter {
   protected readonly siteUrl: string;
   protected readonly useProxy: boolean;
   protected readonly proxyUrl: string;
-  protected readonly dohUrl: string;
   protected readonly yesCaptchaClientKey: string;
 
   constructor(siteUrl: string, options: AdapterOptions = {}) {
     this.siteUrl = normalizeUrl(siteUrl);
     this.useProxy = options.useProxy === true;
     this.proxyUrl = options.proxyUrl?.trim() || '';
-    this.dohUrl = this.useProxy ? '' : normalizeDohUrl(options.dohUrl);
     this.yesCaptchaClientKey = options.yesCaptchaClientKey?.trim() || '';
   }
 
@@ -1880,7 +1587,7 @@ class PublicCheckinAdapter {
       method: init.method || 'GET',
       headers,
       body,
-      dispatcher: resolveRequestDispatcher(this.useProxy, this.proxyUrl, this.dohUrl)
+      dispatcher: this.useProxy ? getProxyDispatcher(this.proxyUrl) : undefined
     };
     return toRawResponse(await fetch(url, requestInit));
   }
@@ -2049,7 +1756,6 @@ async function getAccountWithSite(db: D1Database, accountId: number): Promise<Ac
       a.balance_updated_at AS balance_updated_at,
       a.checkin_enabled AS checkin_enabled,
       a.use_proxy AS use_proxy,
-      a.doh_url AS doh_url,
       a.status AS status,
       a.last_error AS last_error,
       a.created_at AS account_created_at,
@@ -2390,7 +2096,6 @@ async function listAccounts(db: D1Database): Promise<PublicCheckinAccount[]> {
       a.balance_updated_at AS balance_updated_at,
       a.checkin_enabled AS checkin_enabled,
       a.use_proxy AS use_proxy,
-      a.doh_url AS doh_url,
       a.status AS status,
       a.last_error AS last_error,
       a.created_at AS account_created_at,
@@ -2441,9 +2146,9 @@ async function createAccount(db: D1Database, body: unknown): Promise<PublicCheck
   const now = unixNow();
   const result = await dbRun(db, `
     INSERT INTO public_checkin_accounts (
-      site_id, label, credential_type, credential_data, api_key_data, checkin_enabled, use_proxy, doh_url, status, created_at, updated_at
+      site_id, label, credential_type, credential_data, api_key_data, checkin_enabled, use_proxy, status, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     siteId,
     label,
@@ -2452,7 +2157,6 @@ async function createAccount(db: D1Database, body: unknown): Promise<PublicCheck
     input.apiKey ? encryptCredential(input.apiKey) : null,
     input.checkinEnabled ? 1 : 0,
     input.useProxy ? 1 : 0,
-    input.dohUrl,
     input.status || 'active',
     now,
     now
@@ -2473,7 +2177,7 @@ async function updateAccount(db: D1Database, accountId: number, body: unknown): 
   if (input.credential) {
     await dbRun(db, `
       UPDATE public_checkin_accounts
-      SET site_id = ?, label = ?, credential_type = ?, credential_data = ?, api_key_data = COALESCE(?, api_key_data), checkin_enabled = ?, use_proxy = ?, doh_url = ?, status = ?, updated_at = ?
+      SET site_id = ?, label = ?, credential_type = ?, credential_data = ?, api_key_data = COALESCE(?, api_key_data), checkin_enabled = ?, use_proxy = ?, status = ?, updated_at = ?
       WHERE id = ?
     `, [
       siteId,
@@ -2483,7 +2187,6 @@ async function updateAccount(db: D1Database, accountId: number, body: unknown): 
       input.apiKey ? encryptCredential(input.apiKey) : null,
       input.checkinEnabled ? 1 : 0,
       input.useProxy ? 1 : 0,
-      input.dohUrl,
       input.status || current.account.status,
       now,
       accountId
@@ -2491,7 +2194,7 @@ async function updateAccount(db: D1Database, accountId: number, body: unknown): 
   } else {
     await dbRun(db, `
       UPDATE public_checkin_accounts
-      SET site_id = ?, label = ?, credential_type = ?, api_key_data = COALESCE(?, api_key_data), checkin_enabled = ?, use_proxy = ?, doh_url = ?, status = ?, updated_at = ?
+      SET site_id = ?, label = ?, credential_type = ?, api_key_data = COALESCE(?, api_key_data), checkin_enabled = ?, use_proxy = ?, status = ?, updated_at = ?
       WHERE id = ?
     `, [
       siteId,
@@ -2500,7 +2203,6 @@ async function updateAccount(db: D1Database, accountId: number, body: unknown): 
       input.apiKey ? encryptCredential(input.apiKey) : null,
       input.checkinEnabled ? 1 : 0,
       input.useProxy ? 1 : 0,
-      input.dohUrl,
       input.status || current.account.status,
       now,
       accountId
@@ -2727,8 +2429,7 @@ async function requestOpenAiCompatibleRaw(
   requestPath: string,
   init: RequestInit,
   useProxy: boolean,
-  proxyUrl: string,
-  dohUrl = ''
+  proxyUrl: string
 ): Promise<RawResponse> {
   const requestInit: UndiciRequestInit = {
     method: init.method,
@@ -2738,7 +2439,7 @@ async function requestOpenAiCompatibleRaw(
       ...(init.headers as Record<string, string> | undefined)
     },
     body: init.body === null ? undefined : (init.body as UndiciRequestInit['body']),
-    dispatcher: resolveRequestDispatcher(useProxy, proxyUrl, dohUrl),
+    dispatcher: useProxy ? getProxyDispatcher(proxyUrl) : undefined,
     signal: init.signal as AbortSignal | undefined
   };
 
@@ -2758,8 +2459,7 @@ async function requestOpenAiCompatibleJson(
   requestPath: string,
   init: RequestInit,
   useProxy: boolean,
-  proxyUrl: string,
-  dohUrl = ''
+  proxyUrl: string
 ): Promise<unknown> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 15000);
@@ -2768,7 +2468,7 @@ async function requestOpenAiCompatibleJson(
     const response = await requestOpenAiCompatibleRaw(siteUrl, apiKey, requestPath, {
       ...init,
       signal: controller.signal
-    }, useProxy, proxyUrl, dohUrl);
+    }, useProxy, proxyUrl);
     return parseJsonResponsePayload<unknown>(response);
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
@@ -2786,8 +2486,7 @@ async function probeOpenAiCompatibleModel(
   model: string,
   prompt: string,
   useProxy: boolean,
-  proxyUrl: string,
-  dohUrl = ''
+  proxyUrl: string
 ): Promise<{ success: true; responseText: string } | { success: false; errorMessage: string }> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 15000);
@@ -2804,7 +2503,7 @@ async function probeOpenAiCompatibleModel(
         max_output_tokens: 32
       }),
       signal: controller.signal
-    }, useProxy, proxyUrl, dohUrl);
+    }, useProxy, proxyUrl);
 
     if (!response.ok) {
       return {
@@ -2859,15 +2558,13 @@ function buildPublicCheckinModelCacheKey(input: {
   apiKey: string;
   useProxy: boolean;
   proxyUrl: string;
-  dohUrl?: string;
 }): string {
   return JSON.stringify({
     accountId: input.accountId,
     siteUrl: normalizeUrl(input.siteUrl),
     apiKey: input.apiKey,
     useProxy: input.useProxy,
-    proxyUrl: input.useProxy ? getProxyUrl(input.proxyUrl) : '',
-    dohUrl: input.useProxy ? '' : normalizeDohUrl(input.dohUrl)
+    proxyUrl: input.useProxy ? getProxyUrl(input.proxyUrl) : ''
   });
 }
 
@@ -2911,7 +2608,7 @@ function setCachedPublicCheckinModelProbeResponse(
   });
 }
 
-async function requireModelApiKey(db: D1Database, accountId: number): Promise<{ row: AccountWithSite; apiKey: string; proxyUrl: string; dohUrl: string }> {
+async function requireModelApiKey(db: D1Database, accountId: number): Promise<{ row: AccountWithSite; apiKey: string; proxyUrl: string }> {
   const row = await getAccountWithSite(db, accountId);
   if (!row) {
     throw new HTTPException(404, { message: '账号不存在' });
@@ -2922,10 +2619,8 @@ async function requireModelApiKey(db: D1Database, accountId: number): Promise<{ 
     throw new HTTPException(400, { message: '请先在编辑账号中配置 API Key' });
   }
 
-  const useProxy = row.account.use_proxy === 1;
-  const proxyUrl = useProxy ? await getSystemProxyUrl(db) : '';
-  const dohUrl = useProxy ? '' : normalizeDohUrl(row.account.doh_url);
-  return { row, apiKey, proxyUrl, dohUrl };
+  const proxyUrl = row.account.use_proxy === 1 ? await getSystemProxyUrl(db) : '';
+  return { row, apiKey, proxyUrl };
 }
 
 async function resolveCredential(db: D1Database, accountId: number): Promise<AccountWithSite & { credential: PublicCheckinCredential }> {
@@ -2934,7 +2629,7 @@ async function resolveCredential(db: D1Database, accountId: number): Promise<Acc
   const credential = decryptAccountCredential(row.account);
   if (credential.type !== 'password') return { ...row, credential };
 
-  const adapter = await createAdapterForAccount(db, row.site.platform, row.site.url, row.account.use_proxy === 1, row.site.name, row.account.doh_url);
+  const adapter = await createAdapterForAccount(db, row.site.platform, row.site.url, row.account.use_proxy === 1, row.site.name);
   const login = await adapter.login(credential.username || '', credential.password || '');
   if (!login.success || !login.accessToken) {
     throw new Error(login.errorMessage || '密码登录失败');
@@ -2962,7 +2657,7 @@ async function refreshBalanceForAccount(
     return { success: false, errorMessage };
   }
 
-  const adapter = await createAdapterForAccount(db, resolved.site.platform, resolved.site.url, resolved.account.use_proxy === 1, resolved.site.name, resolved.account.doh_url);
+  const adapter = await createAdapterForAccount(db, resolved.site.platform, resolved.site.url, resolved.account.use_proxy === 1, resolved.site.name);
   const result: BalanceResult = await adapter.getBalance(resolved.credential).catch((error) => ({
     success: false,
     errorMessage: error instanceof Error ? error.message : '余额刷新失败'
@@ -3040,7 +2735,7 @@ async function executeCheckin(db: D1Database, accountId: number, triggeredBy: Pu
   }
 
   let credential = decryptAccountCredential(row.account);
-  const adapter = await createAdapterForAccount(db, row.site.platform, row.site.url, row.account.use_proxy === 1, row.site.name, row.account.doh_url);
+  const adapter = await createAdapterForAccount(db, row.site.platform, row.site.url, row.account.use_proxy === 1, row.site.name);
   if (credential.type === 'password') {
     const login = await adapter.login(credential.username || '', credential.password || '');
     if (!login.success || !login.accessToken) {
@@ -3133,7 +2828,6 @@ async function runCheckinAll(db: D1Database, triggeredBy: PublicCheckinTriggered
       a.balance_updated_at AS balance_updated_at,
       a.checkin_enabled AS checkin_enabled,
       a.use_proxy AS use_proxy,
-      a.doh_url AS doh_url,
       a.status AS status,
       a.last_error AS last_error,
       a.created_at AS account_created_at,
@@ -3168,7 +2862,7 @@ async function testAccountConnection(db: D1Database, body: unknown): Promise<Bal
   if (!site) throw new HTTPException(404, { message: '站点不存在' });
 
   let credential = input.credential!;
-  const adapter = await createAdapterForAccount(db, site.platform, site.url, input.useProxy, site.name, input.dohUrl);
+  const adapter = await createAdapterForAccount(db, site.platform, site.url, input.useProxy, site.name);
   if (credential.type === 'password') {
     const login = await adapter.login(credential.username || '', credential.password || '');
     if (!login.success || !login.accessToken) {
@@ -3186,15 +2880,14 @@ async function testAccountConnection(db: D1Database, body: unknown): Promise<Bal
 }
 
 async function testAccountModels(db: D1Database, accountId: number): Promise<PublicCheckinModelProbeResponse> {
-  const { row, apiKey, proxyUrl, dohUrl } = await requireModelApiKey(db, accountId);
+  const { row, apiKey, proxyUrl } = await requireModelApiKey(db, accountId);
   const probeRateLimit = readPublicCheckinProbeRateLimit(row.site.id);
   const cacheKey = buildPublicCheckinModelCacheKey({
     accountId,
     siteUrl: row.site.url,
     apiKey,
     useProxy: row.account.use_proxy === 1,
-    proxyUrl,
-    dohUrl
+    proxyUrl
   });
   const cached = getCachedPublicCheckinModelProbeResponse(cacheKey);
   if (cached) {
@@ -3213,8 +2906,7 @@ async function testAccountModels(db: D1Database, accountId: number): Promise<Pub
       '/v1/models',
       { method: 'GET' },
       row.account.use_proxy === 1,
-      proxyUrl,
-      dohUrl
+      proxyUrl
     );
 
     const response = buildPublicCheckinModelProbeResponse(
@@ -3255,7 +2947,7 @@ async function probeAccountModel(
   accountId: number,
   body: unknown
 ): Promise<PublicCheckinSingleModelProbeResponse> {
-  const { row, apiKey, proxyUrl, dohUrl } = await requireModelApiKey(db, accountId);
+  const { row, apiKey, proxyUrl } = await requireModelApiKey(db, accountId);
   const { model } = readModelProbeInput(body);
   const startedAt = Date.now();
   const checkedAt = unixNow();
@@ -3277,8 +2969,7 @@ async function probeAccountModel(
     model,
     prompt,
     row.account.use_proxy === 1,
-    proxyUrl,
-    dohUrl
+    proxyUrl
   );
 
   return {
@@ -3327,7 +3018,6 @@ async function resolveAnnouncementFetchTarget(db: D1Database, siteId: number): P
       a.balance_updated_at AS balance_updated_at,
       a.checkin_enabled AS checkin_enabled,
       a.use_proxy AS use_proxy,
-      a.doh_url AS doh_url,
       a.status AS status,
       a.last_error AS last_error,
       a.created_at AS account_created_at,
@@ -3365,8 +3055,7 @@ async function fetchAnnouncementsForSite(db: D1Database, siteId: number): Promis
     target.site.platform,
     target.site.url,
     target.account.use_proxy === 1,
-    target.site.name,
-    target.account.doh_url
+    target.site.name
   );
 
   let anonymousError: unknown = null;
@@ -3998,18 +3687,6 @@ function matchesCron(parsed: ParsedCron, parts: ReturnType<typeof getZonedDatePa
 }
 
 export const publicCheckinTestHooks = {
-  validateDohUrl,
-  normalizeDohUrl,
-  resolveHostViaDoh,
-  resolveRequestDispatcher,
-  getDohDispatcher,
-  clearDohCaches() {
-    dohAgentCache.clear();
-    dohLookupCache.clear();
-  },
-  setDohFetchOverride(override: ((input: string | URL, init?: UndiciRequestInit) => Promise<Response>) | null) {
-    dohFetchOverride = override;
-  },
   normalizeCookieHeader,
   extractPlatformUserIdFromHeaders,
   normalizeCredentialInput,

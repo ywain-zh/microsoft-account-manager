@@ -191,7 +191,6 @@ export interface PublicCheckinAccount {
   balanceUpdatedAt: number | null;
   checkinEnabled: boolean;
   useProxy: boolean;
-  dohUrl: string;
   status: PublicCheckinAccountStatus;
   lastError: string | null;
   dailyBalanceDisplayMode: PublicCheckinDailyBalanceDisplayMode;
@@ -213,7 +212,6 @@ export interface PublicCheckinAccountPayload {
   apiKey?: string | null;
   checkinEnabled: boolean;
   useProxy: boolean;
-  dohUrl?: string;
   status?: PublicCheckinAccountStatus;
 }
 

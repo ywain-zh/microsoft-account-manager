@@ -109,7 +109,7 @@
                       {{ healthLabel(account.healthState) }}
                     </n-tag>
                     <span :class="account.healthState === 'normal' ? 'muted-small' : 'error-small'" :title="account.healthMessage || ''">
-                      {{ account.healthMessage || '-' }}<span v-if="account.useProxy"> · 本地代理</span><span v-else-if="account.dohUrl"> · 安全 DNS</span>
+                      {{ account.healthMessage || '-' }}<span v-if="account.useProxy"> · 本地代理</span>
                     </span>
                   </div>
                 </td>
@@ -249,17 +249,6 @@
           <n-checkbox v-model:checked="accountForm.checkinEnabled">启用自动签到</n-checkbox>
           <n-checkbox v-model:checked="accountForm.useProxy">启用本地代理</n-checkbox>
         </div>
-
-        <n-form-item label="安全 DNS (DoH)">
-          <n-input
-            v-model:value="accountForm.dohUrl"
-            placeholder="https://dns.alidns.com/dns-query"
-            :input-props="accountDohUrlInputProps"
-          />
-          <template #feedback>
-            留空不启用。填写后直连站点时用该 DoH 解析域名；与本地代理同时开启时本地代理优先。
-          </template>
-        </n-form-item>
       </n-form>
 
       <template #footer>
@@ -666,12 +655,6 @@ const accountApiKeyInputProps = {
   spellcheck: false
 };
 
-const accountDohUrlInputProps = {
-  autocomplete: 'off',
-  name: 'public-checkin-doh-url',
-  spellcheck: false
-};
-
 const accountForm = reactive({
   siteName: '',
   siteUrl: '',
@@ -679,8 +662,7 @@ const accountForm = reactive({
   apiKey: '',
   platformUserId: '',
   checkinEnabled: true,
-  useProxy: true,
-  dohUrl: ''
+  useProxy: true
 });
 
 const settingsForm = reactive<PublicCheckinSettings>({
@@ -1039,7 +1021,6 @@ function resetAccountForm(): void {
   accountForm.platformUserId = '';
   accountForm.checkinEnabled = true;
   accountForm.useProxy = true;
-  accountForm.dohUrl = '';
 }
 
 function openCreateModal(): void {
@@ -1054,7 +1035,6 @@ async function openEditModal(row: PublicCheckinAccount): Promise<void> {
   accountForm.siteUrl = row.site.url;
   accountForm.checkinEnabled = row.checkinEnabled;
   accountForm.useProxy = row.useProxy;
-  accountForm.dohUrl = row.dohUrl || '';
   accountForm.key = '';
   accountForm.apiKey = '';
   accountForm.platformUserId = '';
@@ -1208,8 +1188,7 @@ async function testFormConnection(): Promise<void> {
       site: payload.site,
       credentialType: payload.credentialType,
       credential: payload.credential,
-      useProxy: payload.useProxy,
-      dohUrl: payload.dohUrl
+      useProxy: payload.useProxy
     });
     (result.success ? message.success : message.error)(
       result.success ? `连接成功，余额：${formatMoney(result.balance)}` : `连接失败：${result.errorMessage || '未知原因'}`
