@@ -411,6 +411,14 @@ function isAnyRouterSite(nameOrUrl: string): boolean {
   return /\bany\s*router\b/i.test(nameOrUrl) || /(^|\.)anyrouter\./i.test(nameOrUrl);
 }
 
+function isRainflowSite(siteUrl: string): boolean {
+  try {
+    return new URL(siteUrl).hostname.toLowerCase() === 'platform.rainflowtb.com';
+  } catch {
+    return false;
+  }
+}
+
 function inferPublicCheckinPlatform(input: {
   name?: string;
   url?: string;
@@ -1671,6 +1679,84 @@ class AnyRouterAdapter extends PublicCheckinAdapter {
   }
 }
 
+class RainflowAdapter extends PublicCheckinAdapter {
+  protected override buildAuthHeaders(credential: PublicCheckinCredential): Record<string, string> {
+    if (credential.type !== 'access_token' || !credential.accessToken?.trim()) {
+      throw new Error('雨落千岛站点仅支持用户 token，请在 Key 中填写 X-User-Token');
+    }
+    return { 'X-User-Token': credential.accessToken.trim() };
+  }
+
+  override async checkin(credential: PublicCheckinCredential): Promise<CheckinResult> {
+    try {
+      const status = await this.getCheckinStatus(credential);
+      if (status.checked_in_today === true) {
+        return { success: true, reward: 0, rewardNote: '今日已签到' };
+      }
+
+      const statusError = this.rainflowResponseMessage(status);
+      if (statusError) return { success: false, errorMessage: statusError };
+
+      const settings = asRecord(status.settings);
+      if (settings.enabled === false) {
+        return { success: false, errorMessage: '站点当前未启用签到' };
+      }
+      if (status.at_balance_cap === true) {
+        return { success: false, errorMessage: '签到积分余额已达到上限' };
+      }
+      if (status.can_checkin !== true) {
+        return { success: false, errorMessage: '站点当前不允许签到' };
+      }
+
+      const payload = await this.fetchJson<Record<string, unknown>>('/user/api/checkin', {
+        method: 'POST',
+        headers: this.buildAuthHeaders(credential)
+      });
+      const reward = parseFiniteNumber(asRecord(payload.record).points);
+      if (reward === undefined) {
+        return {
+          success: false,
+          errorMessage: this.rainflowResponseMessage(payload) || '签到响应中没有可识别的 record.points 字段'
+        };
+      }
+      return {
+        success: true,
+        reward,
+        rewardNote: `签到成功，获得 ${reward} 积分`
+      };
+    } catch (error) {
+      return { success: false, errorMessage: error instanceof Error ? error.message : '签到请求失败' };
+    }
+  }
+
+  override async getBalance(credential: PublicCheckinCredential): Promise<BalanceResult> {
+    try {
+      const payload = await this.getCheckinStatus(credential);
+      const balance = parseFiniteNumber(asRecord(payload.points).balance);
+      if (balance === undefined) {
+        return {
+          success: false,
+          errorMessage: this.rainflowResponseMessage(payload) || '余额响应中没有可识别的 points.balance 字段'
+        };
+      }
+      return { success: true, balance };
+    } catch (error) {
+      return { success: false, errorMessage: error instanceof Error ? error.message : '余额请求失败' };
+    }
+  }
+
+  private getCheckinStatus(credential: PublicCheckinCredential): Promise<Record<string, unknown>> {
+    return this.fetchJson<Record<string, unknown>>('/user/api/checkin', {
+      headers: this.buildAuthHeaders(credential)
+    });
+  }
+
+  private rainflowResponseMessage(payload: unknown): string {
+    const record = asRecord(payload);
+    return this.responseMessage(record) || asString(record.detail).trim();
+  }
+}
+
 class OneHubAdapter extends PublicCheckinAdapter {
   override async checkin(credential: PublicCheckinCredential): Promise<CheckinResult> {
     try {
@@ -1696,6 +1782,7 @@ class OneHubAdapter extends PublicCheckinAdapter {
 }
 
 function createAdapter(platform: PublicCheckinPlatform, siteUrl: string, options: AdapterOptions, siteName = ''): PublicCheckinAdapter {
+  if (isRainflowSite(siteUrl)) return new RainflowAdapter(siteUrl, options);
   if (inferPublicCheckinPlatform({ name: siteName, url: siteUrl, platform }) === 'anyrouter') return new AnyRouterAdapter(siteUrl, options);
   if (platform === 'onehub') return new OneHubAdapter(siteUrl, options);
   return new PublicCheckinAdapter(siteUrl, options);
@@ -3690,6 +3777,7 @@ export const publicCheckinTestHooks = {
   normalizeCookieHeader,
   extractPlatformUserIdFromHeaders,
   normalizeCredentialInput,
+  isRainflowSite,
   inferPublicCheckinPlatform,
   toStoredPublicCheckinPlatform,
   getProxyUrl,

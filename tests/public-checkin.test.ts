@@ -1519,6 +1519,179 @@ test('stores Any Router sites as NewAPI-compatible platform', () => {
   assert.equal(publicCheckinTestHooks.toStoredPublicCheckinPlatform('onehub'), 'onehub');
 });
 
+test('selects Rainflow adapter only for the exact supported hostname', () => {
+  assert.equal(publicCheckinTestHooks.isRainflowSite('https://platform.rainflowtb.com'), true);
+  assert.equal(publicCheckinTestHooks.isRainflowSite('https://platform.rainflowtb.com/'), true);
+  assert.equal(publicCheckinTestHooks.isRainflowSite('https://api.rainflowtb.com'), false);
+  assert.equal(publicCheckinTestHooks.isRainflowSite('https://platform.rainflowtb.com.example.test'), false);
+
+  const adapter = publicCheckinTestHooks.createAdapter('new-api', 'https://platform.rainflowtb.com', {});
+  const headers = (adapter as unknown as {
+    buildAuthHeaders(credential: unknown): Record<string, string>;
+  }).buildAuthHeaders({
+    type: 'access_token',
+    accessToken: 'rainflow-user-token',
+    platformUserId: 4203
+  });
+
+  assert.deepEqual(headers, { 'X-User-Token': 'rainflow-user-token' });
+  assert.equal(headers.Authorization, undefined);
+  assert.equal(headers['New-Api-User'], undefined);
+});
+
+test('reads Rainflow points balance from the checkin status endpoint', async () => {
+  const adapter = publicCheckinTestHooks.createAdapter('new-api', 'https://platform.rainflowtb.com', {});
+  const calls: Array<{ path: string; method?: string; headers?: Record<string, string> }> = [];
+  (adapter as unknown as {
+    fetchJson: (path: string, init: { method?: string; headers?: Record<string, string> }) => Promise<Record<string, unknown>>;
+  }).fetchJson = async (path, init) => {
+    calls.push({ path, method: init.method, headers: init.headers });
+    return {
+      points: { balance: 10.51, lifetime_earned: 10.51, lifetime_spent: 0 },
+      wallet: { balance_micros: 0 }
+    };
+  };
+
+  const result = await adapter.getBalance({ type: 'access_token', accessToken: 'rainflow-user-token' });
+
+  assert.deepEqual(result, { success: true, balance: 10.51 });
+  assert.deepEqual(calls, [{
+    path: '/user/api/checkin',
+    method: undefined,
+    headers: { 'X-User-Token': 'rainflow-user-token' }
+  }]);
+});
+
+test('checks Rainflow status before posting checkin and parses awarded points', async () => {
+  const adapter = publicCheckinTestHooks.createAdapter('new-api', 'https://platform.rainflowtb.com', {});
+  const calls: Array<{ path: string; method?: string; body?: unknown; headers?: Record<string, string> }> = [];
+  (adapter as unknown as {
+    fetchJson: (path: string, init: { method?: string; body?: unknown; headers?: Record<string, string> }) => Promise<Record<string, unknown>>;
+  }).fetchJson = async (path, init) => {
+    calls.push({ path, method: init.method, body: init.body, headers: init.headers });
+    if (init.method === 'POST') {
+      return {
+        record: { points: 4.77 },
+        status: { checked_in_today: true, today_points: 4.77 }
+      };
+    }
+    return {
+      settings: { enabled: true },
+      checked_in_today: false,
+      at_balance_cap: false,
+      can_checkin: true
+    };
+  };
+
+  const result = await adapter.checkin({ type: 'access_token', accessToken: 'rainflow-user-token' });
+
+  assert.deepEqual(result, {
+    success: true,
+    reward: 4.77,
+    rewardNote: '签到成功，获得 4.77 积分'
+  });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls.map((item) => [item.path, item.method]), [
+    ['/user/api/checkin', undefined],
+    ['/user/api/checkin', 'POST']
+  ]);
+  assert.equal(calls[1].body, undefined);
+  assert.deepEqual(calls[1].headers, { 'X-User-Token': 'rainflow-user-token' });
+});
+
+test('treats an existing Rainflow checkin as idempotent without duplicating reward', async () => {
+  const adapter = publicCheckinTestHooks.createAdapter('new-api', 'https://platform.rainflowtb.com', {});
+  let callCount = 0;
+  (adapter as unknown as {
+    fetchJson: () => Promise<Record<string, unknown>>;
+  }).fetchJson = async () => {
+    callCount += 1;
+    return {
+      settings: { enabled: true },
+      checked_in_today: true,
+      today_points: 4.77,
+      can_checkin: false
+    };
+  };
+
+  const result = await adapter.checkin({ type: 'access_token', accessToken: 'rainflow-user-token' });
+
+  assert.deepEqual(result, { success: true, reward: 0, rewardNote: '今日已签到' });
+  assert.equal(callCount, 1);
+});
+
+test('returns readable Rainflow errors for unavailable or malformed responses', async (t) => {
+  const cases: Array<{
+    name: string;
+    status: Record<string, unknown>;
+    expected: string;
+  }> = [
+    {
+      name: 'disabled',
+      status: { settings: { enabled: false }, checked_in_today: false, can_checkin: false },
+      expected: '站点当前未启用签到'
+    },
+    {
+      name: 'balance cap',
+      status: { settings: { enabled: true }, checked_in_today: false, at_balance_cap: true, can_checkin: false },
+      expected: '签到积分余额已达到上限'
+    },
+    {
+      name: 'cannot check in',
+      status: { settings: { enabled: true }, checked_in_today: false, at_balance_cap: false, can_checkin: false },
+      expected: '站点当前不允许签到'
+    }
+  ];
+
+  for (const item of cases) {
+    await t.test(item.name, async () => {
+      const adapter = publicCheckinTestHooks.createAdapter('new-api', 'https://platform.rainflowtb.com', {});
+      (adapter as unknown as { fetchJson: () => Promise<Record<string, unknown>> }).fetchJson = async () => item.status;
+      const result = await adapter.checkin({ type: 'access_token', accessToken: 'rainflow-user-token' });
+      assert.equal(result.success, false);
+      assert.equal(result.errorMessage, item.expected);
+    });
+  }
+
+  await t.test('missing balance', async () => {
+    const adapter = publicCheckinTestHooks.createAdapter('new-api', 'https://platform.rainflowtb.com', {});
+    (adapter as unknown as { fetchJson: () => Promise<Record<string, unknown>> }).fetchJson = async () => ({
+      points: { balance: 'not-a-number' }
+    });
+    const result = await adapter.getBalance({ type: 'access_token', accessToken: 'rainflow-user-token' });
+    assert.deepEqual(result, { success: false, errorMessage: '余额响应中没有可识别的 points.balance 字段' });
+  });
+
+  await t.test('missing reward', async () => {
+    const adapter = publicCheckinTestHooks.createAdapter('new-api', 'https://platform.rainflowtb.com', {});
+    (adapter as unknown as {
+      fetchJson: (path: string, init: { method?: string }) => Promise<Record<string, unknown>>;
+    }).fetchJson = async (_path, init) => init.method === 'POST'
+      ? { record: {} }
+      : { settings: { enabled: true }, checked_in_today: false, at_balance_cap: false, can_checkin: true };
+    const result = await adapter.checkin({ type: 'access_token', accessToken: 'rainflow-user-token' });
+    assert.deepEqual(result, { success: false, errorMessage: '签到响应中没有可识别的 record.points 字段' });
+  });
+
+  await t.test('upstream authentication error', async () => {
+    const adapter = publicCheckinTestHooks.createAdapter('new-api', 'https://platform.rainflowtb.com', {});
+    (adapter as unknown as { fetchJson: () => Promise<Record<string, unknown>> }).fetchJson = async () => ({
+      detail: '用户 token 无效'
+    });
+    const result = await adapter.getBalance({ type: 'access_token', accessToken: 'invalid-token' });
+    assert.deepEqual(result, { success: false, errorMessage: '用户 token 无效' });
+  });
+
+  await t.test('upstream HTTP error', async () => {
+    const adapter = publicCheckinTestHooks.createAdapter('new-api', 'https://platform.rainflowtb.com', {});
+    (adapter as unknown as { fetchJson: () => Promise<Record<string, unknown>> }).fetchJson = async () => {
+      throw new Error('HTTP 401: Unauthorized');
+    };
+    const result = await adapter.getBalance({ type: 'access_token', accessToken: 'invalid-token' });
+    assert.deepEqual(result, { success: false, errorMessage: 'HTTP 401: Unauthorized' });
+  });
+});
+
 test('Any Router cookie auth only sends Cookie and New-Api-User', () => {
   const adapter = publicCheckinTestHooks.createAdapter('anyrouter', 'https://anyrouter.top', {});
   const headers = (adapter as unknown as {
