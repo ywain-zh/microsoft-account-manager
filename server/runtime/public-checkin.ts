@@ -1082,7 +1082,7 @@ function resolveEncryptionKey(): Buffer {
   return generated;
 }
 
-function encryptCredential(plaintext: string): string {
+export function encryptPublicCheckinSecret(plaintext: string): string {
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', resolveEncryptionKey(), iv);
   const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
@@ -1090,7 +1090,7 @@ function encryptCredential(plaintext: string): string {
   return [iv, ciphertext, tag].map((part) => part.toString('base64')).join(':');
 }
 
-function decryptCredentialText(ciphertext: string): string {
+export function decryptPublicCheckinSecret(ciphertext: string): string {
   const [ivRaw, encryptedRaw, tagRaw] = ciphertext.split(':');
   if (!ivRaw || !encryptedRaw || !tagRaw) {
     throw new Error('凭证密文格式无效');
@@ -1104,7 +1104,7 @@ function decryptCredentialText(ciphertext: string): string {
 }
 
 function decryptAccountCredential(account: Pick<AccountRow, 'credential_data'>): PublicCheckinCredential {
-  return normalizeCredentialInput(JSON.parse(decryptCredentialText(account.credential_data)) as PublicCheckinCredential);
+  return normalizeCredentialInput(JSON.parse(decryptPublicCheckinSecret(account.credential_data)) as PublicCheckinCredential);
 }
 
 function decryptAccountApiKey(account: Pick<AccountRow, 'api_key_data'>): string {
@@ -1112,7 +1112,7 @@ function decryptAccountApiKey(account: Pick<AccountRow, 'api_key_data'>): string
     return '';
   }
 
-  return normalizeApiKey(decryptCredentialText(account.api_key_data));
+  return normalizeApiKey(decryptPublicCheckinSecret(account.api_key_data));
 }
 
 export function parsePublicCheckinRewardAmount(value: unknown): number | undefined {
@@ -2240,8 +2240,8 @@ async function createAccount(db: D1Database, body: unknown): Promise<PublicCheck
     siteId,
     label,
     input.credentialType,
-    encryptCredential(JSON.stringify(input.credential)),
-    input.apiKey ? encryptCredential(input.apiKey) : null,
+    encryptPublicCheckinSecret(JSON.stringify(input.credential)),
+    input.apiKey ? encryptPublicCheckinSecret(input.apiKey) : null,
     input.checkinEnabled ? 1 : 0,
     input.useProxy ? 1 : 0,
     input.status || 'active',
@@ -2270,8 +2270,8 @@ async function updateAccount(db: D1Database, accountId: number, body: unknown): 
       siteId,
       label,
       input.credentialType,
-      encryptCredential(JSON.stringify(input.credential)),
-      input.apiKey ? encryptCredential(input.apiKey) : null,
+      encryptPublicCheckinSecret(JSON.stringify(input.credential)),
+      input.apiKey ? encryptPublicCheckinSecret(input.apiKey) : null,
       input.checkinEnabled ? 1 : 0,
       input.useProxy ? 1 : 0,
       input.status || current.account.status,
@@ -2287,7 +2287,7 @@ async function updateAccount(db: D1Database, accountId: number, body: unknown): 
       siteId,
       label,
       input.credentialType,
-      input.apiKey ? encryptCredential(input.apiKey) : null,
+      input.apiKey ? encryptPublicCheckinSecret(input.apiKey) : null,
       input.checkinEnabled ? 1 : 0,
       input.useProxy ? 1 : 0,
       input.status || current.account.status,
@@ -2314,7 +2314,7 @@ async function updateCredential(db: D1Database, accountId: number, credential: P
     UPDATE public_checkin_accounts
     SET credential_type = ?, credential_data = ?, updated_at = ?
     WHERE id = ?
-  `, [type || credential.type, encryptCredential(JSON.stringify(credential)), unixNow(), accountId]);
+  `, [type || credential.type, encryptPublicCheckinSecret(JSON.stringify(credential)), unixNow(), accountId]);
 }
 
 function buildOpenAiCompatibleUrl(baseUrl: string, requestPath: string): string {
@@ -3790,8 +3790,8 @@ export const publicCheckinTestHooks = {
   updateYesCaptchaConfig,
   getConfiguredYesCaptchaClientKey,
   createAdapter,
-  encryptCredential,
-  decryptCredentialText,
+  encryptCredential: encryptPublicCheckinSecret,
+  decryptCredentialText: decryptPublicCheckinSecret,
   decryptAccountApiKey,
   extractModelIds,
   sortPublicCheckinModelIds,

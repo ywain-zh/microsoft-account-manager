@@ -25,6 +25,9 @@ import type {
   NotificationConfig,
   NotificationTestResult,
   OpenAiModelsResponse,
+  PokemonRenewalAccount,
+  PokemonRenewalConfig,
+  PokemonRenewalRunSnapshot,
   PublicCheckinAccount,
   PublicCheckinAnnouncement,
   PublicCheckinAccountCredentialResponse,
@@ -657,6 +660,51 @@ export const api = {
     return request<{ deleted: number }>('/api/public-checkin/settings/cleanup-logs', {
       method: 'POST'
     });
+  },
+
+  listPokemonRenewalAccounts(): Promise<PokemonRenewalAccount[]> {
+    return request<PokemonRenewalAccount[]>('/api/public-checkin/pokemon/accounts');
+  },
+
+  createPokemonRenewalAccount(payload: { email: string; password: string; enabled: boolean }): Promise<PokemonRenewalAccount> {
+    return request<PokemonRenewalAccount>('/api/public-checkin/pokemon/accounts', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  updatePokemonRenewalAccount(id: number, payload: { email: string; password?: string; enabled: boolean }): Promise<PokemonRenewalAccount> {
+    return request<PokemonRenewalAccount>(`/api/public-checkin/pokemon/accounts/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  deletePokemonRenewalAccount(id: number): Promise<void> {
+    return request<void>(`/api/public-checkin/pokemon/accounts/${id}`, { method: 'DELETE' });
+  },
+
+  getPokemonRenewalConfig(): Promise<PokemonRenewalConfig> {
+    return request<PokemonRenewalConfig>('/api/public-checkin/pokemon/config');
+  },
+
+  updatePokemonRenewalConfig(couponCode: string): Promise<PokemonRenewalConfig> {
+    return request<PokemonRenewalConfig>('/api/public-checkin/pokemon/config', {
+      method: 'PUT',
+      body: JSON.stringify({ couponCode })
+    });
+  },
+
+  listPokemonRenewalRuns(limit = 10): Promise<PokemonRenewalRunSnapshot[]> {
+    return request<PokemonRenewalRunSnapshot[]>(`/api/public-checkin/pokemon/renewal-runs?limit=${encodeURIComponent(limit)}`);
+  },
+
+  startPokemonRenewalRun(): Promise<PokemonRenewalRunSnapshot> {
+    return request<PokemonRenewalRunSnapshot>('/api/public-checkin/pokemon/renewal-runs', { method: 'POST' });
+  },
+
+  getPokemonRenewalRun(id: string): Promise<PokemonRenewalRunSnapshot> {
+    return request<PokemonRenewalRunSnapshot>(`/api/public-checkin/pokemon/renewal-runs/${encodeURIComponent(id)}`);
   },
 
   getTranslationConfig(): Promise<{ item: TranslationConfig }> {

@@ -334,6 +334,69 @@ export interface PublicCheckinBatchResult {
   result?: PublicCheckinRunResult;
 }
 
+export type PokemonRenewalAccountStatus = 'success' | 'skipped' | 'failed';
+export type PokemonRenewalRunStatus = 'running' | 'completed' | 'failed' | 'interrupted';
+export type PokemonRenewalLogLevel = 'info' | 'success' | 'warning' | 'error';
+
+export interface PokemonRenewalAccount {
+  id: number;
+  email: string;
+  enabled: boolean;
+  expiredAt: number | null;
+  lastStatus: PokemonRenewalAccountStatus | null;
+  lastMessage: string | null;
+  lastRunAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PokemonRenewalConfig {
+  couponCode: string;
+  configured: boolean;
+}
+
+export interface PokemonRenewalLogEntry {
+  at: number;
+  level: PokemonRenewalLogLevel;
+  accountId: number | null;
+  accountEmail: string | null;
+  stage: string;
+  message: string;
+}
+
+export interface PokemonRenewalResult {
+  id: number;
+  runId: string;
+  accountId: number | null;
+  accountEmail: string;
+  status: PokemonRenewalAccountStatus;
+  reasonCode: string;
+  message: string;
+  expiredAtBefore: number | null;
+  expiredAtAfter: number | null;
+  tradeNo: string | null;
+  startedAt: number;
+  finishedAt: number;
+}
+
+export interface PokemonRenewalRunSnapshot {
+  id: string;
+  status: PokemonRenewalRunStatus;
+  totalCount: number;
+  successCount: number;
+  skippedCount: number;
+  failedCount: number;
+  currentAccountId: number | null;
+  progress: number;
+  message: string;
+  logs: PokemonRenewalLogEntry[];
+  errorMessage: string | null;
+  startedAt: number;
+  updatedAt: number;
+  finishedAt: number | null;
+  results: PokemonRenewalResult[];
+}
+
 export type TranslationProvider = 'openai' | 'deeplx';
 
 export interface TranslationConfig {

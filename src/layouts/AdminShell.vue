@@ -12,7 +12,7 @@
           :key="item.path"
           :to="item.path"
           class="console-nav-link-flat"
-          :class="{ 'console-nav-link-flat-active': route.path === item.path }"
+          :class="{ 'console-nav-link-flat-active': isNavActive(item.path) }"
         >
           <span class="console-nav-link-icon" aria-hidden="true">
             <svg v-if="item.key === 'cloud-mail'" viewBox="0 0 24 24" fill="none">
@@ -172,6 +172,12 @@ const { currentUser, isAuthenticated } = admin;
 const route = useRoute();
 const router = useRouter();
 const navigation = consoleNavigation;
+
+function isNavActive(path: string): boolean {
+  if (route.path === path) return true;
+  return path === '/services/sub2api/public-checkin'
+    && route.path === '/services/sub2api/pokemon-renewal';
+}
 const pageTitle = computed(() => String(route.meta.title ?? '望月工具箱'));
 const pageDescription = computed(() => String(route.meta.description ?? '管理后台工具与服务配置。'));
 const userMenuOptions = [{ label: '退出登录', key: 'logout' }];

@@ -28,12 +28,16 @@ function toSqlInputValues(values: unknown[]): SQLInputValue[] {
 
 class SQLiteD1PreparedStatement implements D1PreparedStatement {
   private readonly values: unknown[];
+  private readonly database: BetterSqliteDatabase;
+  private readonly query: string;
 
   constructor(
-    private readonly database: BetterSqliteDatabase,
-    private readonly query: string,
+    database: BetterSqliteDatabase,
+    query: string,
     values: unknown[] = []
   ) {
+    this.database = database;
+    this.query = query;
     this.values = values;
   }
 

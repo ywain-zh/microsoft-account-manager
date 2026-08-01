@@ -22,7 +22,8 @@
     <section class="checkin-panel">
       <div class="panel-toolbar">
         <div class="toolbar-left">
-          <n-button class="btn-add" type="primary" @click="openCreateModal">添加账号</n-button>
+          <n-button class="btn-add" type="primary" @click="openAccountTypeModal">添加账号</n-button>
+          <n-button class="btn-outline pokemon-entry-btn" @click="router.push('/services/sub2api/pokemon-renewal')">宝可梦续费</n-button>
           <span class="toolbar-divider"></span>
           <n-button class="btn-checkin" type="success" :loading="globalBusy === 'checkin'" :disabled="!hasAccounts || Boolean(globalBusy)" @click="runAllCheckin">
             全部签到
@@ -186,6 +187,21 @@
         <n-pagination :page="accountPage" :page-count="accountPageCount" @update:page="setAccountPage" />
       </div>
     </section>
+
+    <n-modal v-model:show="accountTypeModalVisible" preset="card" class="public-checkin-modal account-type-modal" title="选择账号类型" style="width: min(660px, 94vw); border-radius: 14px;">
+      <div class="account-type-grid">
+        <button class="account-type-card is-public" type="button" @click="choosePublicCheckinAccount">
+          <span class="account-type-mark">API</span>
+          <strong>普通公益站</strong>
+          <small>继续添加 New API、One API 等签到账号</small>
+        </button>
+        <button class="account-type-card is-pokemon" type="button" @click="choosePokemonRenewal">
+          <span class="account-type-mark">PK</span>
+          <strong>宝可梦套餐</strong>
+          <small>进入多账号月付优惠码续费页面</small>
+        </button>
+      </div>
+    </n-modal>
 
     <n-modal v-model:show="accountModalVisible" preset="card" class="public-checkin-modal account-modal" :title="editingAccount ? '编辑账号' : '添加账号'" style="width: min(720px, 94vw); border-radius: 12px;">
       <n-form label-placement="top" class="account-form designed-form" autocomplete="off">
@@ -526,6 +542,7 @@
 
 <script setup lang="ts">
 import { computed, h, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import {
   NButton,
   NCheckbox,
@@ -558,6 +575,7 @@ import type {
 } from '../types';
 
 const { dialog, message } = createDiscreteApi(['dialog', 'message']);
+const router = useRouter();
 const publicCheckin = usePublicCheckinConsole();
 const {
   accounts,
@@ -592,6 +610,7 @@ const {
 } = publicCheckin;
 
 const accountModalVisible = ref(false);
+const accountTypeModalVisible = ref(false);
 const logModalVisible = ref(false);
 const announcementsModalVisible = ref(false);
 const settingsModalVisible = ref(false);
@@ -1027,6 +1046,20 @@ function openCreateModal(): void {
   editingAccount.value = null;
   resetAccountForm();
   accountModalVisible.value = true;
+}
+
+function openAccountTypeModal(): void {
+  accountTypeModalVisible.value = true;
+}
+
+function choosePublicCheckinAccount(): void {
+  accountTypeModalVisible.value = false;
+  openCreateModal();
+}
+
+function choosePokemonRenewal(): void {
+  accountTypeModalVisible.value = false;
+  void router.push('/services/sub2api/pokemon-renewal');
 }
 
 async function openEditModal(row: PublicCheckinAccount): Promise<void> {
@@ -2785,6 +2818,61 @@ onBeforeUnmount(() => {
   gap: 14px;
 }
 
+.account-type-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.account-type-card {
+  display: grid;
+  min-height: 168px;
+  padding: 22px;
+  border: 1px solid #dfe5ef;
+  border-radius: 14px;
+  background: #fff;
+  color: #18213b;
+  cursor: pointer;
+  text-align: left;
+  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+
+.account-type-card:hover,
+.account-type-card:focus-visible {
+  transform: translateY(-2px);
+  border-color: #7b82eb;
+  box-shadow: 0 12px 28px rgba(67, 79, 153, .12);
+  outline: none;
+}
+
+.account-type-card strong {
+  margin: 16px 0 5px;
+  font-size: 17px;
+}
+
+.account-type-card small {
+  color: #738098;
+  line-height: 1.6;
+}
+
+.account-type-mark {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 12px;
+  background: #edf1ff;
+  color: #5263de;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .06em;
+}
+
+.account-type-card.is-pokemon .account-type-mark {
+  background: linear-gradient(145deg, #edeaff, #fff1dc);
+  color: #7657e8;
+}
+
 @media (max-width: 980px) {
   :global(.console-main-flat:has(.public-checkin-page) .console-content-flat) {
     padding: 24px;
@@ -2826,7 +2914,8 @@ onBeforeUnmount(() => {
 
   .stats-grid,
   .form-grid,
-  .log-filters {
+  .log-filters,
+  .account-type-grid {
     grid-template-columns: 1fr;
   }
 
@@ -2846,13 +2935,15 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: reduce) {
   .announcement-cell :deep(.announcement-pill),
   .announcement-card,
-  .announcement-skeleton-card {
+  .announcement-skeleton-card,
+  .account-type-card {
     transition: none;
     animation: none;
   }
 
   .announcement-cell :deep(.announcement-pill:not(.n-button--disabled):hover),
-  .announcement-card:hover {
+  .announcement-card:hover,
+  .account-type-card:hover {
     transform: none;
   }
 }
