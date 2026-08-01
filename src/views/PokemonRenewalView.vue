@@ -1,6 +1,6 @@
 <template>
-  <div class="pokemon-page">
-    <section class="renewal-hero">
+  <div class="pokemon-page" :class="{ 'is-embedded': embedded }">
+    <section v-if="!embedded" class="renewal-hero">
       <div class="hero-copy">
         <button class="back-link" type="button" @click="router.push('/services/sub2api/public-checkin')">← 返回公益站签到</button>
         <div class="hero-kicker">MONTHLY RENEWAL</div>
@@ -32,7 +32,7 @@
           @update:value="couponDirty = true"
         />
         <n-button :loading="configSaving" :disabled="runActive || !couponCode.trim()" @click="saveCoupon()">保存优惠码</n-button>
-        <n-button type="primary" class="run-button" :loading="startingRun" :disabled="runActive || !accounts.some((item) => item.enabled) || !couponCode.trim()" @click="startRun">
+        <n-button type="primary" class="run-button" :loading="startingRun" :disabled="runActive || accountModalVisible || !accounts.some((item) => item.enabled) || !couponCode.trim()" @click="startRun">
           运行续费
         </n-button>
       </div>
@@ -94,6 +94,30 @@
           </tbody>
         </table>
       </div>
+
+      <section v-if="embedded && accountModalVisible" class="inline-account-editor">
+        <div class="inline-editor-heading">
+          <div>
+            <span class="section-eyebrow">账号配置</span>
+            <h3>{{ editingAccount ? '编辑宝可梦账号' : '添加宝可梦账号' }}</h3>
+          </div>
+          <n-button text :disabled="accountSaving" @click="accountModalVisible = false">取消</n-button>
+        </div>
+        <n-form label-placement="top" autocomplete="off">
+          <div class="inline-editor-grid">
+            <n-form-item label="账号邮箱">
+              <n-input v-model:value="accountForm.email" placeholder="name@example.com" :input-props="emailInputProps" />
+            </n-form-item>
+            <n-form-item :label="editingAccount ? '密码（留空则不修改）' : '密码'">
+              <SecretInput v-model:value="accountForm.password" :placeholder="editingAccount ? '留空保留当前密码' : '输入登录密码'" :input-props="passwordInputProps" />
+            </n-form-item>
+          </div>
+          <div class="inline-editor-footer">
+            <n-checkbox v-model:checked="accountForm.enabled">加入续费队列</n-checkbox>
+            <n-button type="primary" :loading="accountSaving" @click="saveAccount">保存账号</n-button>
+          </div>
+        </n-form>
+      </section>
     </section>
 
     <section class="run-card">
@@ -140,7 +164,7 @@
       </div>
     </section>
 
-    <n-modal v-model:show="accountModalVisible" preset="card" class="pokemon-account-modal" :title="editingAccount ? '编辑宝可梦账号' : '添加宝可梦账号'" style="width: min(520px, 94vw); border-radius: 14px;">
+    <n-modal v-if="!embedded" v-model:show="accountModalVisible" preset="card" class="pokemon-account-modal" :title="editingAccount ? '编辑宝可梦账号' : '添加宝可梦账号'" style="width: min(520px, 94vw); border-radius: 14px;">
       <n-form label-placement="top" autocomplete="off">
         <n-form-item label="账号邮箱">
           <n-input v-model:value="accountForm.email" placeholder="name@example.com" :input-props="emailInputProps" />
@@ -181,6 +205,9 @@ import type {
   PokemonRenewalConfig,
   PokemonRenewalRunSnapshot
 } from '../types';
+
+withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false });
+const emit = defineEmits<{ accountsChanged: [accounts: PokemonRenewalAccount[]] }>();
 
 const router = useRouter();
 const { message, dialog } = createDiscreteApi(['message', 'dialog']);
@@ -342,6 +369,7 @@ async function saveAccount(): Promise<void> {
     }
     accountModalVisible.value = false;
     await loadAccounts();
+    emit('accountsChanged', [...accounts.value]);
   } catch (error) {
     handleError(error);
   } finally {
@@ -360,6 +388,7 @@ function confirmDelete(account: PokemonRenewalAccount): void {
         await api.deletePokemonRenewalAccount(account.id);
         message.success('账号已删除');
         await loadAccounts();
+        emit('accountsChanged', [...accounts.value]);
       } catch (error) {
         handleError(error);
       }
@@ -428,6 +457,18 @@ onBeforeUnmount(() => {
   color: var(--poke-ink);
 }
 
+.pokemon-page.is-embedded {
+  gap: 14px;
+}
+
+.pokemon-page.is-embedded .config-card,
+.pokemon-page.is-embedded .accounts-card,
+.pokemon-page.is-embedded .run-card {
+  padding: 18px;
+  border-radius: 13px;
+  box-shadow: none;
+}
+
 .renewal-hero {
   position: relative;
   min-height: 190px;
@@ -478,6 +519,13 @@ onBeforeUnmount(() => {
 .last-result > span:last-child { overflow: hidden; color: #667189; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .row-actions { display: flex; gap: 7px; }
 
+.inline-account-editor { margin-top: 16px; padding: 16px; border: 1px solid #dfe4f0; border-radius: 12px; background: #f8f9fd; }
+.inline-editor-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.inline-editor-heading .section-eyebrow { margin: 0 0 3px; }
+.inline-editor-heading h3 { margin: 0; font-size: 16px; }
+.inline-editor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.inline-editor-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+
 .run-heading { margin-bottom: 12px; }
 .run-progress-copy { color: var(--poke-blue); font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .progress-track { height: 7px; overflow: hidden; margin-bottom: 18px; border-radius: 999px; background: #ebeff7; }
@@ -520,6 +568,7 @@ onBeforeUnmount(() => {
   .log-message { grid-column: 2; }
   .result-item { grid-template-columns: 1fr; gap: 6px; }
   .result-item > span { white-space: normal; }
+  .inline-editor-grid { grid-template-columns: 1fr; gap: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {

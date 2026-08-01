@@ -68,12 +68,7 @@ const router = createRouter({
         {
           path: 'services/sub2api/pokemon-renewal',
           name: 'pokemon-renewal',
-          component: () => import('./views/PokemonRenewalView.vue'),
-          meta: {
-            requiresAuth: true,
-            title: '宝可梦套餐续费',
-            description: '维护宝可梦多账号，使用当月优惠码依次执行零元续费。'
-          }
+          redirect: '/services/sub2api/public-checkin'
         },
         {
           path: 'services/sub2api/interfaces',

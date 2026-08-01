@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
-import { fetch as undiciFetch, type RequestInit as UndiciRequestInit } from 'undici';
+import {
+  fetch as undiciFetch,
+  FormData as UndiciFormData,
+  type RequestInit as UndiciRequestInit
+} from 'undici';
 
 import {
   decryptPublicCheckinSecret,
@@ -390,6 +394,19 @@ export function decodePokemonResponse(payload: string): Record<string, unknown> 
   }
 }
 
+function pokemonResponseError(payload: Record<string, unknown>, fallback: string): string {
+  const errors = asRecord(payload.errors);
+  for (const value of Object.values(errors)) {
+    if (Array.isArray(value)) {
+      const message = value.map((item) => asString(item).trim()).find(Boolean);
+      if (message) return message;
+    }
+    const message = asString(value).trim();
+    if (message) return message;
+  }
+  return asString(payload.message).trim() || fallback;
+}
+
 async function pokemonRequest(
   pathname: string,
   options: { method?: 'GET' | 'POST'; fields?: Record<string, string | number>; authToken?: string } = {}
@@ -397,9 +414,9 @@ async function pokemonRequest(
   const url = new URL(`${POKEMON_API_BASE}${pathname}`);
   const headers: Record<string, string> = { 'theme-ua': 'mala-pro' };
   if (options.authToken) headers.Authorization = options.authToken;
-  let body: FormData | undefined;
+  let body: UndiciFormData | undefined;
   if (options.method === 'POST') {
-    body = new FormData();
+    body = new UndiciFormData();
     for (const [key, value] of Object.entries(options.fields || {})) body.append(key, String(value));
   } else {
     for (const [key, value] of Object.entries(options.fields || {})) url.searchParams.set(key, String(value));
@@ -418,7 +435,7 @@ async function pokemonRequest(
   if (response.status === 403) throw new Error('账号登录已失效或站点拒绝访问');
   const payload = decodePokemonResponse(await response.text());
   if (!response.ok) {
-    throw new Error(asString(payload.message) || `站点返回 HTTP ${response.status}`);
+    throw new Error(pokemonResponseError(payload, `站点返回 HTTP ${response.status}`));
   }
   return payload;
 }

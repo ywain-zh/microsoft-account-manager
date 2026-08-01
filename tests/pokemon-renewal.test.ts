@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { Hono } from 'hono';
+import { FormData as UndiciFormData } from 'undici';
 
 import {
   pokemonRenewalTestHooks,
@@ -95,6 +96,46 @@ test('stores passwords and coupon encrypted without returning secrets', async ()
     assert.equal(config.data.couponCode, 'monthly-code');
     const storedConfig = harness.db.raw.prepare("SELECT value FROM app_settings WHERE key = 'pokemon_renewal_config'").get() as { value: string };
     assert.doesNotMatch(storedConfig.value, /monthly-code/);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test('serializes login fields with undici FormData and surfaces structured validation errors', async () => {
+  const harness = createHarness();
+  try {
+    await jsonRequest(harness.app, harness.db, '/api/public-checkin/pokemon/accounts', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'form@example.com', password: 'multipart-secret', enabled: true })
+    });
+    await jsonRequest(harness.app, harness.db, '/api/public-checkin/pokemon/config', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ couponCode: 'free-code' })
+    });
+    pokemonRenewalTestHooks.setTiming({ betweenAccountsDelayMs: 0 });
+    pokemonRenewalTestHooks.setFetch((async (input: string | URL | Request, init?: { body?: unknown }) => {
+      const path = new URL(String(input)).pathname;
+      assert.match(path, /passport\/auth\/login$/);
+      assert.ok(init?.body instanceof UndiciFormData);
+      assert.equal(init.body.get('email'), 'form@example.com');
+      assert.equal(init.body.get('password'), 'multipart-secret');
+      return response({
+        message: 'The given data was invalid.',
+        errors: { email: ['邮箱不能为空'], password: ['密码不能为空'] }
+      }, 422);
+    }) as any);
+
+    const started = await jsonRequest<{ id: string }>(harness.app, harness.db, '/api/public-checkin/pokemon/renewal-runs', { method: 'POST' });
+    let snapshot: any;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      snapshot = (await jsonRequest<any>(harness.app, harness.db, `/api/public-checkin/pokemon/renewal-runs/${started.data.id}`)).data;
+      if (snapshot.status !== 'running') break;
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+    assert.equal(snapshot.failedCount, 1);
+    assert.equal(snapshot.results[0].message, '邮箱不能为空');
   } finally {
     harness.cleanup();
   }

@@ -3,7 +3,7 @@
     <div class="stats-grid">
       <div class="stat-card stat-muted">
         <div class="stat-title">总账号数</div>
-        <div class="stat-value">{{ stats.totalAccounts }}</div>
+        <div class="stat-value">{{ displayTotalAccounts }}</div>
       </div>
       <div class="stat-card stat-blue">
         <div class="stat-title">启用签到</div>
@@ -22,8 +22,7 @@
     <section class="checkin-panel">
       <div class="panel-toolbar">
         <div class="toolbar-left">
-          <n-button class="btn-add" type="primary" @click="openAccountTypeModal">添加账号</n-button>
-          <n-button class="btn-outline pokemon-entry-btn" @click="router.push('/services/sub2api/pokemon-renewal')">宝可梦续费</n-button>
+          <n-button class="btn-add" type="primary" @click="openCreateModal">添加账号</n-button>
           <span class="toolbar-divider"></span>
           <n-button class="btn-checkin" type="success" :loading="globalBusy === 'checkin'" :disabled="!hasAccounts || Boolean(globalBusy)" @click="runAllCheckin">
             全部签到
@@ -50,7 +49,7 @@
           </colgroup>
           <thead>
             <tr>
-              <th>公益站</th>
+              <th>账号</th>
               <th>余额</th>
               <th>自动签到</th>
               <th>状态</th>
@@ -59,58 +58,77 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-if="loading">
+            <tr v-if="loading || pokemonLoading">
               <td colspan="6">
                 <div class="table-empty">加载中...</div>
               </td>
             </tr>
-            <tr v-else-if="!accounts.length">
+            <tr v-else-if="!accountRows.length">
               <td colspan="6">
                 <div class="table-empty">暂无账号</div>
               </td>
             </tr>
-            <template v-else>
-              <tr v-for="account in pagedAccounts" :key="account.id">
+            <template v-for="row in pagedAccountRows" v-else :key="row.key">
+              <tr v-if="row.kind === 'pokemon'" class="pokemon-summary-row">
+                <td>
+                  <div class="pokemon-summary-name">
+                    <span class="pokemon-summary-mark">PK</span>
+                    <strong>宝可梦套餐</strong>
+                  </div>
+                </td>
+                <td class="placeholder-cell">-</td>
+                <td class="placeholder-cell">-</td>
+                <td class="placeholder-cell">-</td>
+                <td class="placeholder-cell">-</td>
+                <td>
+                  <div class="account-actions">
+                    <n-button class="row-btn pokemon-renew-btn" type="primary" size="small" @click="openPokemonModal">
+                      续费
+                    </n-button>
+                  </div>
+                </td>
+              </tr>
+              <tr v-else>
                 <td>
                   <a
                     class="account-site-link"
-                    :href="account.site.url"
+                    :href="row.account.site.url"
                     target="_blank"
                     rel="noopener noreferrer"
-                    :title="account.site.url"
+                    :title="row.account.site.url"
                   >
-                    {{ account.site.name }}
+                    {{ row.account.site.name }}
                   </a>
                 </td>
                 <td>
                   <div class="account-balance-cell">
-                    <strong :title="formatMoney(account.balance)">{{ formatCompactMoney(account.balance) }}</strong>
+                    <strong :title="formatMoney(row.account.balance)">{{ formatCompactMoney(row.account.balance) }}</strong>
                     <span
-                      v-if="hasDailyBalanceDisplay(account)"
+                      v-if="hasDailyBalanceDisplay(row.account)"
                       class="account-balance-cell__daily"
-                      :class="dailyBalanceDisplayClass(account)"
-                      :title="dailyBalanceDisplayTitle(account)"
+                      :class="dailyBalanceDisplayClass(row.account)"
+                      :title="dailyBalanceDisplayTitle(row.account)"
                     >
-                      {{ formatDailyBalanceDisplay(account) }}
+                      {{ formatDailyBalanceDisplay(row.account) }}
                     </span>
                   </div>
                 </td>
                 <td>
                   <span
                     class="auto-checkin-badge"
-                    :class="account.checkinEnabled ? 'is-on' : 'is-off'"
+                    :class="row.account.checkinEnabled ? 'is-on' : 'is-off'"
                     title="如需修改自动签到，请进入编辑账号"
                   >
-                    {{ account.checkinEnabled ? '开启' : '关闭' }}
+                    {{ row.account.checkinEnabled ? '开启' : '关闭' }}
                   </span>
                 </td>
                 <td>
                   <div class="account-status-cell">
-                    <n-tag :type="healthTagType(account.healthState)" size="small" :bordered="false">
-                      {{ healthLabel(account.healthState) }}
+                    <n-tag :type="healthTagType(row.account.healthState)" size="small" :bordered="false">
+                      {{ healthLabel(row.account.healthState) }}
                     </n-tag>
-                    <span :class="account.healthState === 'normal' ? 'muted-small' : 'error-small'" :title="account.healthMessage || ''">
-                      {{ account.healthMessage || '-' }}<span v-if="account.useProxy"> · 本地代理</span>
+                    <span :class="row.account.healthState === 'normal' ? 'muted-small' : 'error-small'" :title="row.account.healthMessage || ''">
+                      {{ row.account.healthMessage || '-' }}<span v-if="row.account.useProxy"> · 本地代理</span>
                     </span>
                   </div>
                 </td>
@@ -118,15 +136,15 @@
                   <div class="announcement-cell">
                     <n-button
                       class="announcement-pill"
-                      :class="{ 'has-unread': account.announcementUnreadCount > 0 }"
+                      :class="{ 'has-unread': row.account.announcementUnreadCount > 0 }"
                       size="small"
-                      :disabled="isAccountBusy(account.id)"
-                      :aria-label="`查看 ${account.site.name} 的公告`"
-                      @click="openAnnouncementsModal(account)"
+                      :disabled="isAccountBusy(row.account.id)"
+                      :aria-label="`查看 ${row.account.site.name} 的公告`"
+                      @click="openAnnouncementsModal(row.account)"
                     >
                       <span class="announcement-pill__label">公告</span>
-                      <span v-if="account.announcementUnreadCount > 0" class="announcement-pill__badge">
-                        {{ formatAnnouncementUnreadCount(account.announcementUnreadCount) }}
+                      <span v-if="row.account.announcementUnreadCount > 0" class="announcement-pill__badge">
+                        {{ formatAnnouncementUnreadCount(row.account.announcementUnreadCount) }}
                       </span>
                       <span v-else class="announcement-pill__hint">查看</span>
                     </n-button>
@@ -136,46 +154,46 @@
                   <div class="account-actions">
                     <n-button
                       class="row-btn row-btn-blue"
-                      :class="{ 'is-loading-pretty': isAccountActionLoading(account.id, 'test') }"
+                      :class="{ 'is-loading-pretty': isAccountActionLoading(row.account.id, 'test') }"
                       size="small"
-                      :loading="isAccountActionLoading(account.id, 'test')"
-                      :disabled="isAccountBusy(account.id)"
-                      @click="testAccount(account.id)"
+                      :loading="isAccountActionLoading(row.account.id, 'test')"
+                      :disabled="isAccountBusy(row.account.id)"
+                      @click="testAccount(row.account.id)"
                     >
                       <span class="row-btn-label">检测</span>
                     </n-button>
                     <n-button
                       class="row-btn row-btn-violet"
-                      :class="{ 'is-loading-pretty': isAccountActionLoading(account.id, 'models') }"
+                      :class="{ 'is-loading-pretty': isAccountActionLoading(row.account.id, 'models') }"
                       size="small"
-                      :loading="isAccountActionLoading(account.id, 'models')"
-                      :disabled="isAccountBusy(account.id)"
-                      @click="openModelsModal(account)"
+                      :loading="isAccountActionLoading(row.account.id, 'models')"
+                      :disabled="isAccountBusy(row.account.id)"
+                      @click="openModelsModal(row.account)"
                     >
                       <span class="row-btn-label">模型</span>
                     </n-button>
                     <n-button
                       class="row-btn row-btn-green"
-                      :class="{ 'is-loading-pretty': isAccountActionLoading(account.id, 'checkin') }"
+                      :class="{ 'is-loading-pretty': isAccountActionLoading(row.account.id, 'checkin') }"
                       size="small"
-                      :loading="isAccountActionLoading(account.id, 'checkin')"
-                      :disabled="isAccountBusy(account.id)"
-                      @click="runAccountCheckin(account.id)"
+                      :loading="isAccountActionLoading(row.account.id, 'checkin')"
+                      :disabled="isAccountBusy(row.account.id)"
+                      @click="runAccountCheckin(row.account.id)"
                     >
                       <span class="row-btn-label">签到</span>
                     </n-button>
                     <n-button
                       class="row-btn row-btn-gray"
-                      :class="{ 'is-loading-pretty': isAccountActionLoading(account.id, 'balance') }"
+                      :class="{ 'is-loading-pretty': isAccountActionLoading(row.account.id, 'balance') }"
                       size="small"
-                      :loading="isAccountActionLoading(account.id, 'balance')"
-                      :disabled="isAccountBusy(account.id)"
-                      @click="refreshAccountBalance(account.id)"
+                      :loading="isAccountActionLoading(row.account.id, 'balance')"
+                      :disabled="isAccountBusy(row.account.id)"
+                      @click="refreshAccountBalance(row.account.id)"
                     >
                       <span class="row-btn-label">余额</span>
                     </n-button>
-                    <n-button class="row-btn row-btn-gray" size="small" :disabled="isAccountBusy(account.id)" @click="openEditModal(account)">编辑</n-button>
-                    <n-button class="row-btn row-btn-red" size="small" :disabled="isAccountBusy(account.id)" @click="confirmDelete(account)">删除</n-button>
+                    <n-button class="row-btn row-btn-gray" size="small" :disabled="isAccountBusy(row.account.id)" @click="openEditModal(row.account)">编辑</n-button>
+                    <n-button class="row-btn row-btn-red" size="small" :disabled="isAccountBusy(row.account.id)" @click="confirmDelete(row.account)">删除</n-button>
                   </div>
                 </td>
               </tr>
@@ -188,23 +206,30 @@
       </div>
     </section>
 
-    <n-modal v-model:show="accountTypeModalVisible" preset="card" class="public-checkin-modal account-type-modal" title="选择账号类型" style="width: min(660px, 94vw); border-radius: 14px;">
-      <div class="account-type-grid">
-        <button class="account-type-card is-public" type="button" @click="choosePublicCheckinAccount">
-          <span class="account-type-mark">API</span>
-          <strong>普通公益站</strong>
-          <small>继续添加 New API、One API 等签到账号</small>
-        </button>
-        <button class="account-type-card is-pokemon" type="button" @click="choosePokemonRenewal">
-          <span class="account-type-mark">PK</span>
-          <strong>宝可梦套餐</strong>
-          <small>进入多账号月付优惠码续费页面</small>
-        </button>
+    <n-modal
+      v-model:show="accountModalVisible"
+      preset="card"
+      class="public-checkin-modal account-modal"
+      :class="{ 'is-pokemon-modal': accountKind === 'pokemon' }"
+      :title="accountModalTitle"
+      :style="{ width: accountKind === 'pokemon' ? 'min(1180px, 96vw)' : 'min(720px, 94vw)', borderRadius: '12px' }"
+      content-style="max-height: calc(100vh - 150px); overflow: auto;"
+      @after-leave="resetAccountModalContext"
+    >
+      <div class="account-kind-switch">
+        <div>
+          <strong>账号类型</strong>
+          <span>{{ accountKind === 'pokemon' ? '一个入口维护全部宝可梦账号' : '公益站签到与余额账号' }}</span>
+        </div>
+        <n-select
+          v-model:value="accountKind"
+          class="account-kind-select"
+          :options="accountKindOptions"
+          :disabled="accountKindLocked"
+        />
       </div>
-    </n-modal>
 
-    <n-modal v-model:show="accountModalVisible" preset="card" class="public-checkin-modal account-modal" :title="editingAccount ? '编辑账号' : '添加账号'" style="width: min(720px, 94vw); border-radius: 12px;">
-      <n-form label-placement="top" class="account-form designed-form" autocomplete="off">
+      <n-form v-if="accountKind === 'public'" label-placement="top" class="account-form designed-form" autocomplete="off">
         <div class="form-autofill-guard" aria-hidden="true">
           <input type="text" tabindex="-1" autocomplete="username" name="public-checkin-autofill-username" />
           <input type="password" tabindex="-1" autocomplete="new-password" name="public-checkin-autofill-password" />
@@ -267,7 +292,13 @@
         </div>
       </n-form>
 
-      <template #footer>
+      <PokemonRenewalView
+        v-else
+        embedded
+        @accounts-changed="handlePokemonAccountsChanged"
+      />
+
+      <template v-if="accountKind === 'public'" #footer>
         <div class="modal-footer">
           <n-button :loading="connectionTesting" @click="testFormConnection">检测连接</n-button>
           <div class="modal-footer-actions">
@@ -542,7 +573,6 @@
 
 <script setup lang="ts">
 import { computed, h, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
 import {
   NButton,
   NCheckbox,
@@ -560,6 +590,7 @@ import {
   type DataTableColumns
 } from 'naive-ui';
 import SecretInput from '../components/SecretInput.vue';
+import PokemonRenewalView from './PokemonRenewalView.vue';
 import { PublicCheckinProbeRateLimitError, api } from '../api';
 import { usePublicCheckinConsole } from '../state/public-checkin-console';
 import { renderPublicCheckinAnnouncementContent } from '../utils/public-checkin-announcements';
@@ -571,11 +602,11 @@ import type {
   PublicCheckinProbeRateLimit,
   PublicCheckinSingleModelProbeResponse,
   PublicCheckinStatus,
-  PublicCheckinSettings
+  PublicCheckinSettings,
+  PokemonRenewalAccount
 } from '../types';
 
 const { dialog, message } = createDiscreteApi(['dialog', 'message']);
-const router = useRouter();
 const publicCheckin = usePublicCheckinConsole();
 const {
   accounts,
@@ -610,7 +641,10 @@ const {
 } = publicCheckin;
 
 const accountModalVisible = ref(false);
-const accountTypeModalVisible = ref(false);
+const accountKind = ref<'public' | 'pokemon'>('public');
+const accountKindLocked = ref(false);
+const pokemonAccounts = ref<PokemonRenewalAccount[]>([]);
+const pokemonLoading = ref(true);
 const logModalVisible = ref(false);
 const announcementsModalVisible = ref(false);
 const settingsModalVisible = ref(false);
@@ -642,6 +676,15 @@ const announcementCache = new Map<number, PublicCheckinAnnouncement[]>();
 let announcementSessionId = 0;
 let announcementSyncedSessionId: number | null = null;
 let modelProbeCooldownTimer: ReturnType<typeof setInterval> | null = null;
+
+type AccountListRow =
+  | { key: string; kind: 'public'; account: PublicCheckinAccount }
+  | { key: 'pokemon'; kind: 'pokemon' };
+
+const accountKindOptions = [
+  { label: '公益站', value: 'public' },
+  { label: '宝可梦', value: 'pokemon' }
+];
 
 const accountSiteNameInputProps = {
   autocomplete: 'off',
@@ -722,11 +765,20 @@ const announcementPollingOptions: Array<{ label: string; value: 15 | 30 | 60 }> 
   { label: '60 分钟一次', value: 60 }
 ];
 
-const accountPageCount = computed(() => Math.max(1, Math.ceil(accounts.value.length / accountPageSize)));
-const pagedAccounts = computed(() => {
+const accountRows = computed<AccountListRow[]>(() => [
+  ...accounts.value.map((account) => ({ key: `public:${account.id}`, kind: 'public' as const, account })),
+  ...(pokemonAccounts.value.length ? [{ key: 'pokemon' as const, kind: 'pokemon' as const }] : [])
+]);
+const displayTotalAccounts = computed(() => stats.totalAccounts + (pokemonAccounts.value.length ? 1 : 0));
+const accountPageCount = computed(() => Math.max(1, Math.ceil(accountRows.value.length / accountPageSize)));
+const pagedAccountRows = computed(() => {
   if (accountPage.value > accountPageCount.value) accountPage.value = accountPageCount.value;
   const start = (accountPage.value - 1) * accountPageSize;
-  return accounts.value.slice(start, start + accountPageSize);
+  return accountRows.value.slice(start, start + accountPageSize);
+});
+const accountModalTitle = computed(() => {
+  if (accountKind.value === 'pokemon') return '宝可梦套餐续费';
+  return editingAccount.value ? '编辑账号' : '添加账号';
 });
 const logPageCount = computed(() => Math.max(1, Math.ceil(logs.total / logPageSize)));
 type PublicCheckinBusyAction = NonNullable<typeof busyAccountAction.value>;
@@ -1044,26 +1096,47 @@ function resetAccountForm(): void {
 
 function openCreateModal(): void {
   editingAccount.value = null;
+  accountKind.value = 'public';
+  accountKindLocked.value = false;
   resetAccountForm();
   accountModalVisible.value = true;
 }
 
-function openAccountTypeModal(): void {
-  accountTypeModalVisible.value = true;
+function openPokemonModal(): void {
+  editingAccount.value = null;
+  accountKind.value = 'pokemon';
+  accountKindLocked.value = true;
+  resetAccountForm();
+  accountModalVisible.value = true;
 }
 
-function choosePublicCheckinAccount(): void {
-  accountTypeModalVisible.value = false;
-  openCreateModal();
+function resetAccountModalContext(): void {
+  editingAccount.value = null;
+  accountKind.value = 'public';
+  accountKindLocked.value = false;
+  resetAccountForm();
 }
 
-function choosePokemonRenewal(): void {
-  accountTypeModalVisible.value = false;
-  void router.push('/services/sub2api/pokemon-renewal');
+async function loadPokemonAccounts(): Promise<void> {
+  pokemonLoading.value = true;
+  try {
+    pokemonAccounts.value = await api.listPokemonRenewalAccounts();
+  } catch (error) {
+    handleApiError(error);
+  } finally {
+    pokemonLoading.value = false;
+  }
+}
+
+function handlePokemonAccountsChanged(items: PokemonRenewalAccount[]): void {
+  pokemonAccounts.value = items;
+  if (!items.length) accountPage.value = Math.min(accountPage.value, accountPageCount.value);
 }
 
 async function openEditModal(row: PublicCheckinAccount): Promise<void> {
   editingAccount.value = row;
+  accountKind.value = 'public';
+  accountKindLocked.value = true;
   accountForm.siteName = row.site.name;
   accountForm.siteUrl = row.site.url;
   accountForm.checkinEnabled = row.checkinEnabled;
@@ -1437,7 +1510,7 @@ async function submitSettings(): Promise<void> {
 }
 
 onMounted(() => {
-  void loadInitialData();
+  void Promise.all([loadInitialData(), loadPokemonAccounts()]);
 });
 
 onBeforeUnmount(() => {
@@ -2818,59 +2891,74 @@ onBeforeUnmount(() => {
   gap: 14px;
 }
 
-.account-type-grid {
+.pokemon-summary-row {
+  background: linear-gradient(90deg, rgba(118, 87, 232, 0.055), rgba(255, 255, 255, 0) 42%);
+  box-shadow: inset 3px 0 #7657e8;
+}
+
+.pokemon-summary-name {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  white-space: nowrap;
+}
+
+.pokemon-summary-mark {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-}
-
-.account-type-card {
-  display: grid;
-  min-height: 168px;
-  padding: 22px;
-  border: 1px solid #dfe5ef;
-  border-radius: 14px;
-  background: #fff;
-  color: #18213b;
-  cursor: pointer;
-  text-align: left;
-  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
-}
-
-.account-type-card:hover,
-.account-type-card:focus-visible {
-  transform: translateY(-2px);
-  border-color: #7b82eb;
-  box-shadow: 0 12px 28px rgba(67, 79, 153, .12);
-  outline: none;
-}
-
-.account-type-card strong {
-  margin: 16px 0 5px;
-  font-size: 17px;
-}
-
-.account-type-card small {
-  color: #738098;
-  line-height: 1.6;
-}
-
-.account-type-mark {
-  display: grid;
-  width: 42px;
-  height: 42px;
+  width: 30px;
+  height: 30px;
   place-items: center;
-  border-radius: 12px;
-  background: #edf1ff;
-  color: #5263de;
-  font-size: 12px;
+  border-radius: 9px;
+  background: linear-gradient(145deg, #ebe9ff, #fff0dc);
+  color: #6f55d9;
+  font-size: 10px;
   font-weight: 800;
-  letter-spacing: .06em;
+  letter-spacing: .05em;
 }
 
-.account-type-card.is-pokemon .account-type-mark {
-  background: linear-gradient(145deg, #edeaff, #fff1dc);
-  color: #7657e8;
+.placeholder-cell {
+  color: #a7afbd !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.account-actions :deep(.pokemon-renew-btn) {
+  --n-color: #6f55d9 !important;
+  --n-color-hover: #6046ce !important;
+  --n-color-pressed: #553db9 !important;
+  --n-border: 1px solid #6f55d9 !important;
+  --n-border-hover: 1px solid #6046ce !important;
+  min-width: 62px;
+}
+
+.account-kind-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  border: 1px solid #e4e8f1;
+  border-radius: 10px;
+  background: #f8f9fc;
+}
+
+.account-kind-switch > div {
+  display: grid;
+  gap: 2px;
+}
+
+.account-kind-switch strong {
+  color: #20283b;
+  font-size: 13px;
+}
+
+.account-kind-switch span {
+  color: #7b8496;
+  font-size: 11px;
+}
+
+.account-kind-select {
+  width: 180px;
 }
 
 @media (max-width: 980px) {
@@ -2914,9 +3002,17 @@ onBeforeUnmount(() => {
 
   .stats-grid,
   .form-grid,
-  .log-filters,
-  .account-type-grid {
+  .log-filters {
     grid-template-columns: 1fr;
+  }
+
+  .account-kind-switch {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .account-kind-select {
+    width: 100%;
   }
 
   .modal-footer {
@@ -2935,15 +3031,13 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: reduce) {
   .announcement-cell :deep(.announcement-pill),
   .announcement-card,
-  .announcement-skeleton-card,
-  .account-type-card {
+  .announcement-skeleton-card {
     transition: none;
     animation: none;
   }
 
   .announcement-cell :deep(.announcement-pill:not(.n-button--disabled):hover),
-  .announcement-card:hover,
-  .account-type-card:hover {
+  .announcement-card:hover {
     transform: none;
   }
 }

@@ -174,9 +174,7 @@ const router = useRouter();
 const navigation = consoleNavigation;
 
 function isNavActive(path: string): boolean {
-  if (route.path === path) return true;
-  return path === '/services/sub2api/public-checkin'
-    && route.path === '/services/sub2api/pokemon-renewal';
+  return route.path === path;
 }
 const pageTitle = computed(() => String(route.meta.title ?? '望月工具箱'));
 const pageDescription = computed(() => String(route.meta.description ?? '管理后台工具与服务配置。'));
