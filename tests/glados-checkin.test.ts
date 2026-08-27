@@ -20,6 +20,7 @@ interface FetchCall {
   url: URL;
   method: string;
   body: string;
+  hasDispatcher: boolean;
 }
 
 const callLog: FetchCall[] = [];
@@ -49,7 +50,7 @@ function setFetchHarness(): void {
     const url = new URL(String(input));
     const method = (init?.method || 'GET').toUpperCase();
     const bodyText = typeof init?.body === 'string' ? init.body : '';
-    callLog.push({ url, method, body: bodyText });
+    callLog.push({ url, method, body: bodyText, hasDispatcher: Boolean((init as any)?.dispatcher) });
     const pathname = url.pathname;
 
     if (pathname === '/api/user/status') {
@@ -111,6 +112,7 @@ function createHarness(): { app: Hono<any>; db: SQLiteD1Database; cleanup: () =>
   `);
   db.raw.exec(readFileSync(join(process.cwd(), 'migrations/0023_glados_checkin.sql'), 'utf8'));
   db.raw.exec(readFileSync(join(process.cwd(), 'migrations/0024_glados_subscription.sql'), 'utf8'));
+  db.raw.exec(readFileSync(join(process.cwd(), 'migrations/0025_glados_use_proxy.sql'), 'utf8'));
   const app = new Hono<any>();
   registerGladosCheckinRoutes(app);
   return {
@@ -533,6 +535,74 @@ test('keeps the checkin successful and preserves stored traffic when the traffic
     .bind(created.data.id).first() as any;
   assert.equal(second.traffic_used_bytes, 5 * 1_073_741_824, '流量查询失败时应保留库中旧值');
   assert.equal(second.status, 'active');
+});
+
+test('defaults to a direct connection and only uses the system proxy when opted in', async (t) => {
+  resetFetchState();
+  setFetchHarness();
+  checkinCode = 0;
+  points = 0;
+  const { app, db, cleanup } = createHarness();
+  t.after(cleanup);
+
+  await db.prepare('INSERT INTO app_settings (key, value) VALUES (?, ?)')
+    .bind('system_proxy_config', JSON.stringify({ proxyUrl: 'http://system-proxy:7890' })).run();
+
+  const direct = await jsonRequest<{ id: number; useProxy: boolean }>(app, db, '/api/public-checkin/glados/accounts', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: accountPayload({ label: 'direct', exchangeEnabled: false })
+  });
+  assert.equal(direct.data.useProxy, false, '未显式开启时默认直连');
+
+  const viaProxy = await jsonRequest<{ id: number; useProxy: boolean }>(app, db, '/api/public-checkin/glados/accounts', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: accountPayload({ label: 'proxied', exchangeEnabled: false, useProxy: true })
+  });
+  assert.equal(viaProxy.data.useProxy, true);
+
+  const directRow = await db.prepare('SELECT use_proxy FROM glados_checkin_accounts WHERE id = ?')
+    .bind(direct.data.id).first() as any;
+  assert.equal(directRow.use_proxy, 0);
+  const proxyRow = await db.prepare('SELECT use_proxy FROM glados_checkin_accounts WHERE id = ?')
+    .bind(viaProxy.data.id).first() as any;
+  assert.equal(proxyRow.use_proxy, 1);
+
+  // 关键断言：关闭时不得挂上代理 dispatcher，开启时必须挂上
+  callLog.length = 0;
+  const directRun = await runGladosCheckinForAccount(db, direct.data.id, 'manual');
+  assert.equal(directRun.result?.success, true);
+  assert.ok(callLog.length > 0, '应发出站点请求');
+  assert.ok(callLog.every((c) => !c.hasDispatcher), '默认直连时不应使用代理 dispatcher');
+
+  callLog.length = 0;
+  await runGladosCheckinForAccount(db, viaProxy.data.id, 'manual');
+  assert.ok(callLog.length > 0, '应发出站点请求');
+  assert.ok(callLog.every((c) => c.hasDispatcher), '开启代理后所有请求都应经过代理 dispatcher');
+
+  // 编辑时可切换开关，且留空 cookie 不影响
+  const updated = await jsonRequest<{ useProxy: boolean }>(app, db, `/api/public-checkin/glados/accounts/${direct.data.id}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ useProxy: true })
+  });
+  assert.equal(updated.data.useProxy, true, '编辑应能开启代理');
+
+  const reverted = await jsonRequest<{ useProxy: boolean }>(app, db, `/api/public-checkin/glados/accounts/${direct.data.id}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ useProxy: false })
+  });
+  assert.equal(reverted.data.useProxy, false, '编辑应能关闭代理');
+
+  // 未传 useProxy 时保持原值
+  const untouched = await jsonRequest<{ useProxy: boolean }>(app, db, `/api/public-checkin/glados/accounts/${viaProxy.data.id}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ label: 'proxied-renamed' })
+  });
+  assert.equal(untouched.data.useProxy, true, '未传该字段时应保持原值');
 });
 
 test('does not overwrite the stored cookie when editing leaves it empty', async (t) => {

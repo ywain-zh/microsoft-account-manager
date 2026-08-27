@@ -721,6 +721,7 @@ export const api = {
     exchangeEnabled: boolean;
     exchangePlan?: GladosExchangePlan;
     checkinEnabled: boolean;
+    useProxy: boolean;
   }): Promise<GladosCheckinAccount> {
     return request<GladosCheckinAccount>('/api/public-checkin/glados/accounts', {
       method: 'POST',
@@ -736,6 +737,7 @@ export const api = {
       exchangeEnabled?: boolean;
       exchangePlan?: GladosExchangePlan | null;
       checkinEnabled?: boolean;
+      useProxy?: boolean;
     }
   ): Promise<GladosCheckinAccount> {
     return request<GladosCheckinAccount>(`/api/public-checkin/glados/accounts/${id}`, {

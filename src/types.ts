@@ -407,6 +407,7 @@ export interface GladosCheckinAccount {
   exchangeEnabled: boolean;
   exchangePlan: GladosExchangePlan | null;
   checkinEnabled: boolean;
+  useProxy: boolean;
   points: number | null;
   leftDays: number | null;
   balanceUpdatedAt: number | null;

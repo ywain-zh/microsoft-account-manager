@@ -24,6 +24,7 @@ export interface GladosCheckinAccount {
   exchangeEnabled: boolean;
   exchangePlan: GladosExchangePlan | null;
   checkinEnabled: boolean;
+  useProxy: boolean;
   points: number | null;
   leftDays: number | null;
   balanceUpdatedAt: number | null;
@@ -90,6 +91,7 @@ interface AccountRow {
   exchange_enabled: number;
   exchange_plan: GladosExchangePlan | null;
   checkin_enabled: number;
+  use_proxy: number;
   points: number | null;
   left_days: number | null;
   balance_updated_at: number | null;
@@ -218,7 +220,12 @@ async function getSystemProxyUrl(db: D1Database): Promise<string> {
   }
 }
 
-async function resolveProxyUrl(db: D1Database): Promise<string> {
+/**
+ * 与公益站账号一致：只有账号显式开启 useProxy 时才走系统代理，默认直连。
+ * 系统代理的规则集未必覆盖 glados.cloud，强制走代理会导致 TLS 握手前被断开。
+ */
+async function resolveProxyUrl(db: D1Database, useProxy: boolean): Promise<string> {
+  if (!useProxy) return '';
   const configured = await getSystemProxyUrl(db);
   return configured.trim();
 }
@@ -283,6 +290,7 @@ function accountFromRow(row: AccountRow): GladosCheckinAccount {
     exchangeEnabled: Number(row.exchange_enabled) === 1,
     exchangePlan: row.exchange_plan,
     checkinEnabled: Number(row.checkin_enabled) === 1,
+    useProxy: Number(row.use_proxy) === 1,
     points: row.points == null ? null : Number(row.points),
     leftDays: row.left_days == null ? null : Number(row.left_days),
     balanceUpdatedAt: row.balance_updated_at == null ? null : Number(row.balance_updated_at),
@@ -315,16 +323,18 @@ async function createAccount(db: D1Database, input: unknown): Promise<GladosChec
     ? validateExchangePlan(body.exchangePlan) ?? 'plan500'
     : null;
   const checkinEnabled = body.checkinEnabled !== false;
+  const useProxy = body.useProxy === true;
   const result = await dbRun(db, `
     INSERT INTO glados_checkin_accounts (
-      label, cookie_data, exchange_enabled, exchange_plan, checkin_enabled, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      label, cookie_data, exchange_enabled, exchange_plan, checkin_enabled, use_proxy, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     label,
     encryptPublicCheckinSecret(cookie),
     exchangeEnabled ? 1 : 0,
     exchangePlan,
     checkinEnabled ? 1 : 0,
+    useProxy ? 1 : 0,
     unixNow(),
     unixNow()
   ]);
@@ -347,10 +357,11 @@ async function updateAccount(db: D1Database, id: number, input: unknown): Promis
         : null
       : current.exchange_plan;
   const checkinEnabled = body.checkinEnabled !== undefined ? body.checkinEnabled === true : Number(current.checkin_enabled) === 1;
+  const useProxy = body.useProxy !== undefined ? body.useProxy === true : Number(current.use_proxy) === 1;
   await dbRun(db, `
     UPDATE glados_checkin_accounts
     SET label = ?, cookie_data = COALESCE(?, cookie_data), exchange_enabled = ?, exchange_plan = ?,
-        checkin_enabled = ?, updated_at = ?
+        checkin_enabled = ?, use_proxy = ?, updated_at = ?
     WHERE id = ?
   `, [
     label,
@@ -358,6 +369,7 @@ async function updateAccount(db: D1Database, id: number, input: unknown): Promis
     exchangeEnabled ? 1 : 0,
     exchangePlan,
     checkinEnabled ? 1 : 0,
+    useProxy ? 1 : 0,
     unixNow(),
     id
   ]);
@@ -626,7 +638,7 @@ export async function runGladosCheckinForAccount(
   }
 
   const cookie = decryptPublicCheckinSecret(row.cookie_data);
-  const proxyUrl = await resolveProxyUrl(db);
+  const proxyUrl = await resolveProxyUrl(db, Number(row.use_proxy) === 1);
   let earned: number | null = null;
   let points: number | null = null;
   let leftDays: number | null = null;
@@ -768,7 +780,7 @@ export async function testGladosConnection(db: D1Database, accountId: number): P
   const row = await dbFirst<AccountRow>(db, 'SELECT * FROM glados_checkin_accounts WHERE id = ?', [accountId]);
   if (!row) throw new HTTPException(404, { message: 'GLaDOS 账号不存在' });
   const cookie = decryptPublicCheckinSecret(row.cookie_data);
-  const proxyUrl = await resolveProxyUrl(db);
+  const proxyUrl = await resolveProxyUrl(db, Number(row.use_proxy) === 1);
   try {
     const status = await fetchStatus(cookie, proxyUrl);
     const snapshot = snapshotFromStatus(status);

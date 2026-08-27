@@ -421,6 +421,10 @@
         <div class="switch-row">
           <n-checkbox v-model:checked="gladosForm.checkinEnabled">启用自动签到</n-checkbox>
           <n-checkbox v-model:checked="gladosForm.exchangeEnabled">启用积分兑换</n-checkbox>
+          <n-checkbox v-model:checked="gladosForm.useProxy">使用系统代理</n-checkbox>
+        </div>
+        <div class="glados-proxy-hint">
+          默认直连 glados.cloud。仅当服务器无法直连时才勾选；若系统代理的规则未覆盖该域名，走代理反而会连接失败。
         </div>
 
         <n-form-item v-if="gladosForm.exchangeEnabled" label="积分兑换计划">
@@ -908,6 +912,7 @@ const gladosForm = reactive({
   cookie: '',
   checkinEnabled: true,
   exchangeEnabled: false,
+  useProxy: false,
   exchangePlan: 'plan500' as GladosExchangePlan
 });
 
@@ -1301,6 +1306,7 @@ function resetGladosForm(): void {
   gladosForm.cookie = '';
   gladosForm.checkinEnabled = true;
   gladosForm.exchangeEnabled = false;
+  gladosForm.useProxy = false;
   gladosForm.exchangePlan = 'plan500';
 }
 
@@ -1451,6 +1457,7 @@ async function openEditGladosModal(row: GladosCheckinAccount): Promise<void> {
   gladosForm.cookie = '';
   gladosForm.checkinEnabled = row.checkinEnabled;
   gladosForm.exchangeEnabled = row.exchangeEnabled;
+  gladosForm.useProxy = row.useProxy;
   gladosForm.exchangePlan = row.exchangePlan || 'plan500';
   accountModalVisible.value = true;
   try {
@@ -1476,6 +1483,7 @@ async function submitGladosAccount(): Promise<void> {
         label: gladosForm.label.trim(),
         checkinEnabled: gladosForm.checkinEnabled,
         exchangeEnabled: gladosForm.exchangeEnabled,
+        useProxy: gladosForm.useProxy,
         exchangePlan: gladosForm.exchangeEnabled ? gladosForm.exchangePlan : null
       };
       if (gladosForm.cookie.trim()) payload.cookie = gladosForm.cookie.trim();
@@ -1486,6 +1494,7 @@ async function submitGladosAccount(): Promise<void> {
         cookie: gladosForm.cookie.trim(),
         checkinEnabled: gladosForm.checkinEnabled,
         exchangeEnabled: gladosForm.exchangeEnabled,
+        useProxy: gladosForm.useProxy,
         exchangePlan: gladosForm.exchangeEnabled ? gladosForm.exchangePlan : undefined
       });
     }
@@ -3427,6 +3436,13 @@ onBeforeUnmount(() => {
 
 .glados-leftdays {
   color: #64748b;
+}
+
+.glados-proxy-hint {
+  margin-top: -8px;
+  color: #94a3b8;
+  font-size: var(--text-xs);
+  line-height: 1.6;
 }
 
 .glados-traffic {
