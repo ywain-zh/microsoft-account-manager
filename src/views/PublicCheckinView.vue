@@ -109,12 +109,11 @@
                       {{ row.account.points }} 积分
                     </strong>
                     <strong v-else class="glados-points muted">-</strong>
-                    <span
-                      v-if="row.account.leftDays != null"
-                      class="account-balance-cell__daily glados-leftdays"
-                      title="剩余有效天数"
-                    >
-                      {{ row.account.leftDays }} 天
+                    <span class="account-balance-cell__daily glados-leftdays" :title="gladosExpiryTitle(row.account)">
+                      {{ gladosLeftDaysText(row.account) }}
+                    </span>
+                    <span class="glados-traffic" title="本月已用流量 / 套餐额度">
+                      {{ gladosTrafficText(row.account) }}
                     </span>
                   </div>
                 </td>
@@ -140,7 +139,23 @@
                     </span>
                   </div>
                 </td>
-                <td class="placeholder-cell">-</td>
+                <td>
+                  <div v-if="row.account.subscriptionUrl" class="glados-subscription-cell">
+                    <span class="glados-subscription-url" :title="row.account.subscriptionUrl">
+                      {{ row.account.subscriptionUrl }}
+                    </span>
+                    <button
+                      type="button"
+                      class="table-icon-button"
+                      title="复制订阅链接"
+                      aria-label="复制订阅链接"
+                      @click="copyGladosSubscription(row.account)"
+                    >
+                      <CopyGlyph />
+                    </button>
+                  </div>
+                  <span v-else class="placeholder-cell">-</span>
+                </td>
                 <td>
                   <div class="account-actions">
                     <n-button
@@ -420,22 +435,28 @@
         @accounts-changed="handlePokemonAccountsChanged"
       />
 
-      <template v-if="accountKind === 'public'" #footer>
-        <div class="modal-footer">
-          <n-button :loading="connectionTesting" @click="testFormConnection">检测连接</n-button>
+      <!--
+        必须保持为单个静态具名插槽：具名插槽上直接写 v-if/v-else-if 会生成 DYNAMIC_SLOTS，
+        经 naive-ui 的 NModal -> BodyWrapper -> NCard 逐层转发后不会随 accountKind 更新，
+        footer 会被冻结在弹框首次渲染时的那一份。条件必须放在插槽内部。
+      -->
+      <template #footer>
+        <div v-if="accountKind !== 'pokemon'" class="modal-footer">
+          <n-button
+            :loading="connectionTesting"
+            @click="accountKind === 'glados' ? testGladosConnection() : testFormConnection()"
+          >
+            检测连接
+          </n-button>
           <div class="modal-footer-actions">
             <n-button @click="accountModalVisible = false">取消</n-button>
-            <n-button type="primary" :loading="accountSaving" @click="submitAccount">保存</n-button>
-          </div>
-        </div>
-      </template>
-
-      <template v-else-if="accountKind === 'glados'" #footer>
-        <div class="modal-footer">
-          <n-button :loading="connectionTesting" @click="testGladosConnection">检测连接</n-button>
-          <div class="modal-footer-actions">
-            <n-button @click="accountModalVisible = false">取消</n-button>
-            <n-button type="primary" :loading="accountSaving" @click="submitGladosAccount">保存</n-button>
+            <n-button
+              type="primary"
+              :loading="accountSaving"
+              @click="accountKind === 'glados' ? submitGladosAccount() : submitAccount()"
+            >
+              保存
+            </n-button>
           </div>
         </div>
       </template>
@@ -723,10 +744,12 @@ import {
   type DataTableColumns
 } from 'naive-ui';
 import SecretInput from '../components/SecretInput.vue';
+import { CopyGlyph } from '../components/icons';
 import PokemonRenewalView from './PokemonRenewalView.vue';
 import { PublicCheckinProbeRateLimitError, api } from '../api';
 import { usePublicCheckinConsole } from '../state/public-checkin-console';
 import { renderPublicCheckinAnnouncementContent } from '../utils/public-checkin-announcements';
+import { copyToClipboard } from '../utils/clipboard';
 import type {
   PublicCheckinAccount,
   PublicCheckinAnnouncement,
@@ -1370,6 +1393,53 @@ function gladosHealthLabel(account: GladosCheckinAccount): string {
 function gladosHealthMessage(account: GladosCheckinAccount): string {
   if (account.status === 'error' && account.lastError) return account.lastError;
   return account.lastMessage || '-';
+}
+
+function formatGladosDate(unixSeconds: number): string {
+  const date = new Date(unixSeconds * 1000);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/** 余额列宽度有限，同年到期时省略年份；完整日期仍保留在 title 提示里。 */
+function formatGladosDateCompact(unixSeconds: number): string {
+  const date = new Date(unixSeconds * 1000);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  const short = `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  return date.getFullYear() === new Date().getFullYear() ? short : `${date.getFullYear()}-${short}`;
+}
+
+function gladosLeftDaysText(account: GladosCheckinAccount): string {
+  const parts: string[] = [];
+  if (account.leftDays != null) parts.push(`${account.leftDays} 天`);
+  if (account.expiresAt != null) parts.push(`${formatGladosDateCompact(account.expiresAt)} 到期`);
+  return parts.join(' · ') || '-';
+}
+
+function gladosExpiryTitle(account: GladosCheckinAccount): string {
+  if (account.expiresAt == null) return '剩余有效天数';
+  return `剩余有效天数，到期时间 ${formatGladosDate(account.expiresAt)}`;
+}
+
+/** 站点自身也是按 1 GiB 换算展示，这里保持一致。 */
+function gladosTrafficText(account: GladosCheckinAccount): string {
+  const limit = account.trafficLimitGb;
+  if (account.trafficUsedBytes == null && limit == null) return '-';
+  const usedGb = account.trafficUsedBytes == null
+    ? null
+    : account.trafficUsedBytes / 1_073_741_824;
+  const usedText = usedGb == null
+    ? '-'
+    : String(Number(usedGb.toFixed(2)));
+  return limit == null ? `${usedText} GB` : `${usedText} / ${limit} GB`;
+}
+
+async function copyGladosSubscription(account: GladosCheckinAccount): Promise<void> {
+  const url = account.subscriptionUrl;
+  if (!url) return;
+  const copied = await copyToClipboard(url);
+  if (copied) message.success('已复制订阅链接');
+  else message.error('复制失败，请手动复制');
 }
 
 async function openEditGladosModal(row: GladosCheckinAccount): Promise<void> {
@@ -2102,7 +2172,7 @@ onBeforeUnmount(() => {
 
 .accounts-table {
   width: 100%;
-  min-width: 1120px;
+  min-width: 1240px;
   table-layout: fixed;
   border-collapse: collapse;
   text-align: left;
@@ -2140,8 +2210,9 @@ onBeforeUnmount(() => {
   width: 168px;
 }
 
+/* 该列公益站行放公告按钮，GLaDOS 行放订阅链接，需要容纳截断后的地址与复制按钮。 */
 .accounts-table .col-announcement {
-  width: 84px;
+  width: 200px;
 }
 
 .accounts-table .col-actions {
@@ -3177,6 +3248,11 @@ onBeforeUnmount(() => {
   font-size: var(--text-base);
 }
 
+/* 宝可梦类型不渲染 footer 内容，隐藏空的 footer 容器避免出现多余的空白条。 */
+.account-modal :deep(.n-card__footer:empty) {
+  display: none;
+}
+
 .modal-footer {
   display: flex;
   flex-wrap: wrap;
@@ -3351,6 +3427,27 @@ onBeforeUnmount(() => {
 
 .glados-leftdays {
   color: #64748b;
+}
+
+.glados-traffic {
+  color: #64748b;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.glados-subscription-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.glados-subscription-url {
+  overflow: hidden;
+  color: #64748b;
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .placeholder-cell {

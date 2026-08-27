@@ -27,6 +27,11 @@ export interface GladosCheckinAccount {
   points: number | null;
   leftDays: number | null;
   balanceUpdatedAt: number | null;
+  subscriptionUrl: string | null;
+  expiresAt: number | null;
+  trafficUsedBytes: number | null;
+  trafficLimitGb: number | null;
+  planLevel: string | null;
   lastStatus: GladosCheckinStatus | null;
   lastMessage: string | null;
   lastRunAt: number | null;
@@ -62,6 +67,20 @@ export interface GladosTestResult {
   email?: string;
   leftDays?: number | null;
   points?: number | null;
+  subscriptionUrl?: string | null;
+  expiresAt?: number | null;
+  trafficUsedBytes?: number | null;
+  trafficLimitGb?: number | null;
+  planLevel?: string | null;
+}
+
+/** 从 /api/user/status 与 /api/user/traffic 派生出的账号快照，用于统一写库。 */
+interface GladosAccountSnapshot {
+  leftDays: number | null;
+  subscriptionUrl: string | null;
+  expiresAt: number | null;
+  trafficLimitGb: number | null;
+  planLevel: string | null;
 }
 
 interface AccountRow {
@@ -74,6 +93,11 @@ interface AccountRow {
   points: number | null;
   left_days: number | null;
   balance_updated_at: number | null;
+  subscription_url: string | null;
+  expires_at: number | null;
+  traffic_used_bytes: number | null;
+  traffic_limit_gb: number | null;
+  plan_level: string | null;
   last_status: GladosCheckinStatus | null;
   last_message: string | null;
   last_run_at: number | null;
@@ -109,6 +133,30 @@ const BASE_GLADOS_POINTS: Record<GladosExchangePlan, string> = {
   plan200: '30 天',
   plan500: '100 天'
 };
+
+/**
+ * 订阅链接由站点前端拼接而成，没有任何接口直接返回它。
+ * 模板取自 glados.cloud 的前端 chunk：
+ *   `https://${host}/mihomo/${user_id}/${code}/${port}/glados.yaml`
+ * 三段参数全部来自我们已经在调用的 /api/user/status。
+ */
+const GLADOS_SUBSCRIPTION_HOST = 'update.glados-config.com';
+const BYTES_PER_GB = 1_073_741_824;
+
+/**
+ * vip 等级 -> 套餐名与每月流量额度（GB），同样取自站点前端 chunk 的映射逻辑。
+ * 站点默认分支为 Basic/0，此处保持一致。
+ */
+const VIP_PLAN_MAP: Record<number, { level: string; limitGb: number }> = {
+  0: { level: 'Free', limitGb: 10 },
+  10: { level: 'Free', limitGb: 10 },
+  11: { level: 'Edu', limitGb: 100 },
+  21: { level: 'Basic', limitGb: 200 },
+  31: { level: 'Pro', limitGb: 500 },
+  41: { level: 'Team', limitGb: 2000 },
+  51: { level: 'Enterprise', limitGb: 5000 }
+};
+const DEFAULT_VIP_PLAN = { level: 'Basic', limitGb: 0 };
 
 let requestFetch: typeof undiciFetch = undiciFetch;
 let betweenAccountsDelayMs = 1_000;
@@ -238,6 +286,11 @@ function accountFromRow(row: AccountRow): GladosCheckinAccount {
     points: row.points == null ? null : Number(row.points),
     leftDays: row.left_days == null ? null : Number(row.left_days),
     balanceUpdatedAt: row.balance_updated_at == null ? null : Number(row.balance_updated_at),
+    subscriptionUrl: row.subscription_url,
+    expiresAt: row.expires_at == null ? null : Number(row.expires_at),
+    trafficUsedBytes: row.traffic_used_bytes == null ? null : Number(row.traffic_used_bytes),
+    trafficLimitGb: row.traffic_limit_gb == null ? null : Number(row.traffic_limit_gb),
+    planLevel: row.plan_level,
     lastStatus: row.last_status,
     lastMessage: row.last_message,
     lastRunAt: row.last_run_at == null ? null : Number(row.last_run_at),
@@ -386,6 +439,58 @@ function statusLeftDays(status: Record<string, unknown>): number | null {
   return Math.max(0, Math.trunc(raw));
 }
 
+/** 拼出 Mihomo / Clash Meta 订阅链接；缺少任一参数时返回 null，不产出半截地址。 */
+function buildSubscriptionUrl(status: Record<string, unknown>): string | null {
+  const userId = nonNegativeInt(status.userId ?? status.configureId);
+  const code = asString(status.code).trim();
+  const port = nonNegativeInt(status.port);
+  if (userId == null || !code || port == null) return null;
+  return `https://${GLADOS_SUBSCRIPTION_HOST}/mihomo/${userId}/${code}/${port}/glados.yaml`;
+}
+
+/**
+ * 到期时间 = 站点时间 + 剩余天数。
+ * 优先用站点返回的 system_time（毫秒），避免本地时钟偏差影响展示。
+ */
+function resolveExpiresAt(status: Record<string, unknown>): number | null {
+  const leftDays = finiteNumber(status.leftDays);
+  if (leftDays == null) return null;
+  const systemTimeMs = finiteNumber(status.system_time);
+  const baseSeconds = systemTimeMs != null ? Math.floor(systemTimeMs / 1000) : unixNow();
+  return baseSeconds + Math.round(leftDays * 86_400);
+}
+
+function resolvePlan(status: Record<string, unknown>): { level: string; limitGb: number } {
+  const vip = finiteNumber(status.vip);
+  if (vip == null) return DEFAULT_VIP_PLAN;
+  return VIP_PLAN_MAP[Math.trunc(vip)] ?? DEFAULT_VIP_PLAN;
+}
+
+function snapshotFromStatus(status: Record<string, unknown>): GladosAccountSnapshot {
+  const plan = resolvePlan(status);
+  return {
+    leftDays: statusLeftDays(status),
+    subscriptionUrl: buildSubscriptionUrl(status),
+    expiresAt: resolveExpiresAt(status),
+    trafficLimitGb: plan.limitGb,
+    planLevel: plan.level
+  };
+}
+
+const EMPTY_SNAPSHOT: GladosAccountSnapshot = {
+  leftDays: null,
+  subscriptionUrl: null,
+  expiresAt: null,
+  trafficLimitGb: null,
+  planLevel: null
+};
+
+/** 本月已用流量（字节）。站点前端读的就是 data.today，再除以 1 GiB 展示。 */
+async function fetchTrafficUsedBytes(cookie: string, proxyUrl: string): Promise<number | null> {
+  const payload = await gladosRequest('/api/user/traffic', { cookie, proxyUrl });
+  return nonNegativeInt(asRecord(payload.data).today);
+}
+
 async function fetchPoints(cookie: string, proxyUrl: string): Promise<number | null> {
   const payload = await gladosRequest('/api/user/points', { cookie, proxyUrl });
   return nonNegativeInt(payload.points);
@@ -450,15 +555,23 @@ async function insertLog(db: D1Database, input: {
 function upsertAccountAfterRun(db: D1Database, accountId: number, input: {
   points?: number | null;
   leftDays?: number | null;
+  trafficUsedBytes?: number | null;
+  snapshot?: GladosAccountSnapshot;
   lastStatus: GladosCheckinStatus | null;
   lastMessage: string | null;
   status: GladosCheckinAccountStatus;
   lastError: string | null;
 }): Promise<unknown> {
+  const snapshot = input.snapshot ?? EMPTY_SNAPSHOT;
   return dbRun(db, `
     UPDATE glados_checkin_accounts
     SET points = COALESCE(?, points), left_days = COALESCE(?, left_days),
         balance_updated_at = CASE WHEN ? IS NOT NULL THEN ? ELSE balance_updated_at END,
+        subscription_url = COALESCE(?, subscription_url),
+        expires_at = COALESCE(?, expires_at),
+        traffic_used_bytes = COALESCE(?, traffic_used_bytes),
+        traffic_limit_gb = COALESCE(?, traffic_limit_gb),
+        plan_level = COALESCE(?, plan_level),
         last_status = ?, last_message = ?, last_run_at = ?, status = ?, last_error = ?, updated_at = ?
     WHERE id = ?
   `, [
@@ -466,6 +579,11 @@ function upsertAccountAfterRun(db: D1Database, accountId: number, input: {
     input.leftDays ?? null,
     input.points ?? null,
     unixNow(),
+    snapshot.subscriptionUrl,
+    snapshot.expiresAt,
+    input.trafficUsedBytes ?? null,
+    snapshot.trafficLimitGb,
+    snapshot.planLevel,
     input.lastStatus,
     input.lastMessage,
     unixNow(),
@@ -512,15 +630,24 @@ export async function runGladosCheckinForAccount(
   let earned: number | null = null;
   let points: number | null = null;
   let leftDays: number | null = null;
+  let trafficUsedBytes: number | null = null;
+  let snapshot: GladosAccountSnapshot = EMPTY_SNAPSHOT;
   const notes: string[] = [];
 
   try {
     let status: Record<string, unknown> | null = null;
     try {
       status = await fetchStatus(cookie, proxyUrl);
-      leftDays = statusLeftDays(status);
+      snapshot = snapshotFromStatus(status);
+      leftDays = snapshot.leftDays;
     } catch {
       // 余额查询失败不阻断签到，仅记录说明。
+    }
+
+    try {
+      trafficUsedBytes = await fetchTrafficUsedBytes(cookie, proxyUrl);
+    } catch {
+      // 流量查询失败不阻断签到，保留库中旧值。
     }
 
     const checkinResult = await checkin(cookie, proxyUrl);
@@ -574,6 +701,8 @@ export async function runGladosCheckinForAccount(
     await upsertAccountAfterRun(db, accountId, {
       points,
       leftDays,
+      trafficUsedBytes,
+      snapshot,
       lastStatus: checkinStatus,
       lastMessage: notes.join('；'),
       status: accountStatus,
@@ -606,6 +735,8 @@ export async function runGladosCheckinForAccount(
     await upsertAccountAfterRun(db, accountId, {
       points,
       leftDays,
+      trafficUsedBytes,
+      snapshot,
       lastStatus: 'failed',
       lastMessage: message,
       status: 'error',
@@ -640,7 +771,7 @@ export async function testGladosConnection(db: D1Database, accountId: number): P
   const proxyUrl = await resolveProxyUrl(db);
   try {
     const status = await fetchStatus(cookie, proxyUrl);
-    const leftDays = statusLeftDays(status);
+    const snapshot = snapshotFromStatus(status);
     const email = asString(status.email).trim() || undefined;
     let points: number | null = null;
     try {
@@ -648,12 +779,49 @@ export async function testGladosConnection(db: D1Database, accountId: number): P
     } catch {
       // 积分查询失败不影响连接检测结果。
     }
+    let trafficUsedBytes: number | null = null;
+    try {
+      trafficUsedBytes = await fetchTrafficUsedBytes(cookie, proxyUrl);
+    } catch {
+      // 流量查询失败不影响连接检测结果。
+    }
+    // 检测成功时同步落库，让列表无需再点一次「余额」就能看到订阅链接与流量。
+    await dbRun(db, `
+      UPDATE glados_checkin_accounts
+      SET subscription_url = COALESCE(?, subscription_url),
+          expires_at = COALESCE(?, expires_at),
+          traffic_used_bytes = COALESCE(?, traffic_used_bytes),
+          traffic_limit_gb = COALESCE(?, traffic_limit_gb),
+          plan_level = COALESCE(?, plan_level),
+          left_days = COALESCE(?, left_days),
+          points = COALESCE(?, points),
+          balance_updated_at = CASE WHEN ? IS NOT NULL THEN ? ELSE balance_updated_at END,
+          status = 'active', last_error = NULL, updated_at = ?
+      WHERE id = ?
+    `, [
+      snapshot.subscriptionUrl,
+      snapshot.expiresAt,
+      trafficUsedBytes,
+      snapshot.trafficLimitGb,
+      snapshot.planLevel,
+      snapshot.leftDays,
+      points,
+      points,
+      unixNow(),
+      unixNow(),
+      accountId
+    ]);
     return {
       success: true,
       message: '连接正常',
       email,
-      leftDays,
-      points
+      leftDays: snapshot.leftDays,
+      points,
+      subscriptionUrl: snapshot.subscriptionUrl,
+      expiresAt: snapshot.expiresAt,
+      trafficUsedBytes,
+      trafficLimitGb: snapshot.trafficLimitGb,
+      planLevel: snapshot.planLevel
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : '连接失败';
@@ -747,13 +915,31 @@ export function registerGladosCheckinRoutes(app: Hono<any>): void {
   app.post('/api/public-checkin/glados/accounts/:id/test', async (c) => c.json(await testGladosConnection(c.env.DB, routeId(c.req.param('id')))));
   app.post('/api/public-checkin/glados/accounts/:id/checkin', async (c) => c.json(await runGladosCheckinForAccount(c.env.DB, routeId(c.req.param('id')), 'manual')));
   app.post('/api/public-checkin/glados/accounts/:id/refresh-balance', async (c) => {
-    const result = await testGladosConnection(c.env.DB, routeId(c.req.param('id')));
+    const accountId = routeId(c.req.param('id'));
+    const result = await testGladosConnection(c.env.DB, accountId);
     if (result.success) {
       await dbRun(c.env.DB, `
         UPDATE glados_checkin_accounts
-        SET points = ?, left_days = ?, balance_updated_at = ?, status = 'active', last_error = NULL, updated_at = ?
+        SET points = ?, left_days = ?, balance_updated_at = ?,
+            subscription_url = COALESCE(?, subscription_url),
+            expires_at = COALESCE(?, expires_at),
+            traffic_used_bytes = COALESCE(?, traffic_used_bytes),
+            traffic_limit_gb = COALESCE(?, traffic_limit_gb),
+            plan_level = COALESCE(?, plan_level),
+            status = 'active', last_error = NULL, updated_at = ?
         WHERE id = ?
-      `, [result.points ?? null, result.leftDays ?? null, unixNow(), unixNow(), routeId(c.req.param('id'))]);
+      `, [
+        result.points ?? null,
+        result.leftDays ?? null,
+        unixNow(),
+        result.subscriptionUrl ?? null,
+        result.expiresAt ?? null,
+        result.trafficUsedBytes ?? null,
+        result.trafficLimitGb ?? null,
+        result.planLevel ?? null,
+        unixNow(),
+        accountId
+      ]);
     }
     return c.json(result);
   });

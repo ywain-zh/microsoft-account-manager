@@ -29,6 +29,8 @@ let checkinMessage: string = '';
 let points: number = 500;
 let exchangeCode: number = 0;
 let exchangeMessage: string = '';
+let trafficTodayBytes: number = 0;
+let trafficFails: boolean = false;
 
 function resetFetchState(): void {
   callLog.length = 0;
@@ -38,6 +40,8 @@ function resetFetchState(): void {
   points = 500;
   exchangeCode = 0;
   exchangeMessage = '';
+  trafficTodayBytes = 0;
+  trafficFails = false;
 }
 
 function setFetchHarness(): void {
@@ -52,8 +56,26 @@ function setFetchHarness(): void {
       const custom = statusHandler ? statusHandler(url) : {};
       return new Response(JSON.stringify({
         code: 0,
-        data: { email: 'glados-test@example.com', leftDays: '14.0000000000000000', ...custom }
+        data: {
+          email: 'glados-test@example.com',
+          leftDays: '14.0000000000000000',
+          userId: 756903,
+          configureId: 756903,
+          code: 'abc1234',
+          port: 266669,
+          hashed: 'deadbeefdeadbeef',
+          vip: 10,
+          system_time: 1787835953500,
+          ...custom
+        }
       }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    if (pathname === '/api/user/traffic') {
+      if (trafficFails) return new Response('boom', { status: 500 });
+      return new Response(JSON.stringify({ code: 0, data: { limit: 1000, level: 1, today: trafficTodayBytes, throttles: [] } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      });
     }
     if (pathname === '/api/user/checkin') {
       return new Response(JSON.stringify({ code: checkinCode, message: checkinMessage, points }), {
@@ -88,6 +110,7 @@ function createHarness(): { app: Hono<any>; db: SQLiteD1Database; cleanup: () =>
     );
   `);
   db.raw.exec(readFileSync(join(process.cwd(), 'migrations/0023_glados_checkin.sql'), 'utf8'));
+  db.raw.exec(readFileSync(join(process.cwd(), 'migrations/0024_glados_subscription.sql'), 'utf8'));
   const app = new Hono<any>();
   registerGladosCheckinRoutes(app);
   return {
@@ -382,6 +405,134 @@ test('serves logs joined with the account label, filterable and paginated', asyn
 
   const future = await jsonRequest<LogsBody>(app, db, '/api/public-checkin/glados/logs?startAt=4102444800');
   assert.equal(future.data.total, 0, 'startAt 晚于所有日志时应为空');
+});
+
+test('derives the subscription url, expiry, traffic and plan from the status payload', async (t) => {
+  resetFetchState();
+  setFetchHarness();
+  checkinCode = 0;
+  points = 100;
+  trafficTodayBytes = 2 * 1_073_741_824; // 2 GiB
+  const { app, db, cleanup } = createHarness();
+  t.after(cleanup);
+
+  const created = await jsonRequest<{ id: number }>(app, db, '/api/public-checkin/glados/accounts', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: accountPayload({ exchangeEnabled: false })
+  });
+
+  await runGladosCheckinForAccount(db, created.data.id, 'manual');
+
+  const row = await db.prepare(
+    'SELECT subscription_url, expires_at, traffic_used_bytes, traffic_limit_gb, plan_level FROM glados_checkin_accounts WHERE id = ?'
+  ).bind(created.data.id).first() as any;
+
+  assert.equal(
+    row.subscription_url,
+    'https://update.glados-config.com/mihomo/756903/abc1234/266669/glados.yaml',
+    '订阅链接需按站点前端的模板拼接'
+  );
+  assert.equal(row.traffic_used_bytes, 2 * 1_073_741_824);
+  assert.equal(row.traffic_limit_gb, 10, 'vip=10 对应 Free 的 10GB 额度');
+  assert.equal(row.plan_level, 'Free');
+
+  // system_time = 1787835953500ms，leftDays = 14 -> 到期为 14 天后
+  const expectedExpiry = Math.floor(1787835953500 / 1000) + 14 * 86400;
+  assert.equal(row.expires_at, expectedExpiry, '到期时间应基于站点 system_time 而非本地时钟');
+
+  const listed = await jsonRequest<any[]>(app, db, '/api/public-checkin/glados/accounts');
+  assert.equal(listed.data[0].subscriptionUrl, row.subscription_url, '列表接口需回传订阅链接');
+  assert.equal(listed.data[0].trafficLimitGb, 10);
+  assert.equal(listed.data[0].planLevel, 'Free');
+  assert.equal(listed.data[0].expiresAt, expectedExpiry);
+});
+
+test('maps every documented vip tier to its plan name and traffic budget', async (t) => {
+  resetFetchState();
+  setFetchHarness();
+  checkinCode = 0;
+  points = 0;
+  const { app, db, cleanup } = createHarness();
+  t.after(cleanup);
+
+  const tiers: Array<[number, string, number]> = [
+    [0, 'Free', 10],
+    [10, 'Free', 10],
+    [11, 'Edu', 100],
+    [21, 'Basic', 200],
+    [31, 'Pro', 500],
+    [41, 'Team', 2000],
+    [51, 'Enterprise', 5000],
+    [999, 'Basic', 0]
+  ];
+
+  for (const [vip, level, limitGb] of tiers) {
+    const created = await jsonRequest<{ id: number }>(app, db, '/api/public-checkin/glados/accounts', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: accountPayload({ label: `vip-${vip}`, exchangeEnabled: false })
+    });
+    statusHandler = () => ({ vip });
+    await runGladosCheckinForAccount(db, created.data.id, 'manual');
+    const row = await db.prepare('SELECT plan_level, traffic_limit_gb FROM glados_checkin_accounts WHERE id = ?')
+      .bind(created.data.id).first() as any;
+    assert.equal(row.plan_level, level, `vip=${vip} 应映射为 ${level}`);
+    assert.equal(row.traffic_limit_gb, limitGb, `vip=${vip} 的额度应为 ${limitGb}GB`);
+  }
+});
+
+test('omits the subscription url when the status payload lacks code or port', async (t) => {
+  resetFetchState();
+  setFetchHarness();
+  checkinCode = 0;
+  const { app, db, cleanup } = createHarness();
+  t.after(cleanup);
+
+  const created = await jsonRequest<{ id: number }>(app, db, '/api/public-checkin/glados/accounts', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: accountPayload({ exchangeEnabled: false })
+  });
+
+  statusHandler = () => ({ code: '', port: null });
+  await runGladosCheckinForAccount(db, created.data.id, 'manual');
+
+  const row = await db.prepare('SELECT subscription_url FROM glados_checkin_accounts WHERE id = ?')
+    .bind(created.data.id).first() as any;
+  assert.equal(row.subscription_url, null, '参数不全时不应产出半截地址');
+});
+
+test('keeps the checkin successful and preserves stored traffic when the traffic api fails', async (t) => {
+  resetFetchState();
+  setFetchHarness();
+  checkinCode = 0;
+  points = 100;
+  trafficTodayBytes = 5 * 1_073_741_824;
+  const { app, db, cleanup } = createHarness();
+  t.after(cleanup);
+
+  const created = await jsonRequest<{ id: number }>(app, db, '/api/public-checkin/glados/accounts', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: accountPayload({ exchangeEnabled: false })
+  });
+
+  // 第一次正常，写入 5GiB
+  await runGladosCheckinForAccount(db, created.data.id, 'manual');
+  const first = await db.prepare('SELECT traffic_used_bytes FROM glados_checkin_accounts WHERE id = ?')
+    .bind(created.data.id).first() as any;
+  assert.equal(first.traffic_used_bytes, 5 * 1_073_741_824);
+
+  // 第二次流量接口失败，签到仍应成功且旧值不被覆盖
+  trafficFails = true;
+  const run = await runGladosCheckinForAccount(db, created.data.id, 'manual');
+  assert.equal(run.result?.success, true, '流量接口失败不应影响签到结果');
+
+  const second = await db.prepare('SELECT traffic_used_bytes, status FROM glados_checkin_accounts WHERE id = ?')
+    .bind(created.data.id).first() as any;
+  assert.equal(second.traffic_used_bytes, 5 * 1_073_741_824, '流量查询失败时应保留库中旧值');
+  assert.equal(second.status, 'active');
 });
 
 test('does not overwrite the stored cookie when editing leaves it empty', async (t) => {

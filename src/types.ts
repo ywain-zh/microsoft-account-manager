@@ -410,6 +410,11 @@ export interface GladosCheckinAccount {
   points: number | null;
   leftDays: number | null;
   balanceUpdatedAt: number | null;
+  subscriptionUrl: string | null;
+  expiresAt: number | null;
+  trafficUsedBytes: number | null;
+  trafficLimitGb: number | null;
+  planLevel: string | null;
   lastStatus: GladosCheckinStatus | null;
   lastMessage: string | null;
   lastRunAt: number | null;
@@ -445,6 +450,11 @@ export interface GladosTestResult {
   email?: string;
   leftDays?: number | null;
   points?: number | null;
+  subscriptionUrl?: string | null;
+  expiresAt?: number | null;
+  trafficUsedBytes?: number | null;
+  trafficLimitGb?: number | null;
+  planLevel?: string | null;
 }
 
 export type TranslationProvider = 'openai' | 'deeplx';
