@@ -18,6 +18,7 @@ import { registerLinuxDoMailRoutes } from './runtime/linuxdo-mail.js';
 import { registerNotificationRoutes } from './runtime/notifications.js';
 import { registerPublicCheckinRoutes } from './runtime/public-checkin.js';
 import { registerPokemonRenewalRoutes } from './runtime/pokemon-renewal.js';
+import { registerGladosCheckinRoutes } from './runtime/glados-checkin.js';
 import {
   normalizeImportApiKey,
   normalizeImportBaseUrl,
@@ -691,6 +692,7 @@ app.post('/api/auth/login', async (c) => {
 
 registerPublicCheckinRoutes(app);
 registerPokemonRenewalRoutes(app);
+registerGladosCheckinRoutes(app);
 registerNotificationRoutes(app);
 registerLinuxDoMailRoutes(app);
 

@@ -397,6 +397,56 @@ export interface PokemonRenewalRunSnapshot {
   results: PokemonRenewalResult[];
 }
 
+export type GladosExchangePlan = 'plan100' | 'plan200' | 'plan500';
+export type GladosCheckinStatus = 'success' | 'repeat' | 'failed';
+export type GladosCheckinAccountStatus = 'active' | 'disabled' | 'error';
+
+export interface GladosCheckinAccount {
+  id: number;
+  label: string;
+  exchangeEnabled: boolean;
+  exchangePlan: GladosExchangePlan | null;
+  checkinEnabled: boolean;
+  points: number | null;
+  leftDays: number | null;
+  balanceUpdatedAt: number | null;
+  lastStatus: GladosCheckinStatus | null;
+  lastMessage: string | null;
+  lastRunAt: number | null;
+  status: GladosCheckinAccountStatus;
+  lastError: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface GladosCheckinLog {
+  id: number;
+  accountId: number;
+  triggeredBy: 'scheduler' | 'manual';
+  status: 'success' | 'failed' | 'skipped';
+  reward: number | null;
+  rewardNote: string | null;
+  errorMessage: string | null;
+  executedAt: number;
+  accountLabel: string;
+  siteName: string;
+}
+
+export interface GladosCheckinLogResponse {
+  items: GladosCheckinLog[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface GladosTestResult {
+  success: boolean;
+  message: string;
+  email?: string;
+  leftDays?: number | null;
+  points?: number | null;
+}
+
 export type TranslationProvider = 'openai' | 'deeplx';
 
 export interface TranslationConfig {

@@ -5,6 +5,9 @@ import type { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { fetch, ProxyAgent, type Dispatcher, type RequestInit as UndiciRequestInit } from 'undici';
 
+import { runGladosCheckinAll } from './glados-checkin.ts';
+import type { PublicCheckinNotificationItem } from './notifications.ts';
+
 export type PublicCheckinPlatform = 'new-api' | 'one-api' | 'onehub' | 'anyrouter';
 type StoredPublicCheckinPlatform = Exclude<PublicCheckinPlatform, 'anyrouter'>;
 export type PublicCheckinCredentialType = 'password' | 'access_token' | 'cookie';
@@ -366,10 +369,10 @@ async function loadNotificationsModule(): Promise<NotificationsModule> {
 
 async function sendSchedulerSummaryNotification(
   db: D1Database,
-  results: Awaited<ReturnType<typeof runCheckinAll>>
+  results: readonly PublicCheckinNotificationItem[]
 ): Promise<void> {
   const notifications = await loadNotificationsModule();
-  await notifications.sendPublicCheckinSchedulerSummaryNotification(db, results);
+  await notifications.sendPublicCheckinSchedulerSummaryNotification(db, results as PublicCheckinNotificationItem[]);
 }
 
 async function sendSchedulerErrorNotification(db: D1Database, error: unknown): Promise<void> {
@@ -3603,7 +3606,11 @@ async function restartPublicCheckinScheduler(db: D1Database): Promise<void> {
     console.info('[PublicCheckin] 开始执行定时签到');
     try {
       const results = await runCheckinAll(db, 'scheduler');
-      await sendSchedulerSummaryNotification(db, results).catch((error) => {
+      const gladosResults = await runGladosCheckinAll(db, 'scheduler').catch((error) => {
+        console.warn('[PublicCheckin] GLaDOS 定时签到执行异常', error);
+        return [];
+      });
+      await sendSchedulerSummaryNotification(db, [...results, ...gladosResults]).catch((error) => {
         console.warn('[PublicCheckin] Telegram 签到汇总通知发送失败', error);
       });
     } catch (error) {

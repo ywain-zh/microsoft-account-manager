@@ -58,7 +58,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-if="loading || pokemonLoading">
+            <tr v-if="loading || pokemonLoading || gladosLoading">
               <td colspan="6">
                 <div class="table-empty">加载中...</div>
               </td>
@@ -85,6 +85,96 @@
                     <n-button class="row-btn pokemon-renew-btn" type="primary" size="small" @click="openPokemonModal">
                       续费
                     </n-button>
+                  </div>
+                </td>
+              </tr>
+              <tr v-else-if="row.kind === 'glados'" class="glados-summary-row">
+                <td>
+                  <div class="account-site-cell">
+                    <a
+                      class="account-site-link"
+                      href="https://glados.cloud"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="https://glados.cloud"
+                    >
+                      {{ row.account.label }}
+                    </a>
+                    <span class="glados-summary-mark">GL</span>
+                  </div>
+                </td>
+                <td>
+                  <div class="account-balance-cell">
+                    <strong v-if="row.account.points != null" class="glados-points">
+                      {{ row.account.points }} 积分
+                    </strong>
+                    <strong v-else class="glados-points muted">-</strong>
+                    <span
+                      v-if="row.account.leftDays != null"
+                      class="account-balance-cell__daily glados-leftdays"
+                      title="剩余有效天数"
+                    >
+                      {{ row.account.leftDays }} 天
+                    </span>
+                  </div>
+                </td>
+                <td>
+                  <span
+                    class="auto-checkin-badge"
+                    :class="row.account.checkinEnabled ? 'is-on' : 'is-off'"
+                    title="如需修改自动签到，请进入编辑账号"
+                  >
+                    {{ row.account.checkinEnabled ? '开启' : '关闭' }}
+                  </span>
+                </td>
+                <td>
+                  <div class="account-status-cell">
+                    <n-tag :type="healthTagType(gladosHealthState(row.account))" size="small" :bordered="false">
+                      {{ gladosHealthLabel(row.account) }}
+                    </n-tag>
+                    <span
+                      :class="row.account.status === 'error' ? 'error-small' : 'muted-small'"
+                      :title="gladosHealthMessage(row.account)"
+                    >
+                      {{ gladosHealthMessage(row.account) }}
+                    </span>
+                  </div>
+                </td>
+                <td class="placeholder-cell">-</td>
+                <td>
+                  <div class="account-actions">
+                    <n-button
+                      class="row-btn row-btn-blue"
+                      :class="{ 'is-loading-pretty': gladosBusyIs(row.account, 'test') }"
+                      size="small"
+                      :loading="gladosBusyIs(row.account, 'test')"
+                      :disabled="gladosBusyIs(row.account, 'any')"
+                      @click="testGladosRow(row.account)"
+                    >
+                      <span class="row-btn-label">检测</span>
+                    </n-button>
+                    <n-button
+                      class="row-btn row-btn-green"
+                      :class="{ 'is-loading-pretty': gladosBusyIs(row.account, 'checkin') }"
+                      size="small"
+                      :loading="gladosBusyIs(row.account, 'checkin')"
+                      :disabled="gladosBusyIs(row.account, 'any')"
+                      @click="runGladosAccountCheckin(row.account)"
+                    >
+                      <span class="row-btn-label">签到</span>
+                    </n-button>
+                    <n-button
+                      class="row-btn row-btn-gray"
+                      :class="{ 'is-loading-pretty': gladosBusyIs(row.account, 'balance') }"
+                      size="small"
+                      :loading="gladosBusyIs(row.account, 'balance')"
+                      :disabled="gladosBusyIs(row.account, 'any')"
+                      @click="refreshGladosAccountBalance(row.account)"
+                    >
+                      <span class="row-btn-label">余额</span>
+                    </n-button>
+                    <n-button class="row-btn row-btn-gray" size="small" @click="openEditGladosModal(row.account)">编辑</n-button>
+                    <n-button class="row-btn row-btn-red" size="small" @click="confirmDeleteGlados(row.account)">删除</n-button>
                   </div>
                 </td>
               </tr>
@@ -219,7 +309,7 @@
       <div class="account-kind-switch">
         <div>
           <strong>账号类型</strong>
-          <span>{{ accountKind === 'pokemon' ? '一个入口维护全部宝可梦账号' : '公益站签到与余额账号' }}</span>
+          <span>{{ accountKindSwitchDescription }}</span>
         </div>
         <n-select
           v-model:value="accountKind"
@@ -292,6 +382,38 @@
         </div>
       </n-form>
 
+      <n-form v-else-if="accountKind === 'glados'" label-placement="top" class="account-form designed-form glados-form" autocomplete="off">
+        <div class="form-autofill-guard" aria-hidden="true">
+          <input type="text" tabindex="-1" autocomplete="username" name="glados-autofill-username" />
+          <input type="password" tabindex="-1" autocomplete="new-password" name="glados-autofill-password" />
+        </div>
+
+        <n-form-item :label="editingGladosAccount ? '账号名称' : '账号名称'">
+          <n-input v-model:value="gladosForm.label" placeholder="例如：GLaDOS A" />
+        </n-form-item>
+
+        <n-form-item :label="editingGladosAccount ? 'Cookie（留空则不修改）' : 'Cookie'">
+          <SecretInput
+            v-model:value="gladosForm.cookie"
+            placeholder="koa:sess=eyJ...; koa:sess.sig=..."
+            :input-props="accountGladosCookieInputProps"
+          />
+          <template #feedback>
+            从浏览器 GLaDOS 控制台「Network → 请求头 → Cookie」复制，服务端加密保存。
+          </template>
+        </n-form-item>
+
+        <div class="switch-row">
+          <n-checkbox v-model:checked="gladosForm.checkinEnabled">启用自动签到</n-checkbox>
+          <n-checkbox v-model:checked="gladosForm.exchangeEnabled">启用积分兑换</n-checkbox>
+        </div>
+
+        <n-form-item v-if="gladosForm.exchangeEnabled" label="积分兑换计划">
+          <n-select v-model:value="gladosForm.exchangePlan" :options="gladosExchangePlanOptions" />
+          <template #feedback>签到后总积分达到所选门槛才会触发兑换成 GLaDOS 天数。</template>
+        </n-form-item>
+      </n-form>
+
       <PokemonRenewalView
         v-else
         embedded
@@ -307,11 +429,22 @@
           </div>
         </div>
       </template>
+
+      <template v-else-if="accountKind === 'glados'" #footer>
+        <div class="modal-footer">
+          <n-button :loading="connectionTesting" @click="testGladosConnection">检测连接</n-button>
+          <div class="modal-footer-actions">
+            <n-button @click="accountModalVisible = false">取消</n-button>
+            <n-button type="primary" :loading="accountSaving" @click="submitGladosAccount">保存</n-button>
+          </div>
+        </div>
+      </template>
     </n-modal>
 
     <n-modal v-model:show="logModalVisible" preset="card" class="public-checkin-modal log-modal" title="签到日志" style="width: min(920px, 94vw); border-radius: 12px;">
       <div class="log-panel">
         <div class="log-filters">
+          <n-select v-model:value="logSource" :options="logSourceOptions" />
           <n-select v-model:value="logFilters.accountId" clearable placeholder="全部账号" :options="accountOptions" />
           <n-select v-model:value="logFilters.status" clearable placeholder="全部状态" :options="statusOptions" />
           <n-date-picker v-model:value="logFilters.startDate" type="date" clearable placeholder="开始日期" />
@@ -320,7 +453,7 @@
         </div>
         <n-data-table
           :columns="logColumns"
-          :data="logs.items"
+          :data="activeLogs.items"
           :bordered="false"
           :single-line="true"
           :pagination="false"
@@ -328,7 +461,7 @@
           class="log-table"
         />
         <div class="log-pagination">
-          <span>共 {{ logs.total }} 条</span>
+          <span>共 {{ activeLogs.total }} 条</span>
           <n-pagination :page="logPage" :page-count="logPageCount" @update:page="setLogPage" />
         </div>
       </div>
@@ -603,7 +736,10 @@ import type {
   PublicCheckinSingleModelProbeResponse,
   PublicCheckinStatus,
   PublicCheckinSettings,
-  PokemonRenewalAccount
+  PokemonRenewalAccount,
+  GladosCheckinAccount,
+  GladosCheckinLogResponse,
+  GladosExchangePlan
 } from '../types';
 
 const { dialog, message } = createDiscreteApi(['dialog', 'message']);
@@ -641,16 +777,19 @@ const {
 } = publicCheckin;
 
 const accountModalVisible = ref(false);
-const accountKind = ref<'public' | 'pokemon'>('public');
+const accountKind = ref<'public' | 'pokemon' | 'glados'>('public');
 const accountKindLocked = ref(false);
 const pokemonAccounts = ref<PokemonRenewalAccount[]>([]);
 const pokemonLoading = ref(true);
+const gladosAccounts = ref<GladosCheckinAccount[]>([]);
+const gladosLoading = ref(true);
 const logModalVisible = ref(false);
 const announcementsModalVisible = ref(false);
 const settingsModalVisible = ref(false);
 const modelsModalVisible = ref(false);
 const connectionTesting = ref(false);
 const editingAccount = ref<PublicCheckinAccount | null>(null);
+const editingGladosAccount = ref<GladosCheckinAccount | null>(null);
 const announcementModalAccount = ref<PublicCheckinAccount | null>(null);
 const announcements = ref<PublicCheckinAnnouncement[]>([]);
 const announcementsLoading = ref(false);
@@ -679,11 +818,19 @@ let modelProbeCooldownTimer: ReturnType<typeof setInterval> | null = null;
 
 type AccountListRow =
   | { key: string; kind: 'public'; account: PublicCheckinAccount }
+  | { key: string; kind: 'glados'; account: GladosCheckinAccount }
   | { key: 'pokemon'; kind: 'pokemon' };
 
 const accountKindOptions = [
   { label: '公益站', value: 'public' },
-  { label: '宝可梦', value: 'pokemon' }
+  { label: '宝可梦', value: 'pokemon' },
+  { label: 'GLaDOS', value: 'glados' }
+];
+
+const gladosExchangePlanOptions: Array<{ label: string; value: GladosExchangePlan }> = [
+  { label: 'plan100 · 100积分兑10天', value: 'plan100' },
+  { label: 'plan200 · 200积分兑30天', value: 'plan200' },
+  { label: 'plan500 · 500积分兑100天', value: 'plan500' }
 ];
 
 const accountSiteNameInputProps = {
@@ -727,6 +874,20 @@ const accountForm = reactive({
   useProxy: true
 });
 
+const accountGladosCookieInputProps = {
+  autocomplete: 'new-password',
+  name: 'glados-checkin-cookie',
+  spellcheck: false
+};
+
+const gladosForm = reactive({
+  label: '',
+  cookie: '',
+  checkinEnabled: true,
+  exchangeEnabled: false,
+  exchangePlan: 'plan500' as GladosExchangePlan
+});
+
 const settingsForm = reactive<PublicCheckinSettings>({
   checkinCron: '0 8 * * *',
   checkinTime: '08:00',
@@ -746,10 +907,21 @@ const logFilters = reactive<{
   endDate: null
 });
 
-const accountOptions = computed(() => accounts.value.map((account) => ({
-  label: account.site.name,
-  value: account.id
-})));
+// 公益站与 GLaDOS 各自走自己的服务端分页，所以日志按来源二选一展示，分页与总数语义才不会串。
+type LogSource = 'public' | 'glados';
+const logSource = ref<LogSource>('public');
+const logSourceOptions: Array<{ label: string; value: LogSource }> = [
+  { label: '来源：公益站', value: 'public' },
+  { label: '来源：GLaDOS', value: 'glados' }
+];
+const gladosLogs = reactive<GladosCheckinLogResponse>({ items: [], total: 0, limit: 0, offset: 0 });
+const activeLogs = computed(() => (logSource.value === 'glados' ? gladosLogs : logs));
+
+const accountOptions = computed(() => (
+  logSource.value === 'glados'
+    ? gladosAccounts.value.map((account) => ({ label: account.label, value: account.id }))
+    : accounts.value.map((account) => ({ label: account.site.name, value: account.id }))
+));
 
 const statusOptions = [
   { label: '成功', value: 'success' },
@@ -767,9 +939,10 @@ const announcementPollingOptions: Array<{ label: string; value: 15 | 30 | 60 }> 
 
 const accountRows = computed<AccountListRow[]>(() => [
   ...accounts.value.map((account) => ({ key: `public:${account.id}`, kind: 'public' as const, account })),
+  ...gladosAccounts.value.map((account) => ({ key: `glados:${account.id}`, kind: 'glados' as const, account })),
   ...(pokemonAccounts.value.length ? [{ key: 'pokemon' as const, kind: 'pokemon' as const }] : [])
 ]);
-const displayTotalAccounts = computed(() => stats.totalAccounts + (pokemonAccounts.value.length ? 1 : 0));
+const displayTotalAccounts = computed(() => stats.totalAccounts + gladosAccounts.value.length + (pokemonAccounts.value.length ? 1 : 0));
 const accountPageCount = computed(() => Math.max(1, Math.ceil(accountRows.value.length / accountPageSize)));
 const pagedAccountRows = computed(() => {
   if (accountPage.value > accountPageCount.value) accountPage.value = accountPageCount.value;
@@ -778,9 +951,15 @@ const pagedAccountRows = computed(() => {
 });
 const accountModalTitle = computed(() => {
   if (accountKind.value === 'pokemon') return '宝可梦套餐续费';
+  if (accountKind.value === 'glados') return editingGladosAccount.value ? '编辑 GLaDOS 账号' : '添加 GLaDOS 账号';
   return editingAccount.value ? '编辑账号' : '添加账号';
 });
-const logPageCount = computed(() => Math.max(1, Math.ceil(logs.total / logPageSize)));
+const accountKindSwitchDescription = computed(() => {
+  if (accountKind.value === 'pokemon') return '一个入口维护全部宝可梦账号';
+  if (accountKind.value === 'glados') return 'GLaDOS 节点签到与积分兑换';
+  return '公益站签到与余额账号';
+});
+const logPageCount = computed(() => Math.max(1, Math.ceil(activeLogs.value.total / logPageSize)));
 type PublicCheckinBusyAction = NonNullable<typeof busyAccountAction.value>;
 const modelsModalTitle = computed(() => modelsModalSiteName.value ? `模型管理 · ${modelsModalSiteName.value}` : '模型管理');
 const activeSiteProbeRateLimit = computed(() => {
@@ -1094,11 +1273,20 @@ function resetAccountForm(): void {
   accountForm.useProxy = true;
 }
 
+function resetGladosForm(): void {
+  gladosForm.label = '';
+  gladosForm.cookie = '';
+  gladosForm.checkinEnabled = true;
+  gladosForm.exchangeEnabled = false;
+  gladosForm.exchangePlan = 'plan500';
+}
+
 function openCreateModal(): void {
   editingAccount.value = null;
   accountKind.value = 'public';
   accountKindLocked.value = false;
   resetAccountForm();
+  resetGladosForm();
   accountModalVisible.value = true;
 }
 
@@ -1107,6 +1295,7 @@ function openPokemonModal(): void {
   accountKind.value = 'pokemon';
   accountKindLocked.value = true;
   resetAccountForm();
+  resetGladosForm();
   accountModalVisible.value = true;
 }
 
@@ -1115,6 +1304,7 @@ function resetAccountModalContext(): void {
   accountKind.value = 'public';
   accountKindLocked.value = false;
   resetAccountForm();
+  resetGladosForm();
 }
 
 async function loadPokemonAccounts(): Promise<void> {
@@ -1131,6 +1321,193 @@ async function loadPokemonAccounts(): Promise<void> {
 function handlePokemonAccountsChanged(items: PokemonRenewalAccount[]): void {
   pokemonAccounts.value = items;
   if (!items.length) accountPage.value = Math.min(accountPage.value, accountPageCount.value);
+}
+
+async function loadGladosAccounts(): Promise<void> {
+  gladosLoading.value = true;
+  try {
+    gladosAccounts.value = await api.listGladosCheckinAccounts();
+  } catch (error) {
+    handleApiError(error);
+  } finally {
+    gladosLoading.value = false;
+  }
+}
+
+type GladosBusyAction = 'test' | 'checkin' | 'balance';
+const gladosBusyByAccount = ref<Record<number, GladosBusyAction | null>>({});
+
+function gladosBusyIs(account: GladosCheckinAccount, action: 'test' | 'checkin' | 'balance' | 'any'): boolean {
+  const current = gladosBusyByAccount.value[account.id] ?? null;
+  if (action === 'any') return current !== null;
+  return current === action;
+}
+
+async function withGladosBusy(accountId: number, action: GladosBusyAction, task: () => Promise<void>): Promise<void> {
+  if (gladosBusyByAccount.value[accountId]) return;
+  gladosBusyByAccount.value = { ...gladosBusyByAccount.value, [accountId]: action };
+  try {
+    await task();
+  } finally {
+    gladosBusyByAccount.value = { ...gladosBusyByAccount.value, [accountId]: null };
+  }
+}
+
+function gladosHealthState(account: GladosCheckinAccount): 'normal' | 'abnormal' | 'failed' | 'unknown' {
+  if (account.status === 'error') return 'failed';
+  if (account.status === 'disabled') return 'unknown';
+  if (account.lastStatus === 'repeat') return 'normal';
+  if (account.lastStatus === 'success') return 'normal';
+  if (account.lastStatus === 'failed') return 'abnormal';
+  if (account.points == null && account.lastRunAt == null) return 'unknown';
+  return 'normal';
+}
+
+function gladosHealthLabel(account: GladosCheckinAccount): string {
+  return healthLabel(gladosHealthState(account));
+}
+
+function gladosHealthMessage(account: GladosCheckinAccount): string {
+  if (account.status === 'error' && account.lastError) return account.lastError;
+  return account.lastMessage || '-';
+}
+
+async function openEditGladosModal(row: GladosCheckinAccount): Promise<void> {
+  editingGladosAccount.value = row;
+  accountKind.value = 'glados';
+  accountKindLocked.value = true;
+  resetAccountForm();
+  gladosForm.label = row.label;
+  gladosForm.cookie = '';
+  gladosForm.checkinEnabled = row.checkinEnabled;
+  gladosForm.exchangeEnabled = row.exchangeEnabled;
+  gladosForm.exchangePlan = row.exchangePlan || 'plan500';
+  accountModalVisible.value = true;
+  try {
+    const credential = await api.getGladosCheckinCredential(row.id);
+    gladosForm.cookie = credential.cookie;
+  } catch (error) {
+    handleApiError(error);
+  }
+}
+
+async function submitGladosAccount(): Promise<void> {
+  if (!gladosForm.label.trim()) {
+    message.warning('请输入账号名称');
+    return;
+  }
+  if (!editingGladosAccount.value && !gladosForm.cookie.trim()) {
+    message.warning('请输入 GLaDOS Cookie');
+    return;
+  }
+  try {
+    if (editingGladosAccount.value) {
+      const payload: Parameters<typeof api.updateGladosCheckinAccount>[1] = {
+        label: gladosForm.label.trim(),
+        checkinEnabled: gladosForm.checkinEnabled,
+        exchangeEnabled: gladosForm.exchangeEnabled,
+        exchangePlan: gladosForm.exchangeEnabled ? gladosForm.exchangePlan : null
+      };
+      if (gladosForm.cookie.trim()) payload.cookie = gladosForm.cookie.trim();
+      await api.updateGladosCheckinAccount(editingGladosAccount.value.id, payload);
+    } else {
+      await api.createGladosCheckinAccount({
+        label: gladosForm.label.trim(),
+        cookie: gladosForm.cookie.trim(),
+        checkinEnabled: gladosForm.checkinEnabled,
+        exchangeEnabled: gladosForm.exchangeEnabled,
+        exchangePlan: gladosForm.exchangeEnabled ? gladosForm.exchangePlan : undefined
+      });
+    }
+    accountModalVisible.value = false;
+    await loadGladosAccounts();
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '保存失败');
+  }
+}
+
+async function testGladosConnection(): Promise<void> {
+  if (!editingGladosAccount.value) {
+    message.warning('请先在弹框内新增并保存 GLaDOS 账号，再进行检测');
+    return;
+  }
+  connectionTesting.value = true;
+  try {
+    const result = await api.testGladosConnection(editingGladosAccount.value.id);
+    if (result.success) {
+      const days = result.leftDays != null ? `${result.leftDays} 天` : '未知';
+      const points = result.points != null ? `${result.points} 积分` : '未知';
+      message.success(`连接正常 · 剩余 ${days} · ${points}`);
+    } else {
+      message.error(result.message || '连接失败');
+    }
+    await loadGladosAccounts();
+  } catch (error) {
+    handleApiError(error);
+  } finally {
+    connectionTesting.value = false;
+  }
+}
+
+async function testGladosRow(row: GladosCheckinAccount): Promise<void> {
+  await withGladosBusy(row.id, 'test', async () => {
+    try {
+      const result = await api.testGladosConnection(row.id);
+      if (result.success) {
+        const days = result.leftDays != null ? `${result.leftDays} 天` : '未知';
+        const points = result.points != null ? `${result.points} 积分` : '未知';
+        message.success(`连接正常 · 剩余 ${days} · ${points}`);
+      } else {
+        message.error(result.message || '连接失败');
+      }
+      await loadGladosAccounts();
+    } catch (error) {
+      handleApiError(error);
+    }
+  });
+}
+
+async function runGladosAccountCheckin(row: GladosCheckinAccount): Promise<void> {
+  await withGladosBusy(row.id, 'checkin', async () => {
+    try {
+      await api.runGladosCheckin(row.id);
+      await loadGladosAccounts();
+    } catch (error) {
+      handleApiError(error);
+    }
+  });
+}
+
+async function refreshGladosAccountBalance(row: GladosCheckinAccount): Promise<void> {
+  await withGladosBusy(row.id, 'balance', async () => {
+    try {
+      const result = await api.refreshGladosBalance(row.id);
+      if (!result.success) {
+        message.error(result.message || '刷新失败');
+      }
+      await loadGladosAccounts();
+    } catch (error) {
+      handleApiError(error);
+    }
+  });
+}
+
+function confirmDeleteGlados(row: GladosCheckinAccount): void {
+  dialog.warning({
+    title: '删除 GLaDOS 账号',
+    content: `确认删除「${row.label}」？删除后签到与兑换记录将一并清除。`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await api.deleteGladosCheckinAccount(row.id);
+        message.success('已删除');
+        await loadGladosAccounts();
+      } catch (error) {
+        handleApiError(error);
+      }
+    }
+  });
 }
 
 async function openEditModal(row: PublicCheckinAccount): Promise<void> {
@@ -1472,14 +1849,27 @@ function toUnixEnd(value: number | null): number | undefined {
 }
 
 async function refreshLogs(): Promise<void> {
-  await loadLogs({
+  const params = {
     accountId: logFilters.accountId || undefined,
     status: logFilters.status || undefined,
     startAt: toUnixStart(logFilters.startDate),
     endAt: toUnixEnd(logFilters.endDate),
     limit: logPageSize,
     offset: (logPage.value - 1) * logPageSize
-  });
+  };
+  if (logSource.value === 'glados') {
+    try {
+      const response = await api.listGladosCheckinLogs(params);
+      gladosLogs.items = response.items;
+      gladosLogs.total = response.total;
+      gladosLogs.limit = response.limit;
+      gladosLogs.offset = response.offset;
+    } catch (error) {
+      handleApiError(error);
+    }
+    return;
+  }
+  await loadLogs(params);
 }
 
 function setAccountPage(page: number): void {
@@ -1500,6 +1890,20 @@ async function resetLogFilters(): Promise<void> {
   await refreshLogs();
 }
 
+// 切换来源时账号筛选属于另一套 ID，必须清空；筛选条件变化统一回到第一页重新拉取。
+watch(logSource, () => {
+  logFilters.accountId = null;
+});
+
+watch(
+  () => [logSource.value, logFilters.accountId, logFilters.status, logFilters.startDate, logFilters.endDate],
+  () => {
+    if (!logModalVisible.value) return;
+    logPage.value = 1;
+    void refreshLogs();
+  }
+);
+
 async function submitSettings(): Promise<void> {
   if (!settingsForm.checkinTime) {
     message.warning('请选择每日签到时间');
@@ -1510,7 +1914,7 @@ async function submitSettings(): Promise<void> {
 }
 
 onMounted(() => {
-  void Promise.all([loadInitialData(), loadPokemonAccounts()]);
+  void Promise.all([loadInitialData(), loadPokemonAccounts(), loadGladosAccounts()]);
 });
 
 onBeforeUnmount(() => {
@@ -2914,6 +3318,39 @@ onBeforeUnmount(() => {
   font-size: 10px;
   font-weight: 800;
   letter-spacing: .05em;
+}
+
+.glados-summary-row {
+  background: linear-gradient(90deg, rgba(16, 185, 129, 0.055), rgba(255, 255, 255, 0) 42%);
+  box-shadow: inset 3px 0 #10b981;
+}
+
+.glados-summary-row td {
+  vertical-align: middle;
+}
+
+.glados-summary-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: linear-gradient(145deg, #e7faf1, #ecfdf3);
+  color: #0f9d6e;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .05em;
+  vertical-align: middle;
+}
+
+.glados-points.muted {
+  color: #a7afbd;
+}
+
+.glados-leftdays {
+  color: #64748b;
 }
 
 .placeholder-cell {

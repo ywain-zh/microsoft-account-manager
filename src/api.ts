@@ -28,6 +28,10 @@ import type {
   PokemonRenewalAccount,
   PokemonRenewalConfig,
   PokemonRenewalRunSnapshot,
+  GladosCheckinAccount,
+  GladosCheckinLogResponse,
+  GladosExchangePlan,
+  GladosTestResult,
   PublicCheckinAccount,
   PublicCheckinAnnouncement,
   PublicCheckinAccountCredentialResponse,
@@ -705,6 +709,70 @@ export const api = {
 
   getPokemonRenewalRun(id: string): Promise<PokemonRenewalRunSnapshot> {
     return request<PokemonRenewalRunSnapshot>(`/api/public-checkin/pokemon/renewal-runs/${encodeURIComponent(id)}`);
+  },
+
+  listGladosCheckinAccounts(): Promise<GladosCheckinAccount[]> {
+    return request<GladosCheckinAccount[]>('/api/public-checkin/glados/accounts');
+  },
+
+  createGladosCheckinAccount(payload: {
+    label: string;
+    cookie: string;
+    exchangeEnabled: boolean;
+    exchangePlan?: GladosExchangePlan;
+    checkinEnabled: boolean;
+  }): Promise<GladosCheckinAccount> {
+    return request<GladosCheckinAccount>('/api/public-checkin/glados/accounts', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  updateGladosCheckinAccount(
+    id: number,
+    payload: {
+      label?: string;
+      cookie?: string;
+      exchangeEnabled?: boolean;
+      exchangePlan?: GladosExchangePlan | null;
+      checkinEnabled?: boolean;
+    }
+  ): Promise<GladosCheckinAccount> {
+    return request<GladosCheckinAccount>(`/api/public-checkin/glados/accounts/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  deleteGladosCheckinAccount(id: number): Promise<void> {
+    return request<void>(`/api/public-checkin/glados/accounts/${id}`, { method: 'DELETE' });
+  },
+
+  getGladosCheckinCredential(id: number): Promise<{ cookie: string }> {
+    return request<{ cookie: string }>(`/api/public-checkin/glados/accounts/${id}/credential`);
+  },
+
+  testGladosConnection(id: number): Promise<GladosTestResult> {
+    return request<GladosTestResult>(`/api/public-checkin/glados/accounts/${id}/test`, { method: 'POST' });
+  },
+
+  runGladosCheckin(id: number): Promise<void> {
+    return request<void>(`/api/public-checkin/glados/accounts/${id}/checkin`, { method: 'POST' });
+  },
+
+  refreshGladosBalance(id: number): Promise<GladosTestResult> {
+    return request<GladosTestResult>(`/api/public-checkin/glados/accounts/${id}/refresh-balance`, { method: 'POST' });
+  },
+
+  listGladosCheckinLogs(params: {
+    accountId?: number;
+    status?: string;
+    startAt?: number;
+    endAt?: number;
+    limit?: number;
+    offset?: number;
+  } = {}): Promise<GladosCheckinLogResponse> {
+    return request<GladosCheckinLogResponse>(`/api/public-checkin/glados/logs${buildQuery(params)}`);
   },
 
   getTranslationConfig(): Promise<{ item: TranslationConfig }> {
