@@ -1311,25 +1311,21 @@ function resetGladosForm(): void {
 }
 
 function openCreateModal(): void {
-  editingAccount.value = null;
-  accountKind.value = 'public';
-  accountKindLocked.value = false;
-  resetAccountForm();
-  resetGladosForm();
+  resetAccountModalContext();
   accountModalVisible.value = true;
 }
 
 function openPokemonModal(): void {
-  editingAccount.value = null;
+  resetAccountModalContext();
   accountKind.value = 'pokemon';
   accountKindLocked.value = true;
-  resetAccountForm();
-  resetGladosForm();
   accountModalVisible.value = true;
 }
 
+/** 弹框的唯一复位入口：所有打开路径都必须先经过这里，避免 editing* 引用跨次残留。 */
 function resetAccountModalContext(): void {
   editingAccount.value = null;
+  editingGladosAccount.value = null;
   accountKind.value = 'public';
   accountKindLocked.value = false;
   resetAccountForm();
@@ -1449,10 +1445,10 @@ async function copyGladosSubscription(account: GladosCheckinAccount): Promise<vo
 }
 
 async function openEditGladosModal(row: GladosCheckinAccount): Promise<void> {
+  resetAccountModalContext();
   editingGladosAccount.value = row;
   accountKind.value = 'glados';
   accountKindLocked.value = true;
-  resetAccountForm();
   gladosForm.label = row.label;
   gladosForm.cookie = '';
   gladosForm.checkinEnabled = row.checkinEnabled;
@@ -1590,6 +1586,7 @@ function confirmDeleteGlados(row: GladosCheckinAccount): void {
 }
 
 async function openEditModal(row: PublicCheckinAccount): Promise<void> {
+  resetAccountModalContext();
   editingAccount.value = row;
   accountKind.value = 'public';
   accountKindLocked.value = true;
