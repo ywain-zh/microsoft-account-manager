@@ -1,24 +1,5 @@
 <template>
   <div class="page-container public-checkin-page">
-    <div class="stats-grid">
-      <div class="stat-card stat-muted">
-        <div class="stat-title">总账号数</div>
-        <div class="stat-value">{{ displayTotalAccounts }}</div>
-      </div>
-      <div class="stat-card stat-blue">
-        <div class="stat-title">启用签到</div>
-        <div class="stat-value">{{ stats.enabledAccounts }}</div>
-      </div>
-      <div class="stat-card stat-green">
-        <div class="stat-title">今日成功</div>
-        <div class="stat-value">{{ stats.todaySuccess }}</div>
-      </div>
-      <div class="stat-card stat-orange">
-        <div class="stat-title">今日奖励</div>
-        <div class="stat-value">{{ formatMoney(stats.todayReward) }}</div>
-      </div>
-    </div>
-
     <section class="checkin-panel">
       <div class="panel-toolbar">
         <div class="toolbar-left">
@@ -58,7 +39,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-if="loading || pokemonLoading || gladosLoading">
+            <tr v-if="loading || pokemonLoading || gladosLoading || dian115Loading">
               <td colspan="6">
                 <div class="table-empty">加载中...</div>
               </td>
@@ -91,6 +72,7 @@
               <tr v-else-if="row.kind === 'glados'" class="glados-summary-row">
                 <td>
                   <div class="account-site-cell">
+                    <span class="glados-summary-mark">GL</span>
                     <a
                       class="account-site-link"
                       href="https://glados.cloud"
@@ -100,7 +82,6 @@
                     >
                       {{ row.account.label }}
                     </a>
-                    <span class="glados-summary-mark">GL</span>
                   </div>
                 </td>
                 <td>
@@ -199,6 +180,101 @@
                     </n-button>
                     <n-button class="row-btn row-btn-gray" size="small" @click="openEditGladosModal(row.account)">编辑</n-button>
                     <n-button class="row-btn row-btn-red" size="small" @click="confirmDeleteGlados(row.account)">删除</n-button>
+                  </div>
+                </td>
+              </tr>
+              <tr v-else-if="row.kind === 'dian115'" class="glados-summary-row dian115-summary-row">
+                <td>
+                  <div class="account-site-cell">
+                    <span class="glados-summary-mark dian115-summary-mark">D1</span>
+                    <a
+                      class="account-site-link"
+                      href="https://m.dian115.com"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="https://m.dian115.com"
+                    >
+                      {{ row.account.label }}
+                    </a>
+                  </div>
+                </td>
+                <td>
+                  <div class="account-balance-cell">
+                    <div class="account-balance-cell__points-line">
+                      <strong v-if="row.account.points != null" class="glados-points">
+                        {{ row.account.points }} 积分
+                      </strong>
+                      <strong v-else class="glados-points muted">-</strong>
+                      <span
+                        v-if="row.account.todayRewardPoints != null && row.account.todayRewardPoints > 0"
+                        class="account-balance-cell__daily is-reward"
+                        title="今日签到获得"
+                      >
+                        +{{ row.account.todayRewardPoints }}
+                      </span>
+                    </div>
+                    <span class="account-balance-cell__daily dian115-mode" :class="{ 'is-lucky': row.account.checkinMode === 'lucky' }" title="签到模式">
+                      {{ row.account.checkinMode === 'lucky' ? '运气签到' : '普通签到' }}
+                    </span>
+                  </div>
+                </td>
+                <td>
+                  <span
+                    class="auto-checkin-badge"
+                    :class="row.account.checkinEnabled ? 'is-on' : 'is-off'"
+                    title="如需修改自动签到，请进入编辑账号"
+                  >
+                    {{ row.account.checkinEnabled ? '开启' : '关闭' }}
+                  </span>
+                </td>
+                <td>
+                  <div class="account-status-cell">
+                    <n-tag :type="healthTagType(dian115HealthState(row.account))" size="small" :bordered="false">
+                      {{ dian115HealthLabel(row.account) }}
+                    </n-tag>
+                    <span
+                      :class="row.account.status === 'error' ? 'error-small' : 'muted-small'"
+                      :title="dian115HealthMessage(row.account)"
+                    >
+                      {{ dian115HealthMessage(row.account) }}
+                    </span>
+                  </div>
+                </td>
+                <td class="placeholder-cell">-</td>
+                <td>
+                  <div class="account-actions">
+                    <n-button
+                      class="row-btn row-btn-blue"
+                      :class="{ 'is-loading-pretty': dian115BusyIs(row.account, 'test') }"
+                      size="small"
+                      :loading="dian115BusyIs(row.account, 'test')"
+                      :disabled="dian115BusyIs(row.account, 'any')"
+                      @click="testDian115Row(row.account)"
+                    >
+                      <span class="row-btn-label">检测</span>
+                    </n-button>
+                    <n-button
+                      class="row-btn row-btn-green"
+                      :class="{ 'is-loading-pretty': dian115BusyIs(row.account, 'checkin') }"
+                      size="small"
+                      :loading="dian115BusyIs(row.account, 'checkin')"
+                      :disabled="dian115BusyIs(row.account, 'any')"
+                      @click="runDian115AccountCheckin(row.account)"
+                    >
+                      <span class="row-btn-label">签到</span>
+                    </n-button>
+                    <n-button
+                      class="row-btn row-btn-gray"
+                      :class="{ 'is-loading-pretty': dian115BusyIs(row.account, 'balance') }"
+                      size="small"
+                      :loading="dian115BusyIs(row.account, 'balance')"
+                      :disabled="dian115BusyIs(row.account, 'any')"
+                      @click="refreshDian115AccountBalance(row.account)"
+                    >
+                      <span class="row-btn-label">余额</span>
+                    </n-button>
+                    <n-button class="row-btn row-btn-gray" size="small" @click="openEditDian115Modal(row.account)">编辑</n-button>
+                    <n-button class="row-btn row-btn-red" size="small" @click="confirmDeleteDian115(row.account)">删除</n-button>
                   </div>
                 </td>
               </tr>
@@ -442,6 +518,64 @@
         </n-form-item>
       </n-form>
 
+      <n-form v-else-if="accountKind === 'dian115'" label-placement="top" class="account-form designed-form dian115-form" autocomplete="off">
+        <div class="form-autofill-guard" aria-hidden="true">
+          <input type="text" tabindex="-1" autocomplete="username" name="dian115-autofill-username" />
+          <input type="password" tabindex="-1" autocomplete="new-password" name="dian115-autofill-password" />
+        </div>
+
+        <n-form-item label="账号名称">
+          <n-input v-model:value="dian115Form.label" placeholder="例如：dian115 主号" />
+        </n-form-item>
+
+        <div class="form-grid">
+          <n-form-item label="登录方式">
+            <n-radio-group v-model:value="dian115Form.credentialType">
+              <n-radio value="password">邮箱密码</n-radio>
+              <n-radio value="cookie">Cookie</n-radio>
+            </n-radio-group>
+          </n-form-item>
+          <n-form-item label="签到模式">
+            <n-radio-group v-model:value="dian115Form.checkinMode">
+              <n-radio value="normal">普通签到</n-radio>
+              <n-radio value="lucky">运气签到</n-radio>
+            </n-radio-group>
+          </n-form-item>
+        </div>
+
+        <template v-if="dian115Form.credentialType === 'password'">
+          <div class="form-grid">
+            <n-form-item label="邮箱">
+              <n-input
+                v-model:value="dian115Form.email"
+                placeholder="登录 m.dian115.com 使用的邮箱"
+                :input-props="{ autocomplete: 'off', name: 'dian115-email', spellcheck: false }"
+              />
+            </n-form-item>
+            <n-form-item :label="editingDian115Account ? '密码（留空则不修改）' : '密码'">
+              <SecretInput
+                v-model:value="dian115Form.password"
+                placeholder="登录密码，服务端加密保存"
+                :input-props="accountDian115PasswordInputProps"
+              />
+            </n-form-item>
+          </div>
+        </template>
+
+        <n-form-item v-else :label="editingDian115Account ? 'Cookie（留空则不修改）' : 'Cookie'">
+          <SecretInput
+            v-model:value="dian115Form.cookie"
+            placeholder="从浏览器 m.dian115.com 的 Network → 请求头 → Cookie 复制完整内容"
+            :input-props="accountDian115CookieInputProps"
+          />
+        </n-form-item>
+
+        <div class="switch-row">
+          <n-checkbox v-model:checked="dian115Form.checkinEnabled">启用自动签到</n-checkbox>
+          <n-checkbox v-model:checked="dian115Form.useProxy">使用系统代理</n-checkbox>
+        </div>
+      </n-form>
+
       <PokemonRenewalView
         v-else
         embedded
@@ -457,7 +591,7 @@
         <div v-if="accountKind !== 'pokemon'" class="modal-footer">
           <n-button
             :loading="connectionTesting"
-            @click="accountKind === 'glados' ? testGladosConnection() : testFormConnection()"
+            @click="accountKind === 'glados' ? testGladosConnection() : accountKind === 'dian115' ? testDian115Connection() : testFormConnection()"
           >
             检测连接
           </n-button>
@@ -466,7 +600,7 @@
             <n-button
               type="primary"
               :loading="accountSaving"
-              @click="accountKind === 'glados' ? submitGladosAccount() : submitAccount()"
+              @click="accountKind === 'glados' ? submitGladosAccount() : accountKind === 'dian115' ? submitDian115Account() : submitAccount()"
             >
               保存
             </n-button>
@@ -750,6 +884,8 @@ import {
   NInput,
   NModal,
   NPagination,
+  NRadio,
+  NRadioGroup,
   NSelect,
   NTag,
   NTimePicker,
@@ -775,14 +911,17 @@ import type {
   PokemonRenewalAccount,
   GladosCheckinAccount,
   GladosCheckinLogResponse,
-  GladosExchangePlan
+  GladosExchangePlan,
+  Dian115CheckinAccount,
+  Dian115CheckinLogResponse,
+  Dian115CheckinMode,
+  Dian115CredentialType
 } from '../types';
 
 const { dialog, message } = createDiscreteApi(['dialog', 'message']);
 const publicCheckin = usePublicCheckinConsole();
 const {
   accounts,
-  stats,
   settings,
   logs,
   loading,
@@ -813,12 +952,14 @@ const {
 } = publicCheckin;
 
 const accountModalVisible = ref(false);
-const accountKind = ref<'public' | 'pokemon' | 'glados'>('public');
+const accountKind = ref<'public' | 'pokemon' | 'glados' | 'dian115'>('public');
 const accountKindLocked = ref(false);
 const pokemonAccounts = ref<PokemonRenewalAccount[]>([]);
 const pokemonLoading = ref(true);
 const gladosAccounts = ref<GladosCheckinAccount[]>([]);
 const gladosLoading = ref(true);
+const dian115Accounts = ref<Dian115CheckinAccount[]>([]);
+const dian115Loading = ref(true);
 const logModalVisible = ref(false);
 const announcementsModalVisible = ref(false);
 const settingsModalVisible = ref(false);
@@ -826,6 +967,7 @@ const modelsModalVisible = ref(false);
 const connectionTesting = ref(false);
 const editingAccount = ref<PublicCheckinAccount | null>(null);
 const editingGladosAccount = ref<GladosCheckinAccount | null>(null);
+const editingDian115Account = ref<Dian115CheckinAccount | null>(null);
 const announcementModalAccount = ref<PublicCheckinAccount | null>(null);
 const announcements = ref<PublicCheckinAnnouncement[]>([]);
 const announcementsLoading = ref(false);
@@ -855,12 +997,14 @@ let modelProbeCooldownTimer: ReturnType<typeof setInterval> | null = null;
 type AccountListRow =
   | { key: string; kind: 'public'; account: PublicCheckinAccount }
   | { key: string; kind: 'glados'; account: GladosCheckinAccount }
+  | { key: string; kind: 'dian115'; account: Dian115CheckinAccount }
   | { key: 'pokemon'; kind: 'pokemon' };
 
 const accountKindOptions = [
   { label: '公益站', value: 'public' },
   { label: '宝可梦', value: 'pokemon' },
-  { label: 'GLaDOS', value: 'glados' }
+  { label: 'GLaDOS', value: 'glados' },
+  { label: 'dian115', value: 'dian115' }
 ];
 
 const gladosExchangePlanOptions: Array<{ label: string; value: GladosExchangePlan }> = [
@@ -916,6 +1060,18 @@ const accountGladosCookieInputProps = {
   spellcheck: false
 };
 
+const accountDian115CookieInputProps = {
+  autocomplete: 'new-password',
+  name: 'dian115-checkin-cookie',
+  spellcheck: false
+};
+
+const accountDian115PasswordInputProps = {
+  autocomplete: 'new-password',
+  name: 'dian115-checkin-password',
+  spellcheck: false
+};
+
 const gladosForm = reactive({
   label: '',
   cookie: '',
@@ -924,6 +1080,22 @@ const gladosForm = reactive({
   useProxy: false,
   exchangePlan: 'plan500' as GladosExchangePlan
 });
+
+const dian115Form = reactive({
+  label: '',
+  credentialType: 'password' as Dian115CredentialType,
+  cookie: '',
+  email: '',
+  password: '',
+  checkinMode: 'normal' as Dian115CheckinMode,
+  checkinEnabled: true,
+  useProxy: false
+});
+
+const dian115CheckinModeOptions: Array<{ label: string; value: Dian115CheckinMode }> = [
+  { label: '普通签到', value: 'normal' },
+  { label: '运气签到', value: 'lucky' }
+];
 
 const settingsForm = reactive<PublicCheckinSettings>({
   checkinCron: '0 8 * * *',
@@ -944,20 +1116,24 @@ const logFilters = reactive<{
   endDate: null
 });
 
-// 公益站与 GLaDOS 各自走自己的服务端分页，所以日志按来源二选一展示，分页与总数语义才不会串。
-type LogSource = 'public' | 'glados';
+// 公益站、GLaDOS 与 dian115 各自走自己的服务端分页，所以日志按来源三选一展示，分页与总数语义才不会串。
+type LogSource = 'public' | 'glados' | 'dian115';
 const logSource = ref<LogSource>('public');
 const logSourceOptions: Array<{ label: string; value: LogSource }> = [
   { label: '来源：公益站', value: 'public' },
-  { label: '来源：GLaDOS', value: 'glados' }
+  { label: '来源：GLaDOS', value: 'glados' },
+  { label: '来源：dian115', value: 'dian115' }
 ];
 const gladosLogs = reactive<GladosCheckinLogResponse>({ items: [], total: 0, limit: 0, offset: 0 });
-const activeLogs = computed(() => (logSource.value === 'glados' ? gladosLogs : logs));
+const dian115Logs = reactive<Dian115CheckinLogResponse>({ items: [], total: 0, limit: 0, offset: 0 });
+const activeLogs = computed(() => (logSource.value === 'glados' ? gladosLogs : logSource.value === 'dian115' ? dian115Logs : logs));
 
 const accountOptions = computed(() => (
   logSource.value === 'glados'
     ? gladosAccounts.value.map((account) => ({ label: account.label, value: account.id }))
-    : accounts.value.map((account) => ({ label: account.site.name, value: account.id }))
+    : logSource.value === 'dian115'
+      ? dian115Accounts.value.map((account) => ({ label: account.label, value: account.id }))
+      : accounts.value.map((account) => ({ label: account.site.name, value: account.id }))
 ));
 
 const statusOptions = [
@@ -977,9 +1153,9 @@ const announcementPollingOptions: Array<{ label: string; value: 15 | 30 | 60 }> 
 const accountRows = computed<AccountListRow[]>(() => [
   ...accounts.value.map((account) => ({ key: `public:${account.id}`, kind: 'public' as const, account })),
   ...gladosAccounts.value.map((account) => ({ key: `glados:${account.id}`, kind: 'glados' as const, account })),
+  ...dian115Accounts.value.map((account) => ({ key: `dian115:${account.id}`, kind: 'dian115' as const, account })),
   ...(pokemonAccounts.value.length ? [{ key: 'pokemon' as const, kind: 'pokemon' as const }] : [])
 ]);
-const displayTotalAccounts = computed(() => stats.totalAccounts + gladosAccounts.value.length + (pokemonAccounts.value.length ? 1 : 0));
 const accountPageCount = computed(() => Math.max(1, Math.ceil(accountRows.value.length / accountPageSize)));
 const pagedAccountRows = computed(() => {
   if (accountPage.value > accountPageCount.value) accountPage.value = accountPageCount.value;
@@ -989,11 +1165,13 @@ const pagedAccountRows = computed(() => {
 const accountModalTitle = computed(() => {
   if (accountKind.value === 'pokemon') return '宝可梦套餐续费';
   if (accountKind.value === 'glados') return editingGladosAccount.value ? '编辑 GLaDOS 账号' : '添加 GLaDOS 账号';
+  if (accountKind.value === 'dian115') return editingDian115Account.value ? '编辑 dian115 账号' : '添加 dian115 账号';
   return editingAccount.value ? '编辑账号' : '添加账号';
 });
 const accountKindSwitchDescription = computed(() => {
   if (accountKind.value === 'pokemon') return '一个入口维护全部宝可梦账号';
   if (accountKind.value === 'glados') return 'GLaDOS 节点签到与积分兑换';
+  if (accountKind.value === 'dian115') return 'dian115 影音站签到与积分';
   return '公益站签到与余额账号';
 });
 const logPageCount = computed(() => Math.max(1, Math.ceil(activeLogs.value.total / logPageSize)));
@@ -1055,8 +1233,8 @@ const logColumns: DataTableColumns<PublicCheckinLog> = [
     key: 'reward',
     width: 86,
     render(row) {
-      // GLaDOS 的奖励是整数积分，公益站是额度金额，两者共用这张表但格式不同。
-      if (logSource.value === 'glados') {
+      // GLaDOS 与 dian115 的奖励是整数积分，公益站是额度金额，共用这张表但格式不同。
+      if (logSource.value === 'glados' || logSource.value === 'dian115') {
         return row.reward == null ? '-' : `+${row.reward}`;
       }
       return formatMoney(row.reward);
@@ -1323,6 +1501,17 @@ function resetGladosForm(): void {
   gladosForm.exchangePlan = 'plan500';
 }
 
+function resetDian115Form(): void {
+  dian115Form.label = '';
+  dian115Form.credentialType = 'password';
+  dian115Form.cookie = '';
+  dian115Form.email = '';
+  dian115Form.password = '';
+  dian115Form.checkinMode = 'normal';
+  dian115Form.checkinEnabled = true;
+  dian115Form.useProxy = false;
+}
+
 function openCreateModal(): void {
   resetAccountModalContext();
   accountModalVisible.value = true;
@@ -1339,10 +1528,12 @@ function openPokemonModal(): void {
 function resetAccountModalContext(): void {
   editingAccount.value = null;
   editingGladosAccount.value = null;
+  editingDian115Account.value = null;
   accountKind.value = 'public';
   accountKindLocked.value = false;
   resetAccountForm();
   resetGladosForm();
+  resetDian115Form();
 }
 
 async function loadPokemonAccounts(): Promise<void> {
@@ -1369,6 +1560,17 @@ async function loadGladosAccounts(): Promise<void> {
     handleApiError(error);
   } finally {
     gladosLoading.value = false;
+  }
+}
+
+async function loadDian115Accounts(): Promise<void> {
+  dian115Loading.value = true;
+  try {
+    dian115Accounts.value = await api.listDian115CheckinAccounts();
+  } catch (error) {
+    handleApiError(error);
+  } finally {
+    dian115Loading.value = false;
   }
 }
 
@@ -1512,6 +1714,216 @@ async function submitGladosAccount(): Promise<void> {
   } catch (error) {
     message.error(error instanceof Error ? error.message : '保存失败');
   }
+}
+
+async function submitDian115Account(): Promise<void> {
+  if (!dian115Form.label.trim()) {
+    message.warning('请输入账号名称');
+    return;
+  }
+  if (dian115Form.credentialType === 'password') {
+    if (!dian115Form.email.trim()) {
+      message.warning('请输入登录邮箱');
+      return;
+    }
+    if (!editingDian115Account.value && !dian115Form.password) {
+      message.warning('请输入登录密码');
+      return;
+    }
+  } else if (!editingDian115Account.value && !dian115Form.cookie.trim()) {
+    message.warning('请输入 dian115 Cookie');
+    return;
+  }
+  try {
+    if (editingDian115Account.value) {
+      const payload: Parameters<typeof api.updateDian115CheckinAccount>[1] = {
+        label: dian115Form.label.trim(),
+        credentialType: dian115Form.credentialType,
+        checkinMode: dian115Form.checkinMode,
+        checkinEnabled: dian115Form.checkinEnabled,
+        useProxy: dian115Form.useProxy
+      };
+      if (dian115Form.credentialType === 'password') {
+        payload.email = dian115Form.email.trim();
+        if (dian115Form.password) payload.password = dian115Form.password;
+      } else if (dian115Form.cookie.trim()) {
+        payload.cookie = dian115Form.cookie.trim();
+      }
+      await api.updateDian115CheckinAccount(editingDian115Account.value.id, payload);
+    } else {
+      await api.createDian115CheckinAccount({
+        label: dian115Form.label.trim(),
+        credentialType: dian115Form.credentialType,
+        cookie: dian115Form.credentialType === 'cookie' ? dian115Form.cookie.trim() : undefined,
+        email: dian115Form.credentialType === 'password' ? dian115Form.email.trim() : undefined,
+        password: dian115Form.credentialType === 'password' ? dian115Form.password : undefined,
+        checkinMode: dian115Form.checkinMode,
+        checkinEnabled: dian115Form.checkinEnabled,
+        useProxy: dian115Form.useProxy
+      });
+    }
+    accountModalVisible.value = false;
+    await loadDian115Accounts();
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '保存失败');
+  }
+}
+
+/** 添加弹框里的「检测连接」：无需保存，用填写的信息直接验证（只读，不触发签到）。 */
+async function testDian115Connection(): Promise<void> {
+  if (dian115Form.credentialType === 'password') {
+    if (!dian115Form.email.trim() || !dian115Form.password) {
+      message.warning('请先填写邮箱和密码，再进行检测');
+      return;
+    }
+  } else if (!dian115Form.cookie.trim()) {
+    message.warning('请先填写 Cookie，再进行检测');
+    return;
+  }
+  connectionTesting.value = true;
+  try {
+    const result = await api.testDian115Cookie({
+      credentialType: dian115Form.credentialType,
+      cookie: dian115Form.credentialType === 'cookie' ? dian115Form.cookie.trim() : undefined,
+      email: dian115Form.credentialType === 'password' ? dian115Form.email.trim() : undefined,
+      password: dian115Form.credentialType === 'password' ? dian115Form.password : undefined,
+      useProxy: dian115Form.useProxy
+    });
+    if (result.success) {
+      const who = result.nickname || result.email || '未知用户';
+      const points = result.points != null ? `${result.points} 积分` : '积分未知';
+      message.success(`连接正常 · ${who} · ${points}`);
+    } else {
+      message.error(result.message || '连接失败');
+    }
+  } catch (error) {
+    handleApiError(error);
+  } finally {
+    connectionTesting.value = false;
+  }
+}
+
+type Dian115BusyAction = 'test' | 'checkin' | 'balance';
+const dian115BusyByAccount = ref<Record<number, Dian115BusyAction | null>>({});
+
+function dian115BusyIs(account: Dian115CheckinAccount, action: 'test' | 'checkin' | 'balance' | 'any'): boolean {
+  const current = dian115BusyByAccount.value[account.id] ?? null;
+  if (action === 'any') return current !== null;
+  return current === action;
+}
+
+async function withDian115Busy(accountId: number, action: Dian115BusyAction, task: () => Promise<void>): Promise<void> {
+  if (dian115BusyByAccount.value[accountId]) return;
+  dian115BusyByAccount.value = { ...dian115BusyByAccount.value, [accountId]: action };
+  try {
+    await task();
+  } finally {
+    dian115BusyByAccount.value = { ...dian115BusyByAccount.value, [accountId]: null };
+  }
+}
+
+function dian115HealthState(account: Dian115CheckinAccount): 'normal' | 'abnormal' | 'failed' | 'unknown' {
+  if (account.status === 'error') return 'failed';
+  if (account.status === 'disabled') return 'unknown';
+  if (account.lastStatus === 'repeat') return 'normal';
+  if (account.lastStatus === 'success') return 'normal';
+  if (account.lastStatus === 'failed') return 'abnormal';
+  if (account.points == null && account.lastRunAt == null) return 'unknown';
+  return 'normal';
+}
+
+function dian115HealthLabel(account: Dian115CheckinAccount): string {
+  return healthLabel(dian115HealthState(account));
+}
+
+function dian115HealthMessage(account: Dian115CheckinAccount): string {
+  if (account.status === 'error' && account.lastError) return account.lastError;
+  return account.lastMessage || '-';
+}
+
+async function openEditDian115Modal(row: Dian115CheckinAccount): Promise<void> {
+  resetAccountModalContext();
+  editingDian115Account.value = row;
+  accountKind.value = 'dian115';
+  accountKindLocked.value = true;
+  dian115Form.label = row.label;
+  dian115Form.credentialType = row.credentialType;
+  dian115Form.cookie = '';
+  dian115Form.email = row.email || '';
+  dian115Form.password = '';
+  dian115Form.checkinMode = row.checkinMode;
+  dian115Form.checkinEnabled = row.checkinEnabled;
+  dian115Form.useProxy = row.useProxy;
+  accountModalVisible.value = true;
+  if (row.credentialType === 'cookie') {
+    try {
+      const credential = await api.getDian115CheckinCredential(row.id);
+      dian115Form.cookie = credential.cookie;
+    } catch (error) {
+      handleApiError(error);
+    }
+  }
+}
+
+async function testDian115Row(row: Dian115CheckinAccount): Promise<void> {
+  await withDian115Busy(row.id, 'test', async () => {
+    try {
+      const result = await api.testDian115Connection(row.id);
+      if (result.success) {
+        const who = result.nickname || result.email || '未知用户';
+        const points = result.points != null ? `${result.points} 积分` : '积分未知';
+        message.success(`连接正常 · ${who} · ${points}`);
+      } else {
+        message.error(result.message || '连接失败');
+      }
+      await loadDian115Accounts();
+    } catch (error) {
+      handleApiError(error);
+    }
+  });
+}
+
+async function runDian115AccountCheckin(row: Dian115CheckinAccount): Promise<void> {
+  await withDian115Busy(row.id, 'checkin', async () => {
+    try {
+      await api.runDian115Checkin(row.id);
+      await loadDian115Accounts();
+    } catch (error) {
+      handleApiError(error);
+    }
+  });
+}
+
+async function refreshDian115AccountBalance(row: Dian115CheckinAccount): Promise<void> {
+  await withDian115Busy(row.id, 'balance', async () => {
+    try {
+      const result = await api.refreshDian115Balance(row.id);
+      if (!result.success) {
+        message.error(result.message || '刷新失败');
+      }
+      await loadDian115Accounts();
+    } catch (error) {
+      handleApiError(error);
+    }
+  });
+}
+
+function confirmDeleteDian115(row: Dian115CheckinAccount): void {
+  dialog.warning({
+    title: '删除 dian115 账号',
+    content: `确认删除「${row.label}」？删除后签到记录将一并清除。`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await api.deleteDian115CheckinAccount(row.id);
+        message.success('已删除');
+        await loadDian115Accounts();
+      } catch (error) {
+        handleApiError(error);
+      }
+    }
+  });
 }
 
 async function testGladosConnection(): Promise<void> {
@@ -1958,6 +2370,18 @@ async function refreshLogs(): Promise<void> {
     }
     return;
   }
+  if (logSource.value === 'dian115') {
+    try {
+      const response = await api.listDian115CheckinLogs(params);
+      dian115Logs.items = response.items;
+      dian115Logs.total = response.total;
+      dian115Logs.limit = response.limit;
+      dian115Logs.offset = response.offset;
+    } catch (error) {
+      handleApiError(error);
+    }
+    return;
+  }
   await loadLogs(params);
 }
 
@@ -2003,7 +2427,7 @@ async function submitSettings(): Promise<void> {
 }
 
 onMounted(() => {
-  void Promise.all([loadInitialData(), loadPokemonAccounts(), loadGladosAccounts()]);
+  void Promise.all([loadInitialData(), loadPokemonAccounts(), loadGladosAccounts(), loadDian115Accounts()]);
 });
 
 onBeforeUnmount(() => {
@@ -2032,67 +2456,6 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 32px;
-}
-
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 24px;
-}
-
-.stat-card {
-  position: relative;
-  min-height: 102px;
-  overflow: hidden;
-  border: 1px solid #f1f5f9;
-  border-radius: 12px;
-  background: #ffffff;
-  padding: 20px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
-}
-
-.stat-title {
-  color: #64748b;
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  line-height: var(--leading-tight);
-}
-
-.stat-value {
-  margin-top: 8px;
-  color: #0f172a;
-  font-family: var(--font-number);
-  font-size: var(--text-stat);
-  font-weight: var(--weight-heavy);
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: 'tnum' 1, 'lnum' 1;
-  line-height: 1.1;
-}
-
-.stat-blue .stat-value {
-  color: #4f46e5;
-}
-
-.stat-green .stat-value {
-  color: #10b981;
-}
-
-.stat-orange .stat-value {
-  color: #f97316;
-}
-
-.stat-muted::after {
-  content: '';
-  position: absolute;
-  right: 18px;
-  bottom: 12px;
-  width: 80px;
-  height: 50px;
-  border-radius: 999px;
-  background:
-    radial-gradient(circle at 23px 27px, rgba(241, 245, 249, 0.8) 0 12px, transparent 13px),
-    radial-gradient(circle at 51px 15px, rgba(241, 245, 249, 0.75) 0 13px, transparent 14px),
-    radial-gradient(circle at 70px 29px, rgba(241, 245, 249, 0.65) 0 12px, transparent 13px);
 }
 
 .checkin-panel {
@@ -2281,6 +2644,22 @@ onBeforeUnmount(() => {
   justify-content: center;
   color: #94a3b8;
   font-size: var(--text-sm);
+}
+
+.account-site-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.account-site-cell .account-site-link {
+  min-width: 0;
+}
+
+.account-site-cell .glados-summary-mark {
+  flex-shrink: 0;
+  margin-left: 0;
 }
 
 .account-site-link {
@@ -3397,11 +3776,6 @@ onBeforeUnmount(() => {
   gap: 14px;
 }
 
-.pokemon-summary-row {
-  background: linear-gradient(90deg, rgba(118, 87, 232, 0.055), rgba(255, 255, 255, 0) 42%);
-  box-shadow: inset 3px 0 #7657e8;
-}
-
 .pokemon-summary-name {
   display: flex;
   align-items: center;
@@ -3422,11 +3796,6 @@ onBeforeUnmount(() => {
   letter-spacing: .05em;
 }
 
-.glados-summary-row {
-  background: linear-gradient(90deg, rgba(16, 185, 129, 0.055), rgba(255, 255, 255, 0) 42%);
-  box-shadow: inset 3px 0 #10b981;
-}
-
 .glados-summary-row td {
   vertical-align: middle;
 }
@@ -3445,6 +3814,44 @@ onBeforeUnmount(() => {
   font-weight: 800;
   letter-spacing: .05em;
   vertical-align: middle;
+}
+
+.dian115-summary-mark {
+  background: linear-gradient(145deg, #eef2ff, #f5f7ff);
+  color: #5b6ee1;
+}
+
+.dian115-mode {
+  color: #64748b;
+}
+
+.dian115-mode.is-lucky {
+  color: #b45309;
+}
+
+/* dian115 表单：登录方式 / 签到模式单选胶囊化 */
+.dian115-form :deep(.n-radio-group) {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  background: #f8fafc;
+  border: 1px solid #eef2f7;
+  border-radius: 10px;
+}
+
+.dian115-form :deep(.n-radio) {
+  padding: 5px 14px;
+  border-radius: 8px;
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.dian115-form :deep(.n-radio:hover) {
+  background: #ffffff;
+}
+
+.dian115-form :deep(.n-radio.n-radio--checked) {
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
 }
 
 .glados-points.muted {
@@ -3533,10 +3940,6 @@ onBeforeUnmount(() => {
     padding: 24px;
   }
 
-  .stats-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-
   .panel-toolbar {
     align-items: stretch;
     flex-direction: column;
@@ -3567,7 +3970,6 @@ onBeforeUnmount(() => {
     padding-right: 16px;
   }
 
-  .stats-grid,
   .form-grid,
   .log-filters {
     grid-template-columns: 1fr;

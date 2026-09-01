@@ -32,6 +32,11 @@ import type {
   GladosCheckinLogResponse,
   GladosExchangePlan,
   GladosTestResult,
+  Dian115CheckinAccount,
+  Dian115CheckinLogResponse,
+  Dian115CheckinMode,
+  Dian115CredentialType,
+  Dian115TestResult,
   PublicCheckinAccount,
   PublicCheckinAnnouncement,
   PublicCheckinAccountCredentialResponse,
@@ -775,6 +780,90 @@ export const api = {
     offset?: number;
   } = {}): Promise<GladosCheckinLogResponse> {
     return request<GladosCheckinLogResponse>(`/api/public-checkin/glados/logs${buildQuery(params)}`);
+  },
+
+  listDian115CheckinAccounts(): Promise<Dian115CheckinAccount[]> {
+    return request<Dian115CheckinAccount[]>('/api/public-checkin/dian115/accounts');
+  },
+
+  createDian115CheckinAccount(payload: {
+    label: string;
+    credentialType: Dian115CredentialType;
+    cookie?: string;
+    email?: string;
+    password?: string;
+    checkinMode?: Dian115CheckinMode;
+    checkinEnabled: boolean;
+    useProxy: boolean;
+  }): Promise<Dian115CheckinAccount> {
+    return request<Dian115CheckinAccount>('/api/public-checkin/dian115/accounts', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  updateDian115CheckinAccount(
+    id: number,
+    payload: {
+      label?: string;
+      credentialType?: Dian115CredentialType;
+      cookie?: string;
+      email?: string;
+      password?: string;
+      checkinMode?: Dian115CheckinMode;
+      checkinEnabled?: boolean;
+      useProxy?: boolean;
+    }
+  ): Promise<Dian115CheckinAccount> {
+    return request<Dian115CheckinAccount>(`/api/public-checkin/dian115/accounts/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  deleteDian115CheckinAccount(id: number): Promise<void> {
+    return request<void>(`/api/public-checkin/dian115/accounts/${id}`, { method: 'DELETE' });
+  },
+
+  getDian115CheckinCredential(id: number): Promise<{ cookie: string }> {
+    return request<{ cookie: string }>(`/api/public-checkin/dian115/accounts/${id}/credential`);
+  },
+
+  /** 未保存凭据的连接检测（支持 Cookie 或邮箱密码），用于添加弹框里的「检测连接」。 */
+  testDian115Cookie(payload: {
+    credentialType?: Dian115CredentialType;
+    cookie?: string;
+    email?: string;
+    password?: string;
+    useProxy?: boolean;
+  }): Promise<Dian115TestResult> {
+    return request<Dian115TestResult>('/api/public-checkin/dian115/test', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  testDian115Connection(id: number): Promise<Dian115TestResult> {
+    return request<Dian115TestResult>(`/api/public-checkin/dian115/accounts/${id}/test`, { method: 'POST' });
+  },
+
+  runDian115Checkin(id: number): Promise<void> {
+    return request<void>(`/api/public-checkin/dian115/accounts/${id}/checkin`, { method: 'POST' });
+  },
+
+  refreshDian115Balance(id: number): Promise<Dian115TestResult> {
+    return request<Dian115TestResult>(`/api/public-checkin/dian115/accounts/${id}/refresh-balance`, { method: 'POST' });
+  },
+
+  listDian115CheckinLogs(params: {
+    accountId?: number;
+    status?: string;
+    startAt?: number;
+    endAt?: number;
+    limit?: number;
+    offset?: number;
+  } = {}): Promise<Dian115CheckinLogResponse> {
+    return request<Dian115CheckinLogResponse>(`/api/public-checkin/dian115/logs${buildQuery(params)}`);
   },
 
   getTranslationConfig(): Promise<{ item: TranslationConfig }> {

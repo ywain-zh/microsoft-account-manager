@@ -3071,8 +3071,7 @@ body {
   line-height: var(--leading-tight);
 }
 
-.console-brand-name::after {
-  content: 'v1.0.0';
+.console-brand-version {
   display: block;
   width: fit-content;
   margin-top: 4px;
@@ -3082,6 +3081,7 @@ body {
   color: #64748b;
   font-size: 10px;
   font-weight: 500;
+  font-style: normal;
   line-height: 1.25;
 }
 

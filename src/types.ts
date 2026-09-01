@@ -461,6 +461,60 @@ export interface GladosTestResult {
 
 export type TranslationProvider = 'openai' | 'deeplx';
 
+export type Dian115CheckinMode = 'normal' | 'lucky';
+export type Dian115CredentialType = 'cookie' | 'password';
+export type Dian115CheckinStatus = 'success' | 'repeat' | 'failed';
+export type Dian115CheckinAccountStatus = 'active' | 'disabled' | 'error';
+
+export interface Dian115CheckinAccount {
+  id: number;
+  label: string;
+  credentialType: Dian115CredentialType;
+  email: string | null;
+  checkinMode: Dian115CheckinMode;
+  checkinEnabled: boolean;
+  useProxy: boolean;
+  points: number | null;
+  balanceUpdatedAt: number | null;
+  todayRewardPoints: number | null;
+  lastStatus: Dian115CheckinStatus | null;
+  lastMessage: string | null;
+  lastRunAt: number | null;
+  status: Dian115CheckinAccountStatus;
+  lastError: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface Dian115CheckinLog {
+  id: number;
+  accountId: number;
+  triggeredBy: 'scheduler' | 'manual';
+  status: 'success' | 'failed' | 'skipped';
+  reward: number | null;
+  rewardNote: string | null;
+  errorMessage: string | null;
+  executedAt: number;
+  accountLabel: string;
+  siteName: string;
+}
+
+export interface Dian115CheckinLogResponse {
+  items: Dian115CheckinLog[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface Dian115TestResult {
+  success: boolean;
+  message: string;
+  nickname?: string;
+  email?: string;
+  points?: number | null;
+  lastSigninDate?: string | null;
+}
+
 export interface TranslationConfig {
   enabled: boolean;
   priorityProvider: TranslationProvider;

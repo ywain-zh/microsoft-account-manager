@@ -3,7 +3,7 @@
     <aside class="console-sidebar-flat">
       <div class="console-brand-flat">
         <WangyueLogo class="console-brand-logo" />
-        <span class="console-brand-name">望月工具箱</span>
+        <span class="console-brand-name">望月工具箱<i class="console-brand-version">v{{ appVersion }}</i></span>
       </div>
 
       <nav class="console-nav-flat" aria-label="主导航">
@@ -166,6 +166,7 @@ import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 import WangyueLogo from '../components/WangyueLogo.vue';
 import { consoleNavigation, defaultConsoleRoute } from '../config/navigation';
 import { useAdminConsole } from '../state/admin-console';
+import { version as appVersion } from '../../package.json';
 
 const admin = useAdminConsole();
 const { currentUser, isAuthenticated } = admin;

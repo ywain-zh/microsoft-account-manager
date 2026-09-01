@@ -6,6 +6,7 @@ import { HTTPException } from 'hono/http-exception';
 import { fetch, ProxyAgent, type Dispatcher, type RequestInit as UndiciRequestInit } from 'undici';
 
 import { runGladosCheckinAll } from './glados-checkin.ts';
+import { runDian115CheckinAll } from './dian115-checkin.ts';
 import type { PublicCheckinNotificationItem } from './notifications.ts';
 
 export type PublicCheckinPlatform = 'new-api' | 'one-api' | 'onehub' | 'anyrouter';
@@ -3616,7 +3617,11 @@ async function restartPublicCheckinScheduler(db: D1Database): Promise<void> {
         console.warn('[PublicCheckin] GLaDOS 定时签到执行异常', error);
         return [];
       });
-      await sendSchedulerSummaryNotification(db, [...results, ...gladosResults]).catch((error) => {
+      const dian115Results = await runDian115CheckinAll(db, 'scheduler').catch((error) => {
+        console.warn('[PublicCheckin] dian115 定时签到执行异常', error);
+        return [];
+      });
+      await sendSchedulerSummaryNotification(db, [...results, ...gladosResults, ...dian115Results]).catch((error) => {
         console.warn('[PublicCheckin] Telegram 签到汇总通知发送失败', error);
       });
     } catch (error) {
