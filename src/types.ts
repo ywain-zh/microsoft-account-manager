@@ -411,6 +411,7 @@ export interface GladosCheckinAccount {
   points: number | null;
   leftDays: number | null;
   balanceUpdatedAt: number | null;
+  todayRewardPoints: number | null;
   subscriptionUrl: string | null;
   expiresAt: number | null;
   trafficUsedBytes: number | null;

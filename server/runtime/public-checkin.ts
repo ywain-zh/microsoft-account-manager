@@ -433,7 +433,7 @@ function inferPublicCheckinPlatform(input: {
   return input.platform || 'new-api';
 }
 
-function formatZonedLocalDate(timestampSeconds: number, timezone: string): string {
+export function formatZonedLocalDate(timestampSeconds: number, timezone: string): string {
   const formatter = new Intl.DateTimeFormat('en-US', {
     timeZone: timezone,
     year: 'numeric',
@@ -3285,6 +3285,12 @@ async function getSettings(db: D1Database): Promise<PublicCheckinSettings> {
     timezone: values.get('timezone') || DEFAULT_SETTINGS.timezone,
     announcementPollingIntervalMinutes
   };
+}
+
+/** GLaDOS 签到模块复用同一套时区设置，避免各自维护一份。 */
+export async function getPublicCheckinTimezone(db: D1Database): Promise<string> {
+  const settings = await getSettings(db);
+  return settings.timezone;
 }
 
 function validateSettings(settings: PublicCheckinSettings): void {

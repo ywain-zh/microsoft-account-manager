@@ -105,10 +105,19 @@
                 </td>
                 <td>
                   <div class="account-balance-cell">
-                    <strong v-if="row.account.points != null" class="glados-points">
-                      {{ row.account.points }} 积分
-                    </strong>
-                    <strong v-else class="glados-points muted">-</strong>
+                    <div class="account-balance-cell__points-line">
+                      <strong v-if="row.account.points != null" class="glados-points">
+                        {{ row.account.points }} 积分
+                      </strong>
+                      <strong v-else class="glados-points muted">-</strong>
+                      <span
+                        v-if="row.account.todayRewardPoints != null && row.account.todayRewardPoints > 0"
+                        class="account-balance-cell__daily is-reward"
+                        title="今日签到获得"
+                      >
+                        +{{ row.account.todayRewardPoints }}
+                      </span>
+                    </div>
                     <span class="account-balance-cell__daily glados-leftdays" :title="gladosExpiryTitle(row.account)">
                       {{ gladosLeftDaysText(row.account) }}
                     </span>
@@ -1046,6 +1055,10 @@ const logColumns: DataTableColumns<PublicCheckinLog> = [
     key: 'reward',
     width: 86,
     render(row) {
+      // GLaDOS 的奖励是整数积分，公益站是额度金额，两者共用这张表但格式不同。
+      if (logSource.value === 'glados') {
+        return row.reward == null ? '-' : `+${row.reward}`;
+      }
       return formatMoney(row.reward);
     }
   },
@@ -2317,6 +2330,13 @@ onBeforeUnmount(() => {
   line-height: 20px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.account-balance-cell__points-line {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
 }
 
 .account-balance-cell__daily {

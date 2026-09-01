@@ -227,6 +227,25 @@ test('builds public checkin summary message with failures and reward total', () 
   assert.match(message, /<\/blockquote>/);
 });
 
+test('renders a GLaDOS run in the shared summary with its real points increment', () => {
+  const message = notificationTestHooks.buildPublicCheckinSummaryMessage([
+    {
+      accountId: 7,
+      label: 'GLaDOS A',
+      siteName: 'GLaDOS',
+      result: {
+        success: true,
+        status: 'success',
+        reward: 3,
+        balanceBefore: 41,
+        balanceAfter: 44
+      }
+    }
+  ], new Date('2026-09-01T02:00:00Z'));
+
+  assert.match(message, /GLaDOS A：总额度 44\.00，今日新增 \+3\.00/);
+});
+
 test('builds collapsed public checkin success details with balances and HTML escaping', () => {
   const message = notificationTestHooks.buildPublicCheckinSummaryMessage([
     {

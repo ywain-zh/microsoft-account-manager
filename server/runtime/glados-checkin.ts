@@ -9,7 +9,9 @@ import {
 
 import {
   decryptPublicCheckinSecret,
-  encryptPublicCheckinSecret
+  encryptPublicCheckinSecret,
+  formatZonedLocalDate,
+  getPublicCheckinTimezone
 } from './public-checkin.ts';
 
 export type GladosCheckinTriggeredBy = 'scheduler' | 'manual';
@@ -28,6 +30,8 @@ export interface GladosCheckinAccount {
   points: number | null;
   leftDays: number | null;
   balanceUpdatedAt: number | null;
+  /** 今日最近一次成功签到实际获得的积分，来自 glados_checkin_logs，无记录为 null。 */
+  todayRewardPoints: number | null;
   subscriptionUrl: string | null;
   expiresAt: number | null;
   trafficUsedBytes: number | null;
@@ -294,6 +298,7 @@ function accountFromRow(row: AccountRow): GladosCheckinAccount {
     points: row.points == null ? null : Number(row.points),
     leftDays: row.left_days == null ? null : Number(row.left_days),
     balanceUpdatedAt: row.balance_updated_at == null ? null : Number(row.balance_updated_at),
+    todayRewardPoints: null,
     subscriptionUrl: row.subscription_url,
     expiresAt: row.expires_at == null ? null : Number(row.expires_at),
     trafficUsedBytes: row.traffic_used_bytes == null ? null : Number(row.traffic_used_bytes),
@@ -309,9 +314,37 @@ function accountFromRow(row: AccountRow): GladosCheckinAccount {
   };
 }
 
+/**
+ * 今日各账号最近一次成功签到的真实积分增量。
+ * 日志时间戳按签到设置的时区折算成本地日期后比对，与公益站保持同一口径。
+ */
+async function listTodayGladosRewards(db: D1Database): Promise<Map<number, number>> {
+  const timezone = await getPublicCheckinTimezone(db);
+  const today = formatZonedLocalDate(unixNow(), timezone);
+  const rows = await dbAll<{ account_id: number; reward: number | null; executed_at: number }>(db, `
+    SELECT account_id, reward, executed_at
+    FROM glados_checkin_logs
+    WHERE status = 'success'
+      AND reward IS NOT NULL
+      AND reward > 0
+    ORDER BY executed_at DESC, id DESC
+  `);
+  const map = new Map<number, number>();
+  for (const row of rows) {
+    if (formatZonedLocalDate(Number(row.executed_at), timezone) !== today) continue;
+    const accountId = Number(row.account_id);
+    if (!map.has(accountId)) map.set(accountId, Number(row.reward));
+  }
+  return map;
+}
+
 async function listAccounts(db: D1Database): Promise<GladosCheckinAccount[]> {
   const rows = await dbAll<AccountRow>(db, 'SELECT * FROM glados_checkin_accounts ORDER BY id ASC');
-  return rows.map(accountFromRow);
+  const todayRewards = await listTodayGladosRewards(db);
+  return rows.map((row) => ({
+    ...accountFromRow(row),
+    todayRewardPoints: todayRewards.get(Number(row.id)) ?? null
+  }));
 }
 
 async function createAccount(db: D1Database, input: unknown): Promise<GladosCheckinAccount> {
@@ -528,6 +561,7 @@ async function exchange(cookie: string, plan: GladosExchangePlan, proxyUrl: stri
 interface CheckinResponse {
   code: number;
   message: string;
+  points: number | null;
 }
 
 async function checkin(cookie: string, proxyUrl: string): Promise<CheckinResponse> {
@@ -539,7 +573,7 @@ async function checkin(cookie: string, proxyUrl: string): Promise<CheckinRespons
   });
   const code = finiteNumber(payload.code);
   if (code == null) throw new Error(responseError(payload, '签到响应缺少 code'));
-  return { code, message: responseError(payload, '') };
+  return { code, message: responseError(payload, ''), points: finiteNumber(payload.points) };
 }
 
 async function insertLog(db: D1Database, input: {
@@ -616,6 +650,7 @@ export interface GladosCheckinRunResult {
     reward?: number | null;
     rewardNote?: string | null;
     errorMessage?: string | null;
+    balanceBefore?: number | null;
     balanceAfter?: number | null;
   };
 }
@@ -640,6 +675,7 @@ export async function runGladosCheckinForAccount(
   const cookie = decryptPublicCheckinSecret(row.cookie_data);
   const proxyUrl = await resolveProxyUrl(db, Number(row.use_proxy) === 1);
   let earned: number | null = null;
+  let pointsBefore: number | null = null;
   let points: number | null = null;
   let leftDays: number | null = null;
   let trafficUsedBytes: number | null = null;
@@ -662,7 +698,23 @@ export async function runGladosCheckinForAccount(
       // 流量查询失败不阻断签到，保留库中旧值。
     }
 
+    try {
+      pointsBefore = await fetchPoints(cookie, proxyUrl);
+    } catch {
+      // 签到前积分查询失败时回退到库中上次记录，仍能估算增量。
+    }
+    if (pointsBefore == null) pointsBefore = row.points == null ? null : Number(row.points);
+
     const checkinResult = await checkin(cookie, proxyUrl);
+
+    let pointsError: string | null = null;
+    try {
+      points = await fetchPoints(cookie, proxyUrl);
+    } catch (error) {
+      pointsError = error instanceof Error ? error.message : '未知错误';
+    }
+    earned = pointsBefore != null && points != null ? points - pointsBefore : null;
+
     let checkinStatus: GladosCheckinStatus;
     let summaryStatus: 'success' | 'failed';
     let errorMessage: string | null = null;
@@ -671,12 +723,15 @@ export async function runGladosCheckinForAccount(
     if (checkinResult.code === 0) {
       checkinStatus = 'success';
       summaryStatus = 'success';
-      reward = 1;
-      notes.push('签到成功');
+      reward = earned != null && earned > 0 ? earned : null;
+      notes.push(reward == null ? '签到成功' : `签到成功，获得 ${reward} 积分`);
+      // 站点回包的 points 语义未确认，先只做日志交叉校验，不进入 UI。
+      console.info(
+        `[GladosCheckin] 积分校验 accountId=${accountId} before=${pointsBefore ?? '-'} after=${points ?? '-'} delta=${earned ?? '-'} 回包points=${checkinResult.points ?? '-'}`
+      );
     } else if (checkinResult.code === 1) {
       checkinStatus = 'repeat';
       summaryStatus = 'success';
-      reward = 0;
       notes.push('今日已签到（重复）');
     } else {
       checkinStatus = 'failed';
@@ -685,11 +740,7 @@ export async function runGladosCheckinForAccount(
       notes.push(`签到失败：${errorMessage}`);
     }
 
-    try {
-      points = await fetchPoints(cookie, proxyUrl);
-    } catch (error) {
-      notes.push(`积分查询失败：${error instanceof Error ? error.message : '未知错误'}`);
-    }
+    if (pointsError) notes.push(`积分查询失败：${pointsError}`);
 
     if (points != null && row.exchange_enabled === 1 && row.exchange_plan) {
       const threshold = EXCHANGE_PLAN_POINTS[row.exchange_plan];
@@ -739,6 +790,7 @@ export async function runGladosCheckinForAccount(
         reward: reward ?? null,
         rewardNote: notes.join('；') || null,
         errorMessage,
+        balanceBefore: pointsBefore,
         balanceAfter: points
       }
     };

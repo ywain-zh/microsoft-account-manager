@@ -28,6 +28,10 @@ let statusHandler: ((url: URL) => Record<string, unknown>) | null = null;
 let checkinCode: number = 0;
 let checkinMessage: string = '';
 let points: number = 500;
+/** 一次成功签到给账号加多少积分，模拟站点侧的真实变化。默认 0 表示不变。 */
+let checkinGain: number = 0;
+/** 接下来多少次 /api/user/points 调用返回失败，用于测试签到前取数失败的回退。 */
+let pointsFailCount: number = 0;
 let exchangeCode: number = 0;
 let exchangeMessage: string = '';
 let trafficTodayBytes: number = 0;
@@ -39,6 +43,8 @@ function resetFetchState(): void {
   checkinCode = 0;
   checkinMessage = '';
   points = 500;
+  checkinGain = 0;
+  pointsFailCount = 0;
   exchangeCode = 0;
   exchangeMessage = '';
   trafficTodayBytes = 0;
@@ -79,12 +85,17 @@ function setFetchHarness(): void {
       });
     }
     if (pathname === '/api/user/checkin') {
+      if (checkinCode === 0) points += checkinGain;
       return new Response(JSON.stringify({ code: checkinCode, message: checkinMessage, points }), {
         status: 200,
         headers: { 'content-type': 'application/json' }
       });
     }
     if (pathname === '/api/user/points') {
+      if (pointsFailCount > 0) {
+        pointsFailCount -= 1;
+        return new Response('boom', { status: 500 });
+      }
       return new Response(JSON.stringify({ code: 0, points }), {
         status: 200,
         headers: { 'content-type': 'application/json' }
@@ -110,6 +121,7 @@ function createHarness(): { app: Hono<any>; db: SQLiteD1Database; cleanup: () =>
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
   `);
+  db.raw.exec(readFileSync(join(process.cwd(), 'migrations/0017_public_checkin.sql'), 'utf8'));
   db.raw.exec(readFileSync(join(process.cwd(), 'migrations/0023_glados_checkin.sql'), 'utf8'));
   db.raw.exec(readFileSync(join(process.cwd(), 'migrations/0024_glados_subscription.sql'), 'utf8'));
   db.raw.exec(readFileSync(join(process.cwd(), 'migrations/0025_glados_use_proxy.sql'), 'utf8'));
@@ -170,6 +182,7 @@ test('performs a successful checkin writing points, leftDays and a success log',
   setFetchHarness();
   checkinCode = 0;
   points = 600;
+  checkinGain = 3;
   const { app, db, cleanup } = createHarness();
   t.after(cleanup);
 
@@ -182,19 +195,20 @@ test('performs a successful checkin writing points, leftDays and a success log',
   const run = await runGladosCheckinForAccount(db, created.data.id, 'manual');
   assert.equal(run.result?.success, true);
   assert.equal(run.result?.status, 'success');
-  assert.equal(run.result?.reward, 1);
-  assert.equal(run.result?.balanceAfter, 600);
-  assert.ok(run.result?.rewardNote?.includes('签到成功'));
+  assert.equal(run.result?.reward, 3, '奖励应为签到前后总积分的真实差值');
+  assert.equal(run.result?.balanceBefore, 600);
+  assert.equal(run.result?.balanceAfter, 603);
+  assert.ok(run.result?.rewardNote?.includes('签到成功，获得 3 积分'));
 
   const row = await db.prepare('SELECT checkin_enabled, points, left_days, last_status, status FROM glados_checkin_accounts WHERE id = ?').bind(created.data.id).first() as any;
-  assert.equal(row.points, 600);
+  assert.equal(row.points, 603);
   assert.equal(row.left_days, 14);
   assert.equal(row.last_status, 'success');
   assert.equal(row.status, 'active');
 
   const log = await db.prepare('SELECT * FROM glados_checkin_logs WHERE account_id = ?').bind(created.data.id).first() as any;
   assert.equal(log.status, 'success');
-  assert.equal(log.reward, 1);
+  assert.equal(log.reward, 3, '日志落库的应是真实增量而非固定值');
   assert.equal(log.triggered_by, 'manual');
 
   const checkinCall = callLog.find((c) => c.url.pathname === '/api/user/checkin');
@@ -225,7 +239,7 @@ test('treats a repeat checkin (code 1) as normal success', async (t) => {
 
   const run = await runGladosCheckinForAccount(db, created.data.id, 'manual');
   assert.equal(run.result?.success, true);
-  assert.equal(run.result?.reward, 0);
+  assert.equal(run.result?.reward, null, '重复签到没有真实增量，不应用 0 冒充');
   assert.ok(run.result?.rewardNote?.includes('重复'));
 
   const row = await db.prepare('SELECT last_status, status FROM glados_checkin_accounts WHERE id = ?').bind(created.data.id).first() as any;
@@ -234,6 +248,86 @@ test('treats a repeat checkin (code 1) as normal success', async (t) => {
 
   const log = await db.prepare('SELECT * FROM glados_checkin_logs WHERE account_id = ?').bind(created.data.id).first() as any;
   assert.equal(log.status, 'success');
+  assert.equal(log.reward, null);
+});
+
+test('falls back to the stored points when the pre-checkin points fetch fails', async (t) => {
+  resetFetchState();
+  setFetchHarness();
+  checkinCode = 0;
+  points = 100;
+  const { app, db, cleanup } = createHarness();
+  t.after(cleanup);
+
+  const created = await jsonRequest<{ id: number }>(app, db, '/api/public-checkin/glados/accounts', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: accountPayload({ exchangeEnabled: false })
+  });
+
+  // 先跑一次把 points=100 写进库，作为回退基线
+  await runGladosCheckinForAccount(db, created.data.id, 'manual');
+
+  checkinGain = 3;
+  pointsFailCount = 1; // 只让签到前那次取数失败
+  const run = await runGladosCheckinForAccount(db, created.data.id, 'manual');
+  assert.equal(run.result?.balanceBefore, 100, '取数失败时应回退到库中上次总积分');
+  assert.equal(run.result?.balanceAfter, 103);
+  assert.equal(run.result?.reward, 3);
+  assert.equal(run.result?.rewardNote?.includes('积分查询失败'), false, '仅签到前取数失败不应记为积分查询失败');
+});
+
+test('reports no reward when the points delta is not positive', async (t) => {
+  resetFetchState();
+  setFetchHarness();
+  checkinCode = 0;
+  points = 100;
+  checkinGain = 0;
+  const { app, db, cleanup } = createHarness();
+  t.after(cleanup);
+
+  const created = await jsonRequest<{ id: number }>(app, db, '/api/public-checkin/glados/accounts', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: accountPayload({ exchangeEnabled: false })
+  });
+
+  const run = await runGladosCheckinForAccount(db, created.data.id, 'manual');
+  assert.equal(run.result?.status, 'success');
+  assert.equal(run.result?.reward, null, '积分没变时不应编造奖励');
+  assert.equal(run.result?.rewardNote, '签到成功');
+});
+
+test('exposes the points earned today on the account list and drops it the next day', async (t) => {
+  resetFetchState();
+  setFetchHarness();
+  checkinCode = 0;
+  points = 200;
+  checkinGain = 5;
+  const { app, db, cleanup } = createHarness();
+  t.after(cleanup);
+
+  const created = await jsonRequest<{ id: number }>(app, db, '/api/public-checkin/glados/accounts', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: accountPayload({ exchangeEnabled: false })
+  });
+
+  await runGladosCheckinForAccount(db, created.data.id, 'manual');
+
+  const listed = await jsonRequest<Array<{ id: number; points: number; todayRewardPoints: number | null }>>(
+    app, db, '/api/public-checkin/glados/accounts'
+  );
+  assert.equal(listed.data[0].points, 205);
+  assert.equal(listed.data[0].todayRewardPoints, 5, '列表应带出今日签到获得的积分');
+
+  await db.prepare('UPDATE glados_checkin_logs SET executed_at = executed_at - 86400 WHERE account_id = ?')
+    .bind(created.data.id).run();
+
+  const stale = await jsonRequest<Array<{ todayRewardPoints: number | null }>>(
+    app, db, '/api/public-checkin/glados/accounts'
+  );
+  assert.equal(stale.data[0].todayRewardPoints, null, '昨天的签到不应算进今日新增');
 });
 
 test('marks the account failed when checkin returns an error code', async (t) => {
