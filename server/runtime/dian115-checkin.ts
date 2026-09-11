@@ -245,8 +245,36 @@ function validateLabel(value: unknown): string {
   return label;
 }
 
+/** 从用户粘贴的 Cookie 中解析提取 dian115 的登录令牌（__Host-portal_token）。
+ * 用户可能粘贴：
+ *   1) 完整浏览器 Cookie 串（如 `__Host-portal_token=xxx; __Host-portal_browser=yyy; ...`）
+ *   2) 单段 `__Host-portal_token=xxx`（可能带尾部分号）
+ *   3) 只粘贴裸 JWT 值（自动补前缀）
+ * 只返回对签到真正有用的 `__Host-portal_token=<JWT>`，忽略浏览器会话等其他 Cookie，
+ * 并对长 JWT 粘贴导致的折行/空格做清洗，避免平台判定 invalid_token。
+ * 注意：此函数仅存在于 dian115 模块，不会影响 GLaDOS / public_checkin 等其他账户类型。 */
+function normalizeDian115Cookie(value: unknown): string {
+  const raw = String(asString(value));
+  // 去掉所有空白字符（空格、\t、\r、\n、\u00a0 等），避免复制粘贴时 JWT 被折行截断
+  const cleaned = raw.replace(/\s+/g, '');
+  if (!cleaned) return '';
+  // 情况1/2：整段 cookie 串，只取 __Host-portal_token= 那一段
+  if (cleaned.startsWith('__Host-portal_token=') || cleaned.includes('__Host-portal_token=')) {
+    for (const part of cleaned.split(';')) {
+      const p = part.trim();
+      if (p.startsWith('__Host-portal_token=')) return p;
+    }
+  }
+  // 情况3：只贴了裸 JWT（三节 base64url），自动补上前缀
+  if (/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(cleaned)) {
+    return `__Host-portal_token=${cleaned}`;
+  }
+  // 其它无法识别的残留：原样返回（保留错误行为，由下游请求发现）
+  return cleaned;
+}
+
 function validateCookie(value: unknown, required: boolean): string {
-  const cookie = asString(value).trim();
+  const cookie = normalizeDian115Cookie(value);
   if (!cookie && !required) return '';
   if (!cookie || cookie.length > 8000) {
     throw new HTTPException(400, { message: 'Cookie 不能为空且不能超过 8000 个字符' });
