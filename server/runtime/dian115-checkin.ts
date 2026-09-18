@@ -7,6 +7,9 @@ import {
   sign as cryptoSign,
   type KeyObject
 } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   fetch as undiciFetch,
   ProxyAgent,
@@ -713,34 +716,129 @@ function browserSignHeaders(state: BrowserSecurityState, method: string, path: s
 }
 
 /**
+ * 浏览器登录降级：调 Python 子进程（Camoufox 反检测 Firefox）打开登录页、
+ * 坐标点击过 Cloudflare Turnstile，成功后返回 __Host-portal_token。
+ *
+ * 站点登录接口被 CF 保护，纯 HTTP 登录会被拦（403），必须由真浏览器执行；
+ * token 拿到后所有业务请求（签到/积分）继续走本模块的纯 HTTP 协议。
+ * 密码经 stdin 传入子进程，不落命令行、不落日志。
+ */
+const DIAN115_BROWSER_LOGIN_TIMEOUT_MS = 200_000;
+
+/** 浏览器登录脚本路径：源码运行时在 server/runtime/，esbuild bundle 后在 build/server/ 根。 */
+function resolveBrowserLoginScript(): string {
+  const here = fileURLToPath(new URL('.', import.meta.url));
+  for (const candidate of [`${here}dian115_login_browser.py`, `${here}runtime/dian115_login_browser.py`]) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return `${here}dian115_login_browser.py`;
+}
+
+let browserLoginImpl: ((email: string, password: string) => Promise<string>) | null = null;
+
+export async function performBrowserLogin(email: string, password: string): Promise<string> {
+  if (browserLoginImpl) return browserLoginImpl(email, password);
+
+  return new Promise<string>((resolve, reject) => {
+    const scriptPath = resolveBrowserLoginScript();
+    const pythonBin = process.env.DIAN115_PYTHON || 'python3';
+    const proc = spawn(pythonBin, [scriptPath], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true
+    });
+
+    let stdout = '';
+    let stderrTail = '';
+    const timer = setTimeout(() => {
+      proc.kill('SIGKILL');
+      reject(new Error('浏览器登录超时（200 秒）'));
+    }, DIAN115_BROWSER_LOGIN_TIMEOUT_MS);
+
+    proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf-8'); });
+    proc.stderr.on('data', (chunk: Buffer) => {
+      const text = chunk.toString('utf-8');
+      stderrTail = (stderrTail + text).slice(-2000);
+      // 子进程过程日志转主日志，便于线上排查过盾情况
+      for (const line of text.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed) console.info(trimmed);
+      }
+    });
+    proc.on('error', (error) => {
+      clearTimeout(timer);
+      reject(new Error(`浏览器登录脚本无法启动（${error.message}）；服务器需安装 camoufox[geoip] 并执行 python -m camoufox fetch`));
+    });
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      let parsed: Record<string, unknown> = {};
+      try {
+        // stdout 可能混入多行，取最后一个 JSON 对象
+        const lines = stdout.trim().split('\n');
+        parsed = asRecord(JSON.parse(lines[lines.length - 1] || '{}'));
+      } catch {
+        reject(new Error(`浏览器登录脚本输出无效（exit ${code}）${stderrTail ? `：${stderrTail.slice(-300)}` : ''}`));
+        return;
+      }
+      if (code === 0 && parsed.ok === true && typeof parsed.token === 'string' && parsed.token) {
+        resolve(parsed.token);
+      } else {
+        reject(new Error(String(parsed.error) || `浏览器登录失败（exit ${code}）`));
+      }
+    });
+
+    proc.stdin.write(JSON.stringify({ email, password }));
+    proc.stdin.end();
+  });
+}
+
+/**
  * 邮箱密码自动登录：成功后返回新的 __Host-portal_token 值。
  * 登录会换发浏览器会话 Cookie，所以登录后必须 reset 会话，
  * 下一个业务请求会重新走 challenge+session 建立与签名匹配的会话。
+ *
+ * 站点登录接口被 Cloudflare 保护：纯 HTTP 登录失败时（403/被拦/人机验证提示），
+ * 自动降级为 Camoufox 浏览器登录（过 Turnstile 人机验证后拿 token）。
  */
 async function performLogin(proxyUrl: string, email: string, password: string): Promise<string> {
   resetBrowserSecurity();
-  const state = await ensureBrowserSecurity(proxyUrl);
-  const resp = await portalHttp('/api/portal/auth/login', {
-    method: 'POST',
-    body: JSON.stringify({ email, password }),
-    extraHeaders: browserSignHeaders(state, 'POST', '/api/portal/auth/login'),
-    // 登录请求必须携带 browser-session 下发的会话 Cookie，否则签名无法关联到会话。
-    cookie: state.browserCookie || '',
-    proxyUrl
-  });
-  const payload = resp.payload || {};
-  if (resp.status !== 200 || asString(payload.code).trim() !== 'ok') {
-    throw new Error(asString(payload.msg).trim() || `登录失败（HTTP ${resp.status}）`);
-  }
-  for (const cookie of resp.setCookie) {
-    const pair = cookie.split(';')[0];
-    if (pair.startsWith('__Host-portal_token=')) {
-      resetBrowserSecurity();
-      return pair.slice('__Host-portal_token='.length).trim();
+  try {
+    const state = await ensureBrowserSecurity(proxyUrl);
+    const resp = await portalHttp('/api/portal/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+      extraHeaders: browserSignHeaders(state, 'POST', '/api/portal/auth/login'),
+      // 登录请求必须携带 browser-session 下发的会话 Cookie，否则签名无法关联到会话。
+      cookie: state.browserCookie || '',
+      proxyUrl
+    });
+    const payload = resp.payload || {};
+    if (resp.status !== 200 || asString(payload.code).trim() !== 'ok') {
+      throw new Error(asString(payload.msg).trim() || `登录失败（HTTP ${resp.status}）`);
     }
+    for (const cookie of resp.setCookie) {
+      const pair = cookie.split(';')[0];
+      if (pair.startsWith('__Host-portal_token=')) {
+        resetBrowserSecurity();
+        return pair.slice('__Host-portal_token='.length).trim();
+      }
+    }
+    // 兼容未通过 Set-Cookie 下发的情形：拿 me 兑换 token 不可行，直接报错。
+    throw new Error('登录成功但未下发会话 Cookie，请改用 Cookie 方式接入');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    // CF 拦截/人机验证/浏览器验证失败 → 浏览器登录降级。
+    // 密码错误等业务错误不降级（浏览器登录同样会失败，白跑一次）。
+    const needBrowser = message.includes('Cloudflare')
+      || message.includes('人机')
+      || message.includes('浏览器验证')
+      || message.includes('响应格式无效')
+      || message.includes('站点请求失败');
+    if (!needBrowser) throw error;
+    console.info(`[Dian115] HTTP 登录被拦截（${message.slice(0, 80)}），降级浏览器登录...`);
+    const token = await performBrowserLogin(email, password);
+    resetBrowserSecurity();
+    return token;
   }
-  // 兼容未通过 Set-Cookie 下发的情形：拿 me 兑换 token 不可行，直接报错。
-  throw new Error('登录成功但未下发会话 Cookie，请改用 Cookie 方式接入');
 }
 
 /**
@@ -1196,12 +1294,16 @@ export const dian115CheckinTestHooks = {
   setFetch(fetchImpl: typeof undiciFetch | null): void {
     requestFetch = fetchImpl || undiciFetch;
   },
+  setBrowserLogin(impl: ((email: string, password: string) => Promise<string>) | null): void {
+    browserLoginImpl = impl;
+  },
   setTiming(input: { betweenAccountsDelayMs?: number }): void {
     if (input.betweenAccountsDelayMs != null) betweenAccountsDelayMs = input.betweenAccountsDelayMs;
   },
   reset(): void {
     requestFetch = undiciFetch;
     betweenAccountsDelayMs = 1_000;
+    browserLoginImpl = null;
     resetBrowserSecurity();
   }
 };
