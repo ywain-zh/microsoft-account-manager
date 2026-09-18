@@ -620,6 +620,7 @@ const {
   remarkForm,
   hasConfiguredCloudMail,
   availableDomains,
+  isAdminAccount,
   loadInitialData,
   openConfigModal,
   saveConfig,
@@ -790,6 +791,9 @@ function renderEmailCell(row: CloudMailAccountItem): ReturnType<typeof h> {
       },
       row.email
     ),
+    isAdminAccount(row)
+      ? h(NTag, { size: 'small', bordered: false, type: 'info', title: '管理员邮箱禁止删除' }, () => '管理员')
+      : null,
     h(
       'button',
       {
@@ -830,7 +834,8 @@ function renderRemarkCell(row: CloudMailAccountItem): ReturnType<typeof h> {
 const columns: DataTableColumns<CloudMailAccountItem> = [
   {
     type: 'selection',
-    width: 38
+    width: 38,
+    disabled: (row) => isAdminAccount(row)
   },
   {
     title: '邮箱',
@@ -881,6 +886,8 @@ const columns: DataTableColumns<CloudMailAccountItem> = [
           {
             type: 'button',
             class: 'table-action-button table-action-button-danger',
+            disabled: isAdminAccount(row),
+            title: isAdminAccount(row) ? '管理员邮箱禁止删除' : `删除 ${row.email}`,
             onClick: (event: MouseEvent) => {
               event.stopPropagation();
               void deleteSingleAccount(row);

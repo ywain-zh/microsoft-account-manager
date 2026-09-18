@@ -279,6 +279,11 @@ const hasConfiguredCloudMail = computed(() => {
 });
 
 const availableDomains = computed(() => storedConfig.availableDomains);
+
+function isAdminAccount(row: CloudMailAccountItem): boolean {
+  return row.email.trim().toLowerCase() === storedConfig.adminEmail.trim().toLowerCase();
+}
+
 const selectedMail = computed(() => {
   return mailItems.value.find((item) => item.id === selectedMailId.value) ?? null;
 });
@@ -428,7 +433,9 @@ function clearTableState(): void {
 function assignAccountsResponse(response: CloudMailAccountListResponse): void {
   accounts.value = response.items;
   total.value = response.total;
-  checkedRowKeys.value = checkedRowKeys.value.filter((id) => response.items.some((item) => item.userId === id));
+  checkedRowKeys.value = checkedRowKeys.value.filter((id) =>
+    response.items.some((item) => item.userId === id && !isAdminAccount(item))
+  );
   lastAccountsCacheEmpty.value = Boolean(response.cacheEmpty);
 }
 
@@ -703,6 +710,11 @@ async function deleteAccounts(userIds: number[]): Promise<void> {
     return;
   }
 
+  if (accounts.value.some((row) => userIds.includes(row.userId) && isAdminAccount(row))) {
+    message.warning('管理员邮箱禁止删除，请取消选择管理员后重试');
+    return;
+  }
+
   const confirmed = window.confirm(
     userIds.length === 1 ? '确认删除该 Cloud Mail 邮箱？' : `确认删除选中的 ${userIds.length} 个 Cloud Mail 邮箱？`
   );
@@ -900,7 +912,8 @@ async function handlePageSizeChange(pageSize: number): Promise<void> {
 function handleCheckedRowKeysUpdate(keys: Array<string | number>): void {
   checkedRowKeys.value = keys
     .map((value) => Number.parseInt(String(value), 10))
-    .filter((value) => Number.isInteger(value) && value > 0);
+    .filter((value) => Number.isInteger(value) && value > 0)
+    .filter((id) => accounts.value.some((row) => row.userId === id && !isAdminAccount(row)));
 }
 
 async function copyText(value: string, successMessage: string): Promise<boolean> {
@@ -1074,6 +1087,7 @@ export function useCloudMailConsole() {
     remarkForm,
     hasConfiguredCloudMail,
     availableDomains,
+    isAdminAccount,
     loadConfig,
     loadAccounts,
     loadInitialData,

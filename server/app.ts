@@ -6327,6 +6327,24 @@ async function listCloudMailMessages(config: CloudMailConfig, email: string): Pr
 
 async function deleteCloudMailAccounts(config: CloudMailConfig, userIds: number[]): Promise<void> {
   const token = await getCloudMailAdminToken(config);
+  const identity = await requestCloudMail<{ userId?: unknown; email?: unknown } | null>(
+    config,
+    '/api/my/loginUserInfo',
+    { headers: { Authorization: token } }
+  );
+  const adminUserId = typeof identity?.userId === 'number' || typeof identity?.userId === 'string'
+    ? Number(identity.userId)
+    : NaN;
+  if (
+    !Number.isSafeInteger(adminUserId) || adminUserId <= 0 ||
+    normalizeEmailAddress(identity?.email) !== normalizeEmailAddress(config.adminEmail)
+  ) {
+    throw new HTTPException(502, { message: '无法确认 Cloud Mail 管理员身份，已停止删除，请检查配置后重试' });
+  }
+  if (userIds.includes(adminUserId)) {
+    throw new HTTPException(403, { message: '管理员邮箱禁止删除，请取消选择管理员后重试' });
+  }
+
   await requestCloudMail(
     config,
     `/api/user/delete?${new URLSearchParams({ userIds: userIds.join(',') }).toString()}`,
