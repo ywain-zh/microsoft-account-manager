@@ -27,7 +27,9 @@ RUN apt-get update \
      libxdamage1 libxrandr2 libatk1.0-0 libatk-bridge2.0-0 libpango-1.0-0 \
      libcairo2 libgdk-pixbuf-2.0-0 libxss1 libxtst6 \
   && rm -rf /var/lib/apt/lists/*
-RUN pip3 install --no-cache-dir --break-system-packages 'camoufox[geoip]>=0.5.4' 'playwright>=1.50,<2'
+# 版本锁定：camoufox 0.5.6 / playwright 1.62 在无显示环境的 headless 下 new_page() 死锁，
+# 0.5.5 + 1.60 为已验证组合（本地与生产流程实测通过），升级前必须重新验证。
+RUN pip3 install --no-cache-dir --break-system-packages 'camoufox[geoip]==0.5.5' 'playwright==1.60.0'
 ENV XDG_CACHE_HOME=/opt/camoufox-cache
 RUN python3 -m camoufox fetch
 

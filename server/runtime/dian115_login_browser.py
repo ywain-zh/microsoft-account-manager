@@ -12,7 +12,8 @@
   stdin:  {"email": "...", "password": "..."}        // 密码不在命令行、不落日志
   stdout: {"ok": true, "token": "eyJ..."}             // 过程日志全部走 stderr
 
-依赖：camoufox[geoip] + playwright + cryptography（需先执行 python -m camoufox fetch）。
+依赖：camoufox[geoip]==0.5.5 + playwright==1.60.0（版本锁定：0.5.6/1.62 在无显示环境
+headless 下 new_page() 死锁）+ cryptography（需先执行 python -m camoufox fetch）。
 """
 
 from __future__ import annotations
